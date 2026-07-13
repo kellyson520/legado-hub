@@ -125,7 +125,7 @@ def from_exception(exc) -> Dict:
     """从异常构造响应"""
     return {
         "success": False,
-        "code": getattr(exc, "error_code", "INTERNAL_ERROR"),
+        "code": getattr(exc, "code", getattr(exc, "error_code", "INTERNAL_ERROR")),
         "message": getattr(exc, "message", str(exc)),
         "data": None,
         "trace_id": get_trace_id(),

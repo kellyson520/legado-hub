@@ -44,6 +44,13 @@ def fresh_event_bus():
     return MemoryEventBus()
 
 
+@pytest.fixture
+def cache_provider():
+    from app.infrastructure.cache.memory_cache import MemoryCacheProvider
+
+    return MemoryCacheProvider()
+
+
 @pytest_asyncio.fixture
 async def started_event_bus():
     from app.core.events import MemoryEventBus

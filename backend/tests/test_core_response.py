@@ -147,24 +147,32 @@ class TestFail:
 class TestFromException:
     """from_exception 构造函数测试"""
 
-    def test_from_base_app_exception(self):
-        """验证 from_exception() 从 BaseAppException 提取错误信息"""
-        from app.core.response import from_exception
+    def test_from_app_exception_uses_current_code_attribute(self):
+        """验证 from_exception() 优先读取当前 AppException 的 code 字段"""
         from app.core.exceptions import NotFoundException
-        exc = NotFoundException(message="书源不存在")
-        resp = from_exception(exc)
+        from app.core.response import from_exception
+
+        resp = from_exception(NotFoundException(message="书源不存在"))
+
         assert resp["success"] is False
         assert resp["code"] == "NOT_FOUND"
         assert resp["message"] == "书源不存在"
         assert resp["data"] is None
 
-    def test_from_exception_with_custom_error_code(self):
-        """验证 from_exception() 提取自定义 error_code"""
+    def test_from_exception_falls_back_to_legacy_error_code(self):
+        """验证 from_exception() 兼容历史 error_code 字段"""
         from app.core.response import from_exception
-        from app.core.exceptions import BaseAppException
-        exc = BaseAppException(message="自定义错误", details={"key": "val"})
-        exc.error_code = "CUSTOM_ERROR"
+
+        class LegacyError(Exception):
+            error_code = "CUSTOM_ERROR"
+
+            def __init__(self):
+                super().__init__("自定义错误")
+                self.message = "自定义错误"
+
+        exc = LegacyError()
         resp = from_exception(exc)
+
         assert resp["code"] == "CUSTOM_ERROR"
         assert resp["message"] == "自定义错误"
 

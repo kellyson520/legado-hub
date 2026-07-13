@@ -1,158 +1,199 @@
-"""
-exceptions.py 单元测试
+"""当前异常体系与 FastAPI 异常处理器的契约测试。"""
 
-覆盖异常类和全局异常处理器：
-- 各异常类的属性验证（status_code, error_code, default_message）
-- 异常消息和详情的自定义
-- register_exception_handlers 注册 3 个处理器
-- 异常处理器的响应格式
-"""
+import json
 
 import pytest
-from unittest.mock import MagicMock, patch
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from starlette.requests import Request
+
+from app.core.exception_handlers import (
+    app_exception_handler,
+    generic_exception_handler,
+    register_exception_handlers,
+    validation_exception_handler,
+)
+from app.core.exceptions import (
+    AppException,
+    AuthenticationException,
+    AuthorizationException,
+    ConflictException,
+    ExternalServiceException,
+    NotFoundException,
+    ValidationException,
+)
 
 
-class TestBaseAppException:
-    """BaseAppException 基础异常测试"""
+@pytest.fixture
+def request_factory():
+    """创建带可控 debug 与 trace_id 的实际 Starlette Request。"""
 
-    def test_default_attributes(self):
-        """验证默认属性值"""
-        from app.core.exceptions import BaseAppException
-        exc = BaseAppException()
-        assert exc.status_code == 500
-        assert exc.error_code == "INTERNAL_ERROR"
-        assert exc.message == "内部错误"
-        assert exc.details == {}
+    def build(*, debug: bool = False, trace_id: str | None = "trace-test") -> Request:
+        request = Request(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0", "spec_version": "2.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/test/path",
+                "raw_path": b"/test/path",
+                "query_string": b"",
+                "headers": [],
+                "client": ("testclient", 50000),
+                "server": ("testserver", 80),
+                "root_path": "",
+                "app": FastAPI(debug=debug),
+                "state": {},
+            }
+        )
+        if trace_id is not None:
+            request.state.trace_id = trace_id
+        return request
 
-    def test_custom_message(self):
-        """验证自定义消息"""
-        from app.core.exceptions import BaseAppException
-        exc = BaseAppException(message="自定义内部错误")
-        assert exc.message == "自定义内部错误"
+    return build
 
-    def test_custom_details(self):
-        """验证自定义详情"""
-        from app.core.exceptions import BaseAppException
-        details = {"field": "username", "issue": "已存在"}
-        exc = BaseAppException(message="冲突", details=details)
+
+def response_body(response) -> dict:
+    """解析 JSONResponse 的响应内容。"""
+
+    return json.loads(response.body.decode())
+
+
+class TestAppException:
+    def test_app_exception_preserves_constructor_contract(self):
+        details = {"field": "name"}
+
+        exc = AppException("TEST_ERROR", "test message", 418, details)
+
+        assert isinstance(exc, Exception)
+        assert str(exc) == "test message"
+        assert exc.code == "TEST_ERROR"
+        assert exc.message == "test message"
+        assert exc.status_code == 418
         assert exc.details == details
 
-    def test_is_exception_subclass(self):
-        """验证继承自 Exception"""
-        from app.core.exceptions import BaseAppException
-        assert issubclass(BaseAppException, Exception)
+    def test_app_exception_defaults_details_to_empty_dict(self):
+        exc = AppException("TEST_ERROR", "test message", 500)
 
-    def test_str_representation(self):
-        """验证异常的字符串表示为 message"""
-        from app.core.exceptions import BaseAppException
-        exc = BaseAppException(message="测试错误")
-        assert str(exc) == "测试错误"
+        assert exc.details == {}
 
+    @pytest.mark.parametrize(
+        ("exception_type", "status_code", "code", "message"),
+        [
+            (AuthenticationException, 401, "AUTHENTICATION_ERROR", "authentication failed"),
+            (AuthorizationException, 403, "AUTHORIZATION_ERROR", "permission denied"),
+            (ValidationException, 422, "VALIDATION_ERROR", "validation failed"),
+            (NotFoundException, 404, "NOT_FOUND", "resource not found"),
+            (ConflictException, 409, "CONFLICT", "resource conflict"),
+            (ExternalServiceException, 502, "EXTERNAL_SERVICE_ERROR", "external service failed"),
+        ],
+    )
+    def test_concrete_exceptions_expose_current_contract(
+        self,
+        exception_type,
+        status_code,
+        code,
+        message,
+    ):
+        exc = exception_type()
 
-class TestConcreteExceptions:
-    """具体异常子类测试"""
+        assert isinstance(exc, AppException)
+        assert exc.status_code == status_code
+        assert exc.code == code
+        assert exc.message == message
+        assert exc.details == {}
 
-    @pytest.mark.parametrize("exc_class,expected_status,expected_code,expected_msg", [
-        ("ValidationException", 400, "VALIDATION_ERROR", "请求参数错误"),
-        ("AuthenticationException", 401, "AUTHENTICATION_ERROR", "认证失败"),
-        ("AuthorizationException", 403, "AUTHORIZATION_ERROR", "权限不足"),
-        ("NotFoundException", 404, "NOT_FOUND", "资源不存在"),
-        ("QuotaExceededException", 429, "QUOTA_EXCEEDED", "配额已用完"),
-        ("ExternalServiceException", 502, "EXTERNAL_SERVICE_ERROR", "外部服务暂不可用"),
-    ])
-    def test_exception_attributes(self, exc_class, expected_status, expected_code, expected_msg):
-        """参数化验证各异常子类的默认属性"""
-        import app.core.exceptions as exc_module
-        cls = getattr(exc_module, exc_class)
-        exc = cls()
-        assert exc.status_code == expected_status
-        assert exc.error_code == expected_code
-        assert exc.message == expected_msg
+    def test_concrete_exception_accepts_custom_message_and_details(self):
+        exc = NotFoundException("source not found", {"source_id": 7})
 
-    def test_quota_exceeded_custom_message(self):
-        """验证 QuotaExceededException 自定义消息"""
-        from app.core.exceptions import QuotaExceededException
-        exc = QuotaExceededException(message="每日配额已用完", details={"limit": 500, "used": 500})
-        assert exc.message == "每日配额已用完"
-        assert exc.details["limit"] == 500
-
-    def test_not_found_custom_message(self):
-        """验证 NotFoundException 自定义消息"""
-        from app.core.exceptions import NotFoundException
-        exc = NotFoundException(message="书源不存在")
-        assert exc.message == "书源不存在"
-        assert exc.status_code == 404
+        assert exc.message == "source not found"
+        assert exc.details == {"source_id": 7}
 
 
 class TestExceptionHandlers:
-    """全局异常处理器测试"""
+    async def test_app_exception_handler_returns_current_envelope(self, request_factory):
+        response = await app_exception_handler(
+            request_factory(),
+            NotFoundException("source not found", {"source_id": 7}),
+        )
 
-    async def test_app_exception_handler_returns_json_response(self, mock_request):
-        """验证 app_exception_handler 返回正确格式的 JSONResponse"""
-        from app.core.exceptions import app_exception_handler, NotFoundException
-        import json
-        exc = NotFoundException(message="测试资源不存在")
-        response = await app_exception_handler(mock_request, exc)
         assert response.status_code == 404
-        body = json.loads(response.body.decode())
-        assert body["success"] is False
-        assert body["code"] == "NOT_FOUND"
-        assert body["message"] == "测试资源不存在"
-        assert body["path"] == "/test/path"
+        assert response_body(response) == {
+            "success": False,
+            "code": "NOT_FOUND",
+            "message": "source not found",
+            "details": {"source_id": 7},
+            "trace_id": "trace-test",
+        }
 
-    async def test_app_exception_handler_includes_details(self, mock_request):
-        """验证 app_exception_handler 包含 details 字段"""
-        from app.core.exceptions import app_exception_handler, ValidationException
-        import json
-        exc = ValidationException(message="校验失败", details={"field": "name"})
-        response = await app_exception_handler(mock_request, exc)
-        body = json.loads(response.body.decode())
-        assert body["details"] == {"field": "name"}
-
-    async def test_generic_exception_handler(self, mock_request):
-        """验证 generic_exception_handler 处理未捕获异常"""
-        from app.core.exceptions import generic_exception_handler
-        import json
-        exc = RuntimeError("意外错误")
-        response = await generic_exception_handler(mock_request, exc)
-        assert response.status_code == 500
-        body = json.loads(response.body.decode())
-        assert body["code"] == "INTERNAL_ERROR"
-        assert body["message"] == "服务器内部错误"
-
-    async def test_validation_exception_handler_with_errors(self, mock_request):
-        """验证 validation_exception_handler 正确提取 FastAPI 校验错误"""
-        from app.core.exceptions import validation_exception_handler
-        import json
-
-        # 模拟 FastAPI RequestValidationError
-        exc = MagicMock()
-        exc.errors.return_value = [
-            {"loc": ("body", "name"), "msg": "字段必填", "type": "value_error.missing"}
+    async def test_validation_exception_handler_preserves_validation_errors(self, request_factory):
+        errors = [
+            {
+                "loc": ("body", "name"),
+                "msg": "Field required",
+                "type": "missing",
+            }
         ]
-        response = await validation_exception_handler(mock_request, exc)
-        assert response.status_code == 400
-        body = json.loads(response.body.decode())
-        assert body["code"] == "VALIDATION_ERROR"
-        assert len(body["details"]["errors"]) == 1
-        assert body["details"]["errors"][0]["field"] == "body.name"
+        response = await validation_exception_handler(
+            request_factory(),
+            RequestValidationError(errors),
+        )
+
+        assert response.status_code == 422
+        assert response_body(response) == {
+            "success": False,
+            "code": "VALIDATION_ERROR",
+            "message": "validation failed",
+            "details": {
+                "errors": [
+                    {
+                        "loc": ["body", "name"],
+                        "msg": "Field required",
+                        "type": "missing",
+                    }
+                ]
+            },
+            "trace_id": "trace-test",
+        }
+
+    async def test_generic_exception_handler_hides_message_when_debug_is_disabled(self, request_factory):
+        response = await generic_exception_handler(
+            request_factory(debug=False),
+            RuntimeError("secret diagnostic"),
+        )
+
+        assert response.status_code == 500
+        assert response_body(response) == {
+            "success": False,
+            "code": "INTERNAL_ERROR",
+            "message": "internal server error",
+            "details": {},
+            "trace_id": "trace-test",
+        }
+
+    async def test_generic_exception_handler_exposes_message_when_debug_is_enabled(self, request_factory):
+        response = await generic_exception_handler(
+            request_factory(debug=True, trace_id=None),
+            RuntimeError("debug diagnostic"),
+        )
+
+        assert response.status_code == 500
+        assert response_body(response) == {
+            "success": False,
+            "code": "INTERNAL_ERROR",
+            "message": "debug diagnostic",
+            "details": {},
+            "trace_id": None,
+        }
 
 
 class TestRegisterExceptionHandlers:
-    """register_exception_handlers 注册测试"""
-
-    def test_register_exception_handlers_adds_three_handlers(self):
-        """验证 register_exception_handlers 注册了 3 个处理器"""
-        from app.core.exceptions import (
-            register_exception_handlers, BaseAppException
-        )
-        from fastapi import FastAPI
-        from fastapi.exceptions import RequestValidationError
-
+    def test_register_exception_handlers_registers_current_exception_classes(self):
         app = FastAPI()
+
         register_exception_handlers(app)
 
-        # 验证注册的异常处理器
-        assert BaseAppException in app.exception_handlers
-        assert RequestValidationError in app.exception_handlers
-        assert Exception in app.exception_handlers
+        assert app.exception_handlers[AppException] is app_exception_handler
+        assert app.exception_handlers[RequestValidationError] is validation_exception_handler
+        assert app.exception_handlers[Exception] is generic_exception_handler
