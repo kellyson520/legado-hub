@@ -73,6 +73,20 @@ class ApiKeyPermissionModel(Base):
     permission_name = Column(String, primary_key=True)
 
 
+class QuotaUsageModel(Base):
+    __tablename__ = "quota_usage"
+    __table_args__ = (UniqueConstraint("api_key_id", "date", name="ux_quota_usage_api_key_date"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    api_key_id = Column(Integer, ForeignKey("api_keys.id"), nullable=False, index=True)
+    date = Column(String, nullable=False, index=True)
+    fetch_count = Column(Integer, nullable=False, default=0)
+    ai_chars = Column(Integer, nullable=False, default=0)
+    storage_mb = Column(Float, nullable=False, default=0.0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class JobModel(Base):
     __tablename__ = 'jobs'
 

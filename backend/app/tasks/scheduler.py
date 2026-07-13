@@ -163,7 +163,8 @@ def job_mark_stale_sources():
         stale_threshold = datetime.utcnow() - timedelta(days=7)
 
         # 使用底层 DB 直接更新（避免领域层逻辑干扰清理任务）
-        from ..database import SessionLocal, BookSourceModel, RssSourceModel
+        from ..database import SessionLocal
+        from ..infrastructure.persistence.sqlite.schema import BookSourceModel, RssSourceModel
         db = SessionLocal()
         try:
             disabled_books = db.query(BookSourceModel).filter(
@@ -217,7 +218,8 @@ def job_reset_daily_quota():
 
     async def _do():
         from ..core.redis_client import redis_client
-        from ..database import SessionLocal, ApiKeyModel
+        from ..database import SessionLocal
+        from ..infrastructure.persistence.sqlite.schema import ApiKeyModel
         db = SessionLocal()
         try:
             keys = db.query(ApiKeyModel).filter(ApiKeyModel.is_enabled == True).all()
@@ -246,7 +248,8 @@ def job_sync_quota_to_db():
 
     async def _do():
         from ..core.redis_client import redis_client
-        from ..database import SessionLocal, ApiKeyModel, QuotaUsageModel
+        from ..database import SessionLocal
+        from ..infrastructure.persistence.sqlite.schema import ApiKeyModel, QuotaUsageModel
         db = SessionLocal()
         try:
             keys = db.query(ApiKeyModel).filter(ApiKeyModel.is_enabled == True).all()
@@ -255,17 +258,25 @@ def job_sync_quota_to_db():
             for key in keys:
                 fetch_count = await redis_client.get_quota(key.id, "fetch_count")
                 ai_chars = await redis_client.get_quota(key.id, "ai_chars")
-                if fetch_count > 0 or ai_chars > 0:
+                storage_mb = await redis_client.get_quota(key.id, "storage_mb")
+                if fetch_count > 0 or ai_chars > 0 or storage_mb > 0:
                     usage = db.query(QuotaUsageModel).filter(
                         QuotaUsageModel.api_key_id == key.id,
                         QuotaUsageModel.date == today
                     ).first()
                     if not usage:
-                        usage = QuotaUsageModel(api_key_id=key.id, date=today, fetch_count=fetch_count, ai_chars=ai_chars)
+                        usage = QuotaUsageModel(
+                            api_key_id=key.id,
+                            date=today,
+                            fetch_count=fetch_count,
+                            ai_chars=ai_chars,
+                            storage_mb=storage_mb,
+                        )
                         db.add(usage)
                     else:
                         usage.fetch_count = max(usage.fetch_count or 0, fetch_count)
                         usage.ai_chars = max(usage.ai_chars or 0, ai_chars)
+                        usage.storage_mb = max(usage.storage_mb or 0, storage_mb)
                     synced += 1
             db.commit()
             if synced > 0:

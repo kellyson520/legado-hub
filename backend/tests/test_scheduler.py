@@ -84,6 +84,7 @@ async def test_job_fetch_subscriptions_success(mock_set_ctx, mock_clear_ctx):
         mock_repo = AsyncMock()
         mock_repo.list_subscriptions = AsyncMock(return_value=mock_subs)
         mock_get_repo.return_value = mock_repo
+        mock_safe_run.side_effect = lambda coroutine: coroutine.close()
 
         # 直接调用 job 函数（内部已调用 _safe_async_run）
         job_fetch_subscriptions()
@@ -323,7 +324,7 @@ async def test_job_sync_quota_to_db_syncs_active_keys(mock_set_ctx, mock_clear_c
     mock_db.close = MagicMock()
 
     mock_redis = AsyncMock()
-    mock_redis.get_quota = AsyncMock(side_effect=[10, 200])  # fetch_count=10, ai_chars=200
+    mock_redis.get_quota = AsyncMock(side_effect=[10, 200, 3.5])  # fetch_count=10, ai_chars=200, storage_mb=3.5
 
     with (
         patch("app.database.SessionLocal", return_value=mock_db),
@@ -334,6 +335,7 @@ async def test_job_sync_quota_to_db_syncs_active_keys(mock_set_ctx, mock_clear_c
     # 有配额使用时，应新增记录
     mock_db.add.assert_called_once()
     mock_db.commit.assert_called_once()
+    assert mock_db.add.call_args.args[0].storage_mb == 3.5
 
 
 @pytest.mark.asyncio
