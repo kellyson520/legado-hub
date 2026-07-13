@@ -1,0 +1,107 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { vi } from 'vitest'
+
+const aiMocks = vi.hoisted(() => ({
+  listAIConversations: vi.fn().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{ id: 'conversation-1', title: '书源助手', created_at: '2026-07-13T00:00:00Z' }],
+    meta: { total: 1 },
+    trace_id: null,
+  }),
+  createAIConversation: vi.fn(),
+  getAIConversation: vi.fn().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      id: 'conversation-1',
+      title: '书源助手',
+      created_at: '2026-07-13T00:00:00Z',
+      messages: [{
+        id: 'message-1',
+        role: 'assistant',
+        mode: 'character',
+        content: '主角是一个谨慎的探索者。',
+        status: 'succeeded',
+        created_at: '2026-07-13T00:00:01Z',
+        tool_calls: [{
+          name: 'list_visible_sources',
+          arguments: {},
+          result: [{ id: 'source-1', name: '示例书源', status: 'published' }],
+        }],
+      }],
+    },
+    meta: {},
+    trace_id: null,
+  }),
+  sendAIConversationMessage: vi.fn().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      id: 'message-2',
+      role: 'assistant',
+      mode: 'character',
+      content: '主角在冲突中选择保护同伴。',
+      status: 'succeeded',
+      created_at: '2026-07-13T00:01:00Z',
+      tool_calls: [],
+    },
+    meta: {},
+    trace_id: null,
+  }),
+}))
+
+vi.mock('@/api/modules/ai', () => aiMocks)
+
+import { AIWorkspacePage } from './AIWorkspacePage'
+
+test('工作台按中文模式发送消息并显示工具引用', async () => {
+  render(<AIWorkspacePage />)
+
+  expect((await screen.findAllByText('书源助手')).length).toBeGreaterThan(0)
+  expect(await screen.findByText('引用的工具结果')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '人物介绍' }))
+  fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '介绍主角' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+  await waitFor(() => {
+    expect(aiMocks.sendAIConversationMessage).toHaveBeenCalledWith('conversation-1', expect.objectContaining({
+      mode: 'character',
+      content: '介绍主角',
+    }))
+  })
+  expect(await screen.findByText('主角在冲突中选择保护同伴。')).toBeInTheDocument()
+})
+
+test('失败消息显示安全提示并允许重试', async () => {
+  aiMocks.getAIConversation.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      id: 'conversation-1',
+      title: '书源助手',
+      created_at: '2026-07-13T00:00:00Z',
+      messages: [{
+        id: 'failed-1',
+        role: 'assistant',
+        mode: 'chat',
+        content: '服务调用失败，请稍后重试。',
+        status: 'failed',
+        created_at: '2026-07-13T00:00:01Z',
+        tool_calls: [],
+      }],
+    },
+    meta: {},
+    trace_id: null,
+  })
+
+  render(<AIWorkspacePage />)
+
+  expect(await screen.findByText('服务调用失败，请稍后重试。')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+})

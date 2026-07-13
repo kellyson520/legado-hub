@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AdminAuditPage } from '@/features/admin/AdminAuditPage'
 import { AdminUsersPage } from '@/features/admin/AdminUsersPage'
 import { AITasksPage } from '@/features/ai/AITasksPage'
+import { AIWorkspacePage } from '@/features/ai/AIWorkspacePage'
 import { EngineRunsPage } from '@/features/engine/EngineRunsPage'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { NovelTasksPage } from '@/features/novel/NovelTasksPage'
@@ -28,6 +29,7 @@ export const appRoutes = [
   { path: '/admin/users', element: <AdminUsersPage /> },
   { path: '/admin/audit', element: <AdminAuditPage /> },
   { path: '/ai/tasks', element: <AITasksPage /> },
+  { path: '/ai/workspace', element: <AIWorkspacePage /> },
   { path: '/translation/jobs', element: <TranslationJobsPage /> },
   { path: '/novel/tasks', element: <NovelTasksPage /> },
   { path: '/operations/jobs', element: <JobsPage /> },
@@ -51,7 +53,10 @@ export function AppRoutes() {
         <Route element={<RequirePermission permission="engine.test" />}><Route path="/engine" element={<EngineRunsPage />} /></Route>
         <Route element={<RequirePermission permission="users.read" />}><Route path="/admin/users" element={<AdminUsersPage />} /></Route>
         <Route element={<RequirePermission permission="system.audit.read" />}><Route path="/admin/audit" element={<AdminAuditPage />} /></Route>
-        <Route element={<RequirePermission permission="ai.run" />}><Route path="/ai/tasks" element={<AITasksPage />} /></Route>
+        <Route element={<RequirePermission permission="ai.run" />}>
+          <Route path="/ai/tasks" element={<AITasksPage />} />
+          <Route path="/ai/workspace" element={<AIWorkspacePage />} />
+        </Route>
         <Route element={<RequirePermission permission="translation.run" />}><Route path="/translation/jobs" element={<TranslationJobsPage />} /></Route>
         <Route element={<RequirePermission permission="novel.manage" />}><Route path="/novel/tasks" element={<NovelTasksPage />} /></Route>
         <Route element={<RequirePermission permission="system.jobs.manage" />}><Route path="/operations/jobs" element={<JobsPage />} /></Route>

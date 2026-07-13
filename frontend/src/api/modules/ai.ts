@@ -1,6 +1,34 @@
 import { apiClient } from '@/api/client'
 import type { ApiEnvelope } from '@/api/types'
 
+export type AIWorkspaceMode = 'chat' | 'character' | 'storyline' | 'world'
+
+export interface AIWorkspaceToolCall {
+  name: string
+  arguments: Record<string, string>
+  result: unknown
+}
+
+export interface AIConversationMessage {
+  id: string
+  role: 'user' | 'assistant'
+  mode: AIWorkspaceMode
+  content: string
+  status: 'succeeded' | 'failed'
+  tool_calls: AIWorkspaceToolCall[]
+  created_at: string
+}
+
+export interface AIConversationSummary {
+  id: string
+  title: string
+  created_at: string
+}
+
+export interface AIConversation extends AIConversationSummary {
+  messages: AIConversationMessage[]
+}
+
 export interface AITaskRow {
   id: string
   name: string
@@ -33,4 +61,28 @@ export async function listAITasks() {
       cost: typeof task.cost === 'number' ? `$${task.cost.toFixed(2)}` : (task.cost ?? '$0.00'),
     })),
   } satisfies ApiEnvelope<AITaskRow[]>
+}
+
+export function listAIConversations(): Promise<ApiEnvelope<AIConversationSummary[]>> {
+  return apiClient.get('/ai/conversations')
+}
+
+export function createAIConversation(payload: { title?: string }): Promise<ApiEnvelope<AIConversationSummary>> {
+  return apiClient.post('/ai/conversations', payload)
+}
+
+export function getAIConversation(conversationId: string): Promise<ApiEnvelope<AIConversation>> {
+  return apiClient.get(`/ai/conversations/${conversationId}`)
+}
+
+export function sendAIConversationMessage(
+  conversationId: string,
+  payload: {
+    content: string
+    mode: AIWorkspaceMode
+    tool_requests?: Array<{ name: string; arguments: Record<string, string> }>
+    source_version_id?: string
+  }
+): Promise<ApiEnvelope<AIConversationMessage>> {
+  return apiClient.post(`/ai/conversations/${conversationId}/messages`, payload)
 }

@@ -24,3 +24,24 @@ test('unknown routes redirect to login when unauthenticated', async () => {
 
   expect(await screen.findByRole('heading', { name: /sign in/i })).toBeInTheDocument()
 })
+
+test('AI 工作台要求 ai.run 权限', async () => {
+  render(
+    <MemoryRouter
+      initialEntries={['/ai/workspace']}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
+      <AuthProvider
+        bootstrapSession={{
+          accessToken: 'token',
+          refreshToken: 'refresh',
+          user: { id: '1', username: 'reader', permissions: [] },
+        }}
+      >
+        <AppRoutes />
+      </AuthProvider>
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('Access denied')).toBeInTheDocument()
+})
