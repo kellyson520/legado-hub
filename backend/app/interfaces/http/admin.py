@@ -227,7 +227,7 @@ async def list_audit(
 async def revoke_user_sessions(
     user_id: int,
     identity: RequestIdentity = Depends(get_current_identity),
-    _=Depends(require_permission(Permission.SYSTEM_JOBS_MANAGE)),
+    _=Depends(require_permission(Permission.USERS_WRITE)),
     service: AuthAppService = Depends(get_auth_service),
 ):
     await service.revoke_user_sessions(user_id, identity.user_id)

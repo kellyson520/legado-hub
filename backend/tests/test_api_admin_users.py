@@ -69,3 +69,22 @@ def test_cannot_disable_self_or_last_enabled_admin(monkeypatch, tmp_path):
     client, admin_headers, _, admin = _setup_client(monkeypatch, tmp_path)
     self_disable = client.post(f"/api/admin/users/{admin.id}/disable", headers=admin_headers)
     assert self_disable.status_code == 422
+
+
+def test_revoke_user_sessions_requires_users_write_permission(monkeypatch, tmp_path):
+    client, _, _, admin = _setup_client(monkeypatch, tmp_path)
+
+    from app.core.security import create_access_token
+
+    users_write_headers = {
+        "Authorization": f"Bearer {create_access_token({'sub': str(admin.id), 'permissions': ['users.write']})}"
+    }
+    jobs_manage_headers = {
+        "Authorization": f"Bearer {create_access_token({'sub': str(admin.id), 'permissions': ['system.jobs.manage']})}"
+    }
+
+    allowed = client.post(f"/api/admin/sessions/{admin.id}/revoke", headers=users_write_headers)
+    denied = client.post(f"/api/admin/sessions/{admin.id}/revoke", headers=jobs_manage_headers)
+
+    assert allowed.status_code == 200
+    assert denied.status_code == 403

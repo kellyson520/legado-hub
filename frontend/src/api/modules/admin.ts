@@ -29,6 +29,9 @@ export async function listAuditLogs() {
 }
 
 export async function createUser(payload: { username: string; display_name: string; role: 'admin' | 'user'; password: string }) { return apiClient.post<AdminUserRow>('/admin/users', payload) }
-export async function updateUser(id: string, payload: Partial<Pick<AdminUserRow, 'display_name' | 'role'>>) { return apiClient.raw.patch(`/admin/users/${id}`, payload) }
+export async function updateUser(id: string, payload: Partial<Pick<AdminUserRow, 'display_name' | 'role'>>) {
+  return (await apiClient.raw.patch<ApiEnvelope<AdminUserRow>>(`/admin/users/${id}`, payload)).data
+}
 export async function setUserEnabled(id: string, enabled: boolean) { return apiClient.post<AdminUserRow>(`/admin/users/${id}/${enabled ? 'enable' : 'disable'}`) }
 export async function resetUserPassword(id: string, password: string) { return apiClient.post<{ user_id: string }>(`/admin/users/${id}/reset-password`, { password }) }
+export async function revokeUserSessions(id: string) { return apiClient.post<{ user_id: string }>(`/admin/sessions/${id}/revoke`) }
