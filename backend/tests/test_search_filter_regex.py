@@ -9,6 +9,7 @@
 """
 
 import re
+from types import SimpleNamespace
 
 import pytest
 import httpx
@@ -16,6 +17,18 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 from app.domain.entities.source import BookSource, RssSource, FilterRule
 from app.core.compatibility import compat_engine
+
+
+def _auth_headers(*permissions: str) -> dict[str, str]:
+    """构造当前 HTTP API 使用的 JWT 权限请求头。"""
+    from app.core.security import create_access_token
+
+    token = create_access_token({
+        "sub": "7",
+        "permissions": list(permissions),
+        "sid": "search-filter-regex-tests",
+    })
+    return {"Authorization": f"Bearer {token}"}
 
 
 # ==================== Part 5: 共享 fixture ====================
@@ -66,7 +79,11 @@ class TestEvaluateEndpoint:
             "ruleToc": {"chapterList": "test"},
             "ruleContent": {"content": "test"},
         }
-        resp = await client.post("/api/engine/evaluate", json=source)
+        resp = await client.post(
+            "/api/engine/evaluate",
+            json={"source": source},
+            headers=_auth_headers("engine.evaluate"),
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert data["data"]["score"] == 100
@@ -75,9 +92,13 @@ class TestEvaluateEndpoint:
     async def test_evaluate_missing_fields(self, client):
         """评估缺少字段的书源 - 扣分"""
         source = {"bookSourceUrl": "https://test.com", "bookSourceName": "测试"}
-        # 缺少 ruleSearch(-15), ruleToc(-15), ruleContent(-15), header(-5), searchUrl(-10) = 40分
-        resp = await client.post("/api/engine/evaluate", json=source)
-        assert resp.json()["data"]["score"] == 40
+        # 当前规则校验仅要求 ruleSearch/ruleToc/ruleContent；每个缺失项扣 30 分。
+        resp = await client.post(
+            "/api/engine/evaluate",
+            json={"source": source},
+            headers=_auth_headers("engine.evaluate"),
+        )
+        assert resp.json()["data"]["score"] == 10
         assert resp.json()["data"]["grade"] == "D"
 
     async def test_evaluate_search_url_no_placeholder(self, client):
@@ -91,189 +112,125 @@ class TestEvaluateEndpoint:
             "ruleToc": {"chapterList": "test"},
             "ruleContent": {"content": "test"},
         }
-        resp = await client.post("/api/engine/evaluate", json=source)
-        # 100 - 10 (searchUrl无占位符) = 90
-        assert resp.json()["data"]["score"] == 90
+        resp = await client.post(
+            "/api/engine/evaluate",
+            json={"source": source},
+            headers=_auth_headers("engine.evaluate"),
+        )
+        # 当前规则校验不再要求 searchUrl 中包含关键词占位符。
+        assert resp.json()["data"]["score"] == 100
         assert resp.json()["data"]["grade"] == "A"
 
     async def test_evaluate_usable_threshold(self, client):
-        """50分边界：刚好可用"""
-        # 缺少3个规则(-45) + header(-5) = 50分, is_usable=True
+        """缺少全部核心规则的书源不可用。"""
         source = {
             "bookSourceUrl": "https://test.com",
             "bookSourceName": "测试",
             "searchUrl": "/search?key={key}",
         }
-        resp = await client.post("/api/engine/evaluate", json=source)
+        resp = await client.post(
+            "/api/engine/evaluate",
+            json={"source": source},
+            headers=_auth_headers("engine.evaluate"),
+        )
         data = resp.json()["data"]
-        assert data["score"] == 50
-        assert data["is_usable"] is True
-        assert data["grade"] == "C"
+        assert data["score"] == 10
+        assert data["usable"] is False
+        assert data["grade"] == "D"
 
 
 class TestRepairEndpoint:
     """POST /api/engine/repair"""
 
-    async def test_repair_relative_path(self, client):
-        """修复相对路径"""
-        source = {
-            "bookSourceUrl": "https://test.com",
-            "bookSourceName": "测试",
-            "ruleSearch": {"bookList": "test"},
-            "ruleToc": {"chapterUrl": "/chapter/1.html"},  # 以 / 开头
-            "ruleContent": {"content": "test@html"},
-        }
-        resp = await client.post("/api/engine/repair", json=source)
-        data = resp.json()["data"]
-        assert "修复章节链接相对路径" in data["fixes"]
-        assert "##$##$" in data["source"]["ruleToc"]["chapterUrl"]
+    async def test_repair_creates_candidate_version(self, client, monkeypatch):
+        """修复操作基于已保存的版本创建新的候选版本。"""
+        runtime = MagicMock()
+        runtime.repair = AsyncMock(return_value={
+            "source_version_id": "version-repaired",
+            "status": "candidate",
+            "repaired_from": "version-original",
+        })
+        monkeypatch.setattr(
+            "app.interfaces.http.engine.build_source_runtime_service",
+            lambda: runtime,
+        )
 
-    async def test_repair_missing_header(self, client):
-        """修复缺少header"""
-        source = {
-            "bookSourceUrl": "https://test.com",
-            "bookSourceName": "测试",
-            "ruleSearch": {"bookList": "test"},
-            "ruleToc": {"chapterList": "test"},
-            "ruleContent": {"content": "test"},
-        }
-        resp = await client.post("/api/engine/repair", json=source)
-        data = resp.json()["data"]
-        assert "添加默认请求头" in data["fixes"]
-        assert data["source"]["header"] is not None
+        resp = await client.post(
+            "/api/engine/repair",
+            json={"source_version_id": "version-original"},
+            headers=_auth_headers("engine.repair"),
+        )
 
-    async def test_repair_content_rule(self, client):
-        """修复content规则缺少@html"""
-        source = {
-            "bookSourceUrl": "https://test.com",
-            "bookSourceName": "测试",
-            "header": "UA",
-            "ruleSearch": {"bookList": "test"},
-            "ruleToc": {"chapterList": "test"},
-            "ruleContent": {"content": "id.content"},  # 无@html也无@text
+        assert resp.status_code == 200
+        assert resp.json()["data"] == {
+            "source_version_id": "version-repaired",
+            "status": "candidate",
+            "repaired_from": "version-original",
         }
-        resp = await client.post("/api/engine/repair", json=source)
-        data = resp.json()["data"]
-        assert "内容规则添加@html标记" in data["fixes"]
+        runtime.repair.assert_awaited_once_with("version-original", "7")
 
-    async def test_repair_search_url_placeholder(self, client):
-        """修复搜索URL缺少占位符"""
-        source = {
-            "bookSourceUrl": "https://test.com",
-            "bookSourceName": "测试",
-            "header": "UA",
-            "searchUrl": "https://test.com/search",
-            "ruleSearch": {"bookList": "test"},
-            "ruleToc": {"chapterList": "test"},
-            "ruleContent": {"content": "test@html"},
-        }
-        resp = await client.post("/api/engine/repair", json=source)
-        data = resp.json()["data"]
-        assert "搜索URL添加关键词占位符" in data["fixes"]
+    async def test_repair_requires_source_version_id(self, client):
+        """当前工作流不再接受裸书源，必须指定待修复版本。"""
+        resp = await client.post(
+            "/api/engine/repair",
+            json={},
+            headers=_auth_headers("engine.repair"),
+        )
 
-    async def test_repair_timeout(self, client):
-        """修复超时时间"""
-        source = {
-            "bookSourceUrl": "https://test.com",
-            "bookSourceName": "测试",
-            "header": "UA",
-            "respondTime": 1000,
-            "ruleSearch": {"bookList": "test"},
-            "ruleToc": {"chapterList": "test"},
-            "ruleContent": {"content": "test@html"},
-        }
-        resp = await client.post("/api/engine/repair", json=source)
-        data = resp.json()["data"]
-        assert "响应超时时间调整为180秒" in data["fixes"]
-        assert data["source"]["respondTime"] == 180000
+        assert resp.status_code == 422
 
-    async def test_repair_score_improvement(self, client):
-        """修复后评分应该提升"""
-        bad_source = {"bookSourceUrl": "https://test.com", "bookSourceName": "测试"}
-        resp = await client.post("/api/engine/repair", json=bad_source)
-        data = resp.json()["data"]
-        assert data["score_after"]["score"] > data["score_before"]["score"]
+    async def test_repair_requires_permission(self, client):
+        """已认证但没有 engine.repair 权限的请求会被拒绝。"""
+        resp = await client.post(
+            "/api/engine/repair",
+            json={"source_version_id": "version-original"},
+            headers=_auth_headers("engine.test"),
+        )
+
+        assert resp.status_code == 403
 
 
 class TestGenerateEndpoint:
     """POST /api/engine/generate"""
 
-    async def test_generate_with_mock(self, client):
-        """Mock generator，测试generate端点流程"""
-        mock_result = {
-            "source": {
-                "bookSourceUrl": "https://test.com",
-                "bookSourceName": "Mock源",
-                "searchUrl": "/search?key={key}",
-                "ruleSearch": {"bookList": "test"},
-                "ruleToc": {"chapterList": "test"},
-                "ruleContent": {"content": "test@html"},
-                "header": "User-Agent: test",
-            },
-            "logs": ["自动解析完成"],
-            "message": "生成成功",
+    async def test_generate_creates_candidate_version(self, client, monkeypatch):
+        """生成请求会保存候选版本并转交当前用户身份。"""
+        runtime = MagicMock()
+        runtime.generate = AsyncMock(return_value={
+            "source_version_id": "version-generated",
+            "status": "candidate",
+            "source_type": "book",
+            "source_id": "https://test.com",
+        })
+        monkeypatch.setattr(
+            "app.interfaces.http.engine.build_source_runtime_service",
+            lambda: runtime,
+        )
+        payload = {
+            "url": "https://test.com",
+            "source_type": "book",
+            "sample": {"html": "<html>sample</html>"},
         }
-        # generate 端点有 Depends(get_auth_context)，需要用 dependency_overrides 绕过认证
-        from app.main import app
-        from app.core.dependencies import get_auth_context
 
-        async def fake_auth():
-            ctx = MagicMock()
-            ctx.can_edit_source = False
-            return ctx
-
-        with patch("app.interfaces.api.v0.engine.generator") as mock_gen, \
-             patch("app.interfaces.api.v0.engine.get_source_service") as mock_svc:
-            app.dependency_overrides[get_auth_context] = fake_auth
-            mock_svc.return_value = MagicMock()
-
-            mock_gen.generate = AsyncMock(return_value=mock_result)
-            try:
-                resp = await client.post("/api/engine/generate", json={"url": "https://test.com", "sourceType": "book"})
-            finally:
-                app.dependency_overrides.clear()
+        resp = await client.post(
+            "/api/engine/generate",
+            json=payload,
+            headers=_auth_headers("engine.generate"),
+        )
 
         assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["source"] is not None
-        assert data["compatibility"]["score"] >= 70
+        assert resp.json()["data"]["source_version_id"] == "version-generated"
+        runtime.generate.assert_awaited_once_with(payload, "7")
 
-    async def test_generate_fallback_trigger(self, client):
-        """自动解析质量不足时触发兜底"""
-        # 返回低质量源（评分<70），触发 compat_engine 兜底
-        mock_result = {
-            "source": {
-                "bookSourceUrl": "https://biquge123.cc",
-                "bookSourceName": "笔趣阁",
-                # 缺少 ruleSearch, ruleToc, ruleContent -> 评分低
-            },
-            "logs": ["自动解析（部分字段）"],
-        }
-        from app.main import app
-        from app.core.dependencies import get_auth_context
+    async def test_generate_requires_permission(self, client):
+        """已认证但没有 engine.generate 权限的请求会被拒绝。"""
+        resp = await client.post(
+            "/api/engine/generate",
+            json={"url": "https://test.com"},
+            headers=_auth_headers("engine.test"),
+        )
 
-        async def fake_auth():
-            ctx = MagicMock()
-            ctx.can_edit_source = False
-            return ctx
-
-        with patch("app.interfaces.api.v0.engine.generator") as mock_gen, \
-             patch("app.interfaces.api.v0.engine.get_source_service") as mock_svc:
-            app.dependency_overrides[get_auth_context] = fake_auth
-            mock_svc.return_value = MagicMock()
-
-            mock_gen.generate = AsyncMock(return_value=mock_result)
-            try:
-                resp = await client.post("/api/engine/generate", json={"url": "https://biquge123.cc", "sourceType": "book"})
-            finally:
-                app.dependency_overrides.clear()
-
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        # 兜底应该补充了规则
-        assert any("兜底" in log for log in data["logs"])
-        # biquge 匹配笔趣阁规则模板
-        assert data["source"].get("ruleSearch") is not None
+        assert resp.status_code == 403
 
 
 # ==================== Part 2: 源筛选流程测试 ====================
@@ -357,14 +314,14 @@ class TestApplyFiltersWithRealSources:
 # ==================== Part 3: 正则清洗测试 ====================
 
 
-class TestCleanHubFields:
-    """测试 _clean_hub_fields 移除 Hub 内部字段"""
+class TestLegadoExportSanitization:
+    """测试当前书源导出的字段白名单和敏感字段清理。"""
 
-    def test_remove_internal_fields(self):
-        """移除 Hub 内部字段"""
-        from app.routers.output import _clean_hub_fields
+    async def test_export_omits_internal_fields(self):
+        """导出只保留 Legado 字段白名单，不暴露运行时内部字段。"""
+        from app.application.services.source_runtime_service import SourceRuntimeService
 
-        d = {
+        source = {
             "bookSourceUrl": "https://test.com",
             "bookSourceName": "测试",
             "sourceStatus": "ok",
@@ -375,32 +332,46 @@ class TestCleanHubFields:
             "updatedAt": "2024-01-01",
             "id": 123,
         }
-        cleaned = _clean_hub_fields(d)
-        assert "bookSourceUrl" in cleaned
-        assert "bookSourceName" in cleaned
-        assert "sourceStatus" not in cleaned
-        assert "lastCheckTime" not in cleaned
-        assert "errorMsg" not in cleaned
-        assert "sourceOrigin" not in cleaned
-        assert "createdAt" not in cleaned
-        assert "updatedAt" not in cleaned
-        assert "id" not in cleaned
+        repo = MagicMock()
+        repo.list_published_versions.return_value = [
+            SimpleNamespace(payload=source, status="published", created_by="owner"),
+        ]
+        repo.list_recent_versions.return_value = []
 
-    def test_remove_empty_values(self):
-        """移除空值（None 和空字符串），但保留 0"""
-        from app.routers.output import _clean_hub_fields
+        exported = await SourceRuntimeService(repo).export_legado_sources("7")
 
-        d = {
+        assert exported == [{
             "bookSourceUrl": "https://test.com",
-            "bookSourceName": "",
-            "header": None,
+            "bookSourceName": "测试",
+        }]
+
+    async def test_export_strips_sensitive_nested_values(self):
+        """允许字段中的 Cookie 和 Authorization 等敏感信息必须被剔除。"""
+        from app.application.services.source_runtime_service import SourceRuntimeService
+
+        source = {
+            "bookSourceUrl": "https://test.com",
+            "bookSourceName": "测试",
+            "header": {
+                "User-Agent": "Legado Hub",
+                "Cookie": "session=secret",
+                "Authorization": "Bearer secret",
+            },
             "customOrder": 0,
         }
-        cleaned = _clean_hub_fields(d)
-        assert "bookSourceUrl" in cleaned
-        assert "bookSourceName" not in cleaned
-        assert "header" not in cleaned
-        assert "customOrder" in cleaned   # 0 != ""，应保留
+        repo = MagicMock()
+        repo.list_published_versions.return_value = [
+            SimpleNamespace(payload=source, status="published", created_by="owner"),
+        ]
+        repo.list_recent_versions.return_value = []
+
+        exported = await SourceRuntimeService(repo).export_legado_sources("7")
+
+        assert exported == [{
+            "bookSourceUrl": "https://test.com",
+            "bookSourceName": "测试",
+            "header": {"User-Agent": "Legado Hub"},
+        }]
 
 
 class TestToLegadoDict:
