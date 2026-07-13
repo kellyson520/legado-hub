@@ -97,7 +97,10 @@ def build_provider_repository() -> SQLiteProviderRepository:
 
 
 def build_source_runtime_service() -> SourceRuntimeService:
-    return SourceRuntimeService(build_source_runtime_repository())
+    return SourceRuntimeService(
+        build_source_runtime_repository(),
+        audit=build_auth_repository(),
+    )
 
 
 def build_source_review_service() -> SourceReviewService:

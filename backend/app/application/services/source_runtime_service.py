@@ -1,4 +1,5 @@
 from app.core.exceptions import NotFoundException, ValidationException
+from app.domain.entities.auth import AuditEvent
 from app.domain.repositories.source_runtime_repo import SourceRuntimeRepository
 
 
@@ -34,8 +35,9 @@ def _sanitize_legado_value(value):
 
 
 class SourceRuntimeService:
-    def __init__(self, repo: SourceRuntimeRepository):
+    def __init__(self, repo: SourceRuntimeRepository, audit=None):
         self._repo = repo
+        self._audit = audit
 
     async def generate(self, payload: dict, actor_id: str) -> dict:
         source_type = payload.get("source_type", "book")
@@ -112,6 +114,157 @@ class SourceRuntimeService:
             result.append({field: _sanitize_legado_value(source[field]) for field in _LEGADO_EXPORT_FIELDS if field in source})
             exported_urls.add(url)
         return result
+
+    async def get_version_detail(self, source_version_id: str) -> dict:
+        version = self._repo.get_version(source_version_id)
+        if version is None:
+            raise NotFoundException("source version not found")
+        runs = self._repo.list_test_runs(source_version_id)
+        latest_run = runs[0] if runs else None
+        content_status = self._content_status(version.payload, latest_run.step_results if latest_run else None)
+        return {
+            "source_version_id": version.id,
+            "source_type": version.source_type,
+            "source_id": version.source_id,
+            "status": version.status,
+            "payload": _sanitize_legado_value(version.payload),
+            "created_by": version.created_by,
+            "created_at": version.created_at.isoformat() if version.created_at else None,
+            "latest_validation": self._serialize_test_run(latest_run),
+            "content_status": content_status,
+            "publish_allowed": self._publish_allowed(version.status, latest_run, content_status),
+        }
+
+    async def create_rule_draft(self, source_version_id: str, payload: dict, actor_id: str) -> dict:
+        version = self._repo.get_version(source_version_id)
+        if version is None:
+            raise NotFoundException("source version not found")
+        if not isinstance(payload, dict):
+            raise ValidationException("Rule payload must be an object")
+
+        draft_payload = {**version.payload, **payload}
+        self._validate_rule_payload(draft_payload)
+        draft = self._repo.create_candidate_version(
+            source_type=version.source_type,
+            source_id=version.source_id,
+            payload=_sanitize_legado_value(draft_payload),
+            created_by=actor_id,
+        )
+        await self._audit_event(actor_id, "source_rule.draft", draft.id)
+        return {
+            "source_version_id": draft.id,
+            "status": draft.status,
+            "source_type": draft.source_type,
+            "source_id": draft.source_id,
+        }
+
+    async def validate_rule_version(self, source_version_id: str, actor_id: str) -> dict:
+        version = self._repo.get_version(source_version_id)
+        if version is None:
+            raise NotFoundException("source version not found")
+
+        content_status = self._content_status(version.payload)
+        steps: dict[str, dict] = {}
+        diagnostics: list[str] = []
+        for field, step_name in (
+            ("ruleSearch", "search"),
+            ("ruleToc", "toc"),
+            ("ruleContent", "content"),
+        ):
+            rule = version.payload.get(field)
+            passed = isinstance(rule, dict) and bool(rule)
+            if step_name == "content" and content_status == "verification_wall":
+                passed = False
+            steps[step_name] = {
+                "passed": passed,
+                "elapsed_ms": 0,
+                "status": content_status if step_name == "content" else ("ready" if passed else "missing_rule"),
+            }
+            if not passed:
+                diagnostics.append(
+                    "正文访问受阻，禁止发布"
+                    if step_name == "content" and content_status == "verification_wall"
+                    else f"{field} is required"
+                )
+
+        has_book_info = isinstance(version.payload.get("ruleBookInfo"), dict) and bool(version.payload["ruleBookInfo"])
+        steps["book_info"] = {
+            "passed": has_book_info,
+            "elapsed_ms": 0,
+            "status": "ready" if has_book_info else "optional_missing",
+        }
+        if content_status == "verification_wall" or any(not steps[name]["passed"] for name in ("search", "toc", "content")):
+            score, grade = 0, "F"
+        elif has_book_info:
+            score, grade = 100, "A"
+        else:
+            score, grade = 85, "B"
+
+        run = self._repo.record_test_run(
+            source_version_id=version.id,
+            trigger="rule_editor",
+            score=score,
+            grade=grade,
+            step_results=steps,
+            diagnostics=diagnostics,
+        )
+        await self._audit_event(actor_id, "source_rule.validate", version.id)
+        return {
+            "source_version_id": version.id,
+            "validation_id": run.id,
+            "score": run.score,
+            "grade": run.grade,
+            "step_results": run.step_results,
+            "diagnostics": run.diagnostics,
+            "content_status": content_status,
+            "publish_allowed": self._publish_allowed(version.status, run, content_status),
+        }
+
+    async def publish_rule_version(self, source_version_id: str, actor_id: str) -> dict:
+        version = self._repo.get_version(source_version_id)
+        if version is None:
+            raise NotFoundException("source version not found")
+        if version.status != "candidate":
+            raise ValidationException("Only candidate source versions can be published")
+
+        latest_runs = self._repo.list_test_runs(source_version_id)
+        latest_run = latest_runs[0] if latest_runs else None
+        content_status = self._content_status(version.payload, latest_run.step_results if latest_run else None)
+        if content_status == "verification_wall":
+            raise ValidationException("verification_wall blocks publication")
+        if latest_run is None or latest_run.grade not in {"A", "B"}:
+            raise ValidationException("A or B validation grade is required before publication")
+
+        superseded_version_ids: list[str] = []
+        for item in self._repo.list_versions(version.source_type, version.source_id):
+            if item.id != version.id and item.status == "published":
+                self._repo.update_version_status(item.id, "superseded")
+                superseded_version_ids.append(item.id)
+
+        published = self._repo.update_version_status(version.id, "published")
+        deployment = self._repo.record_deployment(
+            source_version_id=published.id,
+            action="source_rule.publish",
+            status=published.status,
+            quality_gate={
+                "allowed": True,
+                "grade": latest_run.grade,
+                "content_status": content_status,
+                "superseded_version_ids": superseded_version_ids,
+            },
+            actor_id=actor_id,
+        )
+        await self._audit_event(actor_id, "source_rule.publish", published.id)
+        return {
+            "source_version_id": published.id,
+            "status": published.status,
+            "grade": latest_run.grade,
+            "content_status": content_status,
+            "publish_allowed": True,
+            "deployment_id": deployment.id,
+            "superseded_version_ids": superseded_version_ids,
+            "published_at": published.published_at.isoformat() if published.published_at else None,
+        }
 
     async def repair(self, source_version_id: str, actor_id: str) -> dict:
         version = self._repo.get_version(source_version_id)
@@ -290,3 +443,63 @@ class SourceRuntimeService:
                 }
             )
         return rows
+
+    @staticmethod
+    def _validate_rule_payload(payload: dict) -> None:
+        name = payload.get("bookSourceName")
+        url = payload.get("bookSourceUrl")
+        if not isinstance(name, str) or not name.strip():
+            raise ValidationException("bookSourceName is required")
+        if not isinstance(url, str) or not url.strip():
+            raise ValidationException("bookSourceUrl is required")
+        invalid_field = next(
+            (field for field in _LEGADO_RULE_FIELDS if field in payload and not isinstance(payload[field], dict)),
+            None,
+        )
+        if invalid_field:
+            raise ValidationException(f"{invalid_field} must be an object")
+
+    @staticmethod
+    def _content_status(payload: dict, step_results: dict | None = None) -> str:
+        if isinstance(step_results, dict):
+            content_step = step_results.get("content")
+            if isinstance(content_step, dict) and isinstance(content_step.get("status"), str):
+                return content_step["status"]
+        if isinstance(payload.get("content_status"), str):
+            return payload["content_status"]
+        autonomous_build = payload.get("autonomous_build")
+        if isinstance(autonomous_build, dict):
+            probe = autonomous_build.get("probe")
+            if isinstance(probe, dict) and isinstance(probe.get("content_status"), str):
+                return probe["content_status"]
+        return "ready"
+
+    @staticmethod
+    def _serialize_test_run(run) -> dict | None:
+        if run is None:
+            return None
+        return {
+            "id": run.id,
+            "trigger": run.trigger,
+            "score": run.score,
+            "grade": run.grade,
+            "step_results": run.step_results,
+            "diagnostics": run.diagnostics,
+            "created_at": run.created_at.isoformat() if run.created_at else None,
+        }
+
+    @staticmethod
+    def _publish_allowed(status: str, run, content_status: str) -> bool:
+        return status == "candidate" and content_status != "verification_wall" and run is not None and run.grade in {"A", "B"}
+
+    async def _audit_event(self, actor_id: str, action: str, source_version_id: str) -> None:
+        if self._audit is None:
+            return
+        await self._audit.record_audit(
+            AuditEvent(
+                actor_id=int(actor_id),
+                action=action,
+                resource="source_rule",
+                detail=source_version_id,
+            )
+        )

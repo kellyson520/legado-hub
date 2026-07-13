@@ -101,6 +101,74 @@ async def import_book_sources(
     }
 
 
+@router.get("/versions/{source_version_id}")
+async def get_source_rule_version(
+    source_version_id: str,
+    _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
+):
+    data = await build_source_runtime_service().get_version_detail(source_version_id)
+    return {
+        "success": True,
+        "code": "OK",
+        "message": "书源规则版本已加载",
+        "data": data,
+        "meta": {},
+        "trace_id": None,
+    }
+
+
+@router.post("/versions/{source_version_id}/drafts")
+async def create_source_rule_draft(
+    source_version_id: str,
+    payload: dict = Body(...),
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    data = await build_source_runtime_service().create_rule_draft(source_version_id, payload, str(identity.user_id))
+    return {
+        "success": True,
+        "code": "OK",
+        "message": "书源规则候选版本已保存",
+        "data": data,
+        "meta": {},
+        "trace_id": None,
+    }
+
+
+@router.post("/versions/{source_version_id}/validate")
+async def validate_source_rule_version(
+    source_version_id: str,
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    data = await build_source_runtime_service().validate_rule_version(source_version_id, str(identity.user_id))
+    return {
+        "success": True,
+        "code": "OK",
+        "message": "书源规则验证完成",
+        "data": data,
+        "meta": {},
+        "trace_id": None,
+    }
+
+
+@router.post("/versions/{source_version_id}/publish")
+async def publish_source_rule_version(
+    source_version_id: str,
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    data = await build_source_runtime_service().publish_rule_version(source_version_id, str(identity.user_id))
+    return {
+        "success": True,
+        "code": "OK",
+        "message": "书源规则版本已发布",
+        "data": data,
+        "meta": {},
+        "trace_id": None,
+    }
+
+
 @router.get("/{source_type}/{source_id}/versions")
 async def list_source_versions(
     source_type: str,
