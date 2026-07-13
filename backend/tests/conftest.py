@@ -51,6 +51,37 @@ def cache_provider():
     return MemoryCacheProvider()
 
 
+@pytest.fixture
+def sample_book_source_data():
+    return {
+        "bookSourceUrl": "https://example.com",
+        "bookSourceName": "测试书源",
+        "enabled": True,
+        "sourceStatus": "ok",
+    }
+
+
+@pytest.fixture
+def sample_rss_source_data():
+    return {
+        "sourceUrl": "https://rss.example.com/feed.xml",
+        "sourceName": "测试RSS源",
+        "enabled": True,
+        "sourceStatus": "ok",
+    }
+
+
+@pytest.fixture
+def sample_subscription_data():
+    return {
+        "id": 1,
+        "name": "测试订阅",
+        "url": "https://example.com/source",
+        "subType": "book",
+        "enabled": True,
+    }
+
+
 @pytest_asyncio.fixture
 async def started_event_bus():
     from app.core.events import MemoryEventBus
