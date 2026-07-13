@@ -257,7 +257,7 @@ class TestCssParsing:
 class TestSearchResultModel:
     """SearchResult 数据模型测试"""
 
-    def test_search_result_fields(self):
+    async def test_search_result_fields(self):
         from app.services.book_searcher import SearchResult
         r = SearchResult(
             name="斗罗大陆",
@@ -271,7 +271,7 @@ class TestSearchResultModel:
         assert r.author == "唐家三少"
         assert r.sourceName == "测试源"
 
-    def test_search_result_to_dict(self):
+    async def test_search_result_to_dict(self):
         from app.services.book_searcher import SearchResult
         r = SearchResult(name="斗罗大陆", author="唐家三少")
         d = {k: v for k, v in r.__dict__.items() if v}
