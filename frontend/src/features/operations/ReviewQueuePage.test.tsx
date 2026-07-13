@@ -1,0 +1,216 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { vi } from 'vitest'
+
+const operationsMocks = vi.hoisted(() => ({
+  listReviewQueueCandidates: vi.fn().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [
+      {
+        id: 'source-review-1',
+        itemType: 'source_review',
+        workId: 'source-version-ops-1',
+        sourceChapterId: 'source-version-ops-1',
+        proposalType: 'build_escalation',
+        summary: 'Manual source build review required',
+        subject: 'build_escalation',
+        relation: 'review',
+        objectName: 'https://example.test/escalated',
+        evidence: 'risk:high, budget:blocked',
+        status: 'candidate',
+        createdBy: 'builder-1',
+        createdAt: '2026-07-12T12:30:00Z',
+      },
+      {
+        id: 'source-version-1',
+        itemType: 'source_version',
+        workId: 'sample',
+        sourceChapterId: 'source-version-1',
+        proposalType: 'source_version_publish',
+        summary: 'Publish source candidate (grade A)',
+        subject: 'book',
+        relation: 'publish',
+        objectName: 'https://example.test/books',
+        evidence: 'https://example.test/books',
+        status: 'candidate',
+        createdBy: 'tenant-console',
+        createdAt: '2026-07-12T12:00:00Z',
+      },
+      {
+        id: 'translation-1',
+        itemType: 'translation_job',
+        sourceChapterId: 'variant-1',
+        proposalType: 'translation_review',
+        summary: 'Translation memory review (2 chunks)',
+        subject: 'zh -> en',
+        relation: 'review',
+        objectName: 'variant-1',
+        evidence: 'Translated content preview',
+        status: 'candidate',
+        createdBy: 'translator-1',
+        createdAt: '2026-07-12T11:00:00Z',
+      },
+      {
+        id: 'proposal-1',
+        itemType: 'knowledge_proposal',
+        workId: 'w-review',
+        sourceChapterId: 'c-review',
+        proposalType: 'character_relation',
+        summary: 'Lin trusts Mei',
+        subject: 'Lin',
+        relation: 'trusts',
+        objectName: 'Mei',
+        evidence: 'Lin trusts Mei',
+        status: 'candidate',
+        createdBy: 'agent',
+        createdAt: '2026-07-12T10:00:00Z',
+      },
+    ],
+    meta: { total: 4 },
+    trace_id: null,
+  }),
+  resolveReviewQueueItem: vi.fn(),
+}))
+
+vi.mock('@/api/modules/operations', async () => {
+  const actual = await vi.importActual<typeof import('@/api/modules/operations')>('@/api/modules/operations')
+  return {
+    ...actual,
+    listReviewQueueCandidates: operationsMocks.listReviewQueueCandidates,
+    resolveReviewQueueItem: operationsMocks.resolveReviewQueueItem,
+  }
+})
+
+import { ReviewQueuePage } from './ReviewQueuePage'
+
+beforeEach(() => {
+  operationsMocks.resolveReviewQueueItem.mockReset()
+})
+
+test('review queue page renders source, knowledge, and translation review candidates', async () => {
+  render(<ReviewQueuePage />)
+
+  expect(await screen.findByRole('heading', { name: 'Review queue' })).toBeInTheDocument()
+  expect(screen.getByText('build_escalation')).toBeInTheDocument()
+  expect(screen.getByText('Manual source build review required')).toBeInTheDocument()
+  expect(screen.getByText('character_relation')).toBeInTheDocument()
+  expect(screen.getAllByText('Lin trusts Mei')).toHaveLength(2)
+  expect(screen.getByText('translation_review')).toBeInTheDocument()
+  expect(screen.getByText('Translation memory review (2 chunks)')).toBeInTheDocument()
+  expect(screen.getByText('source_version_publish')).toBeInTheDocument()
+  expect(screen.getByText('Publish source candidate (grade A)')).toBeInTheDocument()
+  expect(screen.getByText('Translated content preview')).toBeInTheDocument()
+})
+
+test('review queue page resolves source version publish candidates', async () => {
+  operationsMocks.resolveReviewQueueItem.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      queueItemId: 'source-version-1',
+      resultId: 'source-version-1',
+      itemType: 'source_version',
+      status: 'published',
+      action: 'publish',
+      reviewedBy: '1',
+      publishedAt: '2026-07-12T12:30:00Z',
+    },
+    meta: {},
+    trace_id: null,
+  })
+
+  render(<ReviewQueuePage />)
+
+  const button = await screen.findByRole('button', { name: 'Publish source_version_publish' })
+  fireEvent.click(button)
+
+  await waitFor(() => {
+    expect(operationsMocks.resolveReviewQueueItem).toHaveBeenCalledWith('source-version-1', {
+      itemType: 'source_version',
+      action: 'publish',
+      memoryNote: undefined,
+    })
+  })
+  await waitFor(() => {
+    expect(screen.queryByText('Publish source candidate (grade A)')).not.toBeInTheDocument()
+  })
+  expect(screen.getByText('Publish completed for source_version_publish')).toBeInTheDocument()
+})
+
+test('review queue page resolves source review items', async () => {
+  operationsMocks.resolveReviewQueueItem.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      queueItemId: 'source-review-1',
+      resultId: 'source-review-1',
+      itemType: 'source_review',
+      status: 'resolved',
+      action: 'resolve',
+      reviewedBy: '1',
+      resolvedAt: '2026-07-12T12:45:00Z',
+      publishedAt: null,
+    },
+    meta: {},
+    trace_id: null,
+  })
+
+  render(<ReviewQueuePage />)
+
+  const button = await screen.findByRole('button', { name: 'Resolve build_escalation' })
+  fireEvent.click(button)
+
+  await waitFor(() => {
+    expect(operationsMocks.resolveReviewQueueItem).toHaveBeenCalledWith('source-review-1', {
+      itemType: 'source_review',
+      action: 'resolve',
+      memoryNote: undefined,
+    })
+  })
+  await waitFor(() => {
+    expect(screen.queryByText('Manual source build review required')).not.toBeInTheDocument()
+  })
+  expect(screen.getByText('Resolve completed for build_escalation')).toBeInTheDocument()
+})
+
+test('review queue page marks translation review items as reviewed', async () => {
+  operationsMocks.resolveReviewQueueItem.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      queueItemId: 'translation-1',
+      resultId: 'translation-1',
+      itemType: 'translation_job',
+      status: 'reviewed',
+      action: 'review',
+      reviewedBy: '1',
+      publishedAt: null,
+    },
+    meta: {},
+    trace_id: null,
+  })
+
+  render(<ReviewQueuePage />)
+
+  const button = await screen.findByRole('button', { name: 'Mark reviewed translation_review' })
+  fireEvent.click(button)
+
+  await waitFor(() => {
+    expect(operationsMocks.resolveReviewQueueItem).toHaveBeenCalledWith('translation-1', {
+      itemType: 'translation_job',
+      action: 'review',
+      memoryNote: {
+        source: 'operations.review_queue',
+        proposal_type: 'translation_review',
+      },
+    })
+  })
+  await waitFor(() => {
+    expect(screen.queryByText('Translation memory review (2 chunks)')).not.toBeInTheDocument()
+  })
+  expect(screen.getByText('Mark reviewed completed for translation_review')).toBeInTheDocument()
+})

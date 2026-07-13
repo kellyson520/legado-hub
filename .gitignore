@@ -1,0 +1,30 @@
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.pytest_cache/
+backend/**/*.py[cod]
+
+# Runtime data, credentials and logs
+.env
+backend/.env
+frontend/.env
+backend/data/
+*.sqlite
+*.sqlite3
+*.log
+
+# Node/Vite output
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
+
+# Local feature worktrees
+.worktrees/

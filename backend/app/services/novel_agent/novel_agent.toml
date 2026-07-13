@@ -1,0 +1,119 @@
+# NovelAgent 配置文件
+# 参考 DeepSeek-Reasonix / OpenClaw / Hermes 架构
+
+[agent]
+name = "NovelAgent"
+version = "2.1.0"
+default_model = "deepseek-flash"
+planner_model = "deepseek-pro"
+max_iterations = 20
+max_tool_calls_per_step = 5
+compact_ratio = 0.8
+recent_keep = 8
+effort = "auto"  # auto / low / medium / high
+think_verbose = true
+
+[[providers]]
+name = "deepseek-flash"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+context_window = 128000
+
+[[providers]]
+name = "deepseek-pro"
+kind = "openai"
+base_url = "https://api.deepseek.com"
+model = "deepseek-pro"
+api_key_env = "DEEPSEEK_API_KEY"
+context_window = 128000
+
+[llm]
+temperature = 0.7
+max_tokens = 4096
+system_prompt = ""
+
+[skills]
+collector = true
+extractor = true
+auditor = true
+grapher = true
+qa = true
+summarizer = true
+writer = true
+reasoner = true
+ocr = true
+
+[tools]
+recall_context = true
+extract_evidence = true
+detect_conflicts = true
+trace_reasoning = true
+verify_alias = true
+search_pattern = true
+propose_correction = true
+plot_search = true
+chapter_summary = true
+character_timeline = true
+community_query = true
+graph_stats = true
+generate_graph_html = true
+ocr_recognize = true
+ocr_translate = true
+ocr_extract_text = true
+
+[permissions]
+mode = "ask"  # ask / allow / deny
+allow = [
+    "read_file",
+    "novel_stats",
+    "find_relation",
+    "character_info",
+    "community_query",
+    "chapter_summary",
+    "graph_stats",
+    "answer_question",
+    "book_overview",
+    "theme_analysis",
+    "ocr_recognize",
+    "ocr_extract_text",
+]
+ask = [
+    "write_file",
+    "generate_graph_html",
+    "ocr_translate",
+]
+deny = [
+    "execute_code",
+    "delete_file",
+    "shell",
+]
+
+[memory]
+sqlite_path = "data/novel_agent.db"
+max_history = 100
+enable_project_memory = true
+project_memory_file = ".novel_agent/AGENTS.md"
+enable_semantic_cache = true
+
+[compression]
+protect_last_n = 8
+strategy = "summary"  # summary / truncate / hybrid
+min_tokens = 1024
+
+[novel]
+name = ""
+data_dir = "data/novels"
+graph_file = "data/graph.json"
+default_book_url = ""
+
+[mcp]
+servers = []
+timeout = 30
+
+[ocr]
+backend = "paddleocr"  # paddleocr / manga_ocr / easyocr
+lang = "ch_sim+en"
+enable_translation = true
+translation_target = "zh"

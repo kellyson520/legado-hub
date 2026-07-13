@@ -1,0 +1,9 @@
+{
+  "name": "legado-js-worker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "dependencies": {
+    "cheerio": "1.0.0"
+  }
+}
