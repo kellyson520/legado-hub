@@ -5,16 +5,19 @@ import {
   listEngineRuns,
   listEngineSourceBuilds,
   submitEngineSourceBuild,
+  testEngineRegex,
   type EngineDeploymentRow,
   type EngineRunRow,
   type EngineSourceBuildAutonomousBuild,
   type EngineSourceBuildRow,
+  type RegexTestResult,
 } from '@/api/modules/engine'
 import { RunTimeline } from '@/components/diagnostics/RunTimeline'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 
 function getSourceId(row: EngineSourceBuildRow) {
   return row.sourceId ?? row.source_id ?? row.payload.canonical_url ?? row.id
@@ -56,6 +59,10 @@ export function EngineRunsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [regexPattern, setRegexPattern] = useState('第(\\d+)章')
+  const [regexReplacement, setRegexReplacement] = useState('章节$1')
+  const [regexText, setRegexText] = useState('第12章：开始')
+  const [regexResult, setRegexResult] = useState<RegexTestResult | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -105,6 +112,17 @@ export function EngineRunsPage() {
       setError('Failed to queue source build')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleRegexTest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setError(null)
+    try {
+      const response = await testEngineRegex({ text: regexText, pattern: regexPattern, replacement: regexReplacement || null })
+      setRegexResult(response.data)
+    } catch {
+      setError('正则测试请求失败。')
     }
   }
 
@@ -160,6 +178,21 @@ export function EngineRunsPage() {
         </section>
 
         <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <p className="text-xs font-semibold tracking-[0.24em] text-primary">规则中心</p>
+          <h2 className="mt-2 text-xl font-semibold text-foreground">正则测试器</h2>
+          <form className="mt-4 space-y-3" onSubmit={handleRegexTest}>
+            <label className="block text-sm font-medium" htmlFor="regex-pattern">正则表达式</label>
+            <Input id="regex-pattern" value={regexPattern} onChange={(event) => setRegexPattern(event.target.value)} />
+            <label className="block text-sm font-medium" htmlFor="regex-replacement">替换文本（支持 $1）</label>
+            <Input id="regex-replacement" value={regexReplacement} onChange={(event) => setRegexReplacement(event.target.value)} />
+            <label className="block text-sm font-medium" htmlFor="regex-text">测试文本</label>
+            <Textarea id="regex-text" value={regexText} onChange={(event) => setRegexText(event.target.value)} />
+            <Button type="submit">测试正则</Button>
+          </form>
+          {regexResult ? <div className="mt-4 space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">{regexResult.error ? <p className="text-rose-600">语法错误：{regexResult.error}</p> : <><p>匹配数量：{regexResult.match_count}</p><p>替换预览：{regexResult.replacement_preview ?? '未设置替换文本'}</p>{regexResult.matches.map((match, index) => <p key={`${match.span.join('-')}-${index}`}>匹配：{match.match}；捕获组：{match.groups.join('、') || '无'}</p>)}</>}</div> : null}
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-2">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
@@ -176,6 +209,7 @@ export function EngineRunsPage() {
             {sourceBuilds.map((row) => {
               const autonomousBuild = getAutonomousBuild(row)
               const probe = autonomousBuild?.probe
+              const blockedByVerificationWall = probe?.content_status === 'verification_wall'
               return (
                 <article key={row.id} className="rounded-xl border border-border bg-background/60 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -210,6 +244,7 @@ export function EngineRunsPage() {
                       </p>
                     </div>
                   </div>
+                  {blockedByVerificationWall ? <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-700"><strong>正文访问受阻</strong>：检测到 verification wall，<strong>不可发布</strong>。</div> : null}
                 </article>
               )
             })}

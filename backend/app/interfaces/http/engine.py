@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
@@ -26,6 +28,12 @@ class EvaluateRequest(BaseModel):
 class RuleTestRequest(BaseModel):
     rule: str
     sample: dict | str
+
+
+class RegexTestRequest(BaseModel):
+    text: str
+    pattern: str
+    replacement: str | None = None
 
 
 class RepairRequest(BaseModel):
@@ -79,6 +87,24 @@ async def test_rule(payload: RuleTestRequest, _=Depends(require_permission(Permi
     service = build_engine_service()
     data = await service.test_rule(payload.model_dump())
     return {"success": True, "code": "OK", "message": "engine harness complete", "data": data, "meta": {}, "trace_id": None}
+
+
+@router.post("/regex-test")
+async def regex_test(payload: RegexTestRequest, _=Depends(require_permission(Permission.ENGINE_TEST))):
+    try:
+        compiled = re.compile(payload.pattern)
+        matches = [
+            {"match": match.group(0), "groups": list(match.groups()), "span": list(match.span())}
+            for match in compiled.finditer(payload.text)
+        ]
+        replacement_preview = None
+        if payload.replacement is not None:
+            replacement = re.sub(r"\$\{(\d+)\}|\$(\d+)", lambda match: f"\\g<{match.group(1) or match.group(2)}>", payload.replacement)
+            replacement_preview = compiled.sub(replacement, payload.text)
+        data = {"match_count": len(matches), "matches": matches, "replacement_preview": replacement_preview, "error": None}
+    except re.error as exc:
+        data = {"match_count": 0, "matches": [], "replacement_preview": None, "error": str(exc)}
+    return {"success": True, "code": "OK", "message": "正则测试完成", "data": data, "meta": {}, "trace_id": None}
 
 
 @router.post("/regression")

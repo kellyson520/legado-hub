@@ -74,6 +74,19 @@ const engineMocks = vi.hoisted(() => ({
     meta: {},
     trace_id: null,
   }),
+  testEngineRegex: vi.fn().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      match_count: 1,
+      matches: [{ match: '第12章', groups: ['12'], span: [0, 4] }],
+      replacement_preview: '章节12：开始',
+      error: null,
+    },
+    meta: {},
+    trace_id: null,
+  }),
 }))
 
 vi.mock('@/api/modules/engine', () => ({
@@ -81,6 +94,7 @@ vi.mock('@/api/modules/engine', () => ({
   listEngineDeployments: engineMocks.listEngineDeployments,
   listEngineSourceBuilds: engineMocks.listEngineSourceBuilds,
   submitEngineSourceBuild: engineMocks.submitEngineSourceBuild,
+  testEngineRegex: engineMocks.testEngineRegex,
 }))
 
 vi.mock('@/api/modules/admin', () => ({
@@ -114,6 +128,36 @@ test('engine runs page shows step timeline and deployment decision', async () =>
   expect(screen.getByText('validation A / 96')).toBeInTheDocument()
   expect(await screen.findByText('search')).toBeInTheDocument()
   expect(await screen.findByText('deployment decision')).toBeInTheDocument()
+})
+
+test('engine rule center tests regex and marks verification wall as blocked', async () => {
+  engineMocks.listEngineSourceBuilds.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{
+      id: 'blocked-version',
+      source_id: 'https://blocked.test/books',
+      status: 'candidate',
+      payload: { autonomous_build: { probe: { content_status: 'verification_wall' } } },
+    }],
+    meta: { total: 1 },
+    trace_id: null,
+  })
+  render(<EngineRunsPage />)
+
+  fireEvent.click(screen.getByRole('button', { name: '测试正则' }))
+
+  await waitFor(() => {
+    expect(engineMocks.testEngineRegex).toHaveBeenCalledWith({
+      text: '第12章：开始',
+      pattern: '第(\\d+)章',
+      replacement: '章节$1',
+    })
+  })
+  expect(await screen.findByText(/替换预览：章节12：开始/)).toBeInTheDocument()
+  expect(await screen.findByText('正文访问受阻')).toBeInTheDocument()
+  expect(screen.getByText('不可发布')).toBeInTheDocument()
 })
 
 test('engine rule writing form submits a console source build job', async () => {

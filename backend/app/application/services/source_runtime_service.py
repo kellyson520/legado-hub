@@ -2,6 +2,37 @@ from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.repositories.source_runtime_repo import SourceRuntimeRepository
 
 
+_LEGADO_RULE_FIELDS = ("ruleSearch", "ruleBookInfo", "ruleToc", "ruleContent")
+_LEGADO_EXPORT_FIELDS = (
+    "bookSourceName",
+    "bookSourceUrl",
+    "bookSourceGroup",
+    "enabled",
+    "searchUrl",
+    "exploreUrl",
+    "ruleSearch",
+    "ruleBookInfo",
+    "ruleToc",
+    "ruleContent",
+    "header",
+    "loginUrl",
+    "weight",
+)
+_SENSITIVE_KEY_PARTS = ("cookie", "authorization", "bearer", "api_key", "apikey", "token", "provider", "internal")
+
+
+def _sanitize_legado_value(value):
+    if isinstance(value, list):
+        return [_sanitize_legado_value(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: _sanitize_legado_value(item)
+        for key, item in value.items()
+        if not any(part in key.lower() for part in _SENSITIVE_KEY_PARTS)
+    }
+
+
 class SourceRuntimeService:
     def __init__(self, repo: SourceRuntimeRepository):
         self._repo = repo
@@ -25,6 +56,62 @@ class SourceRuntimeService:
             "source_type": version.source_type,
             "source_id": version.source_id,
         }
+
+    async def import_legado_sources(self, payload: object, actor_id: str) -> dict:
+        records = payload if isinstance(payload, list) else [payload]
+        if not isinstance(records, list):
+            raise ValidationException("Legado JSON must be an object or array")
+
+        items: list[dict] = []
+        batch_urls: set[str] = set()
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                items.append({"index": index, "status": "invalid", "reason": "source must be an object"})
+                continue
+            name = record.get("bookSourceName")
+            url = record.get("bookSourceUrl")
+            if not isinstance(name, str) or not name.strip():
+                items.append({"index": index, "status": "invalid", "reason": "bookSourceName is required"})
+                continue
+            if not isinstance(url, str) or not url.strip():
+                items.append({"index": index, "status": "invalid", "reason": "bookSourceUrl is required"})
+                continue
+            url = url.strip()
+            invalid_rule = next((field for field in _LEGADO_RULE_FIELDS if field in record and not isinstance(record[field], dict)), None)
+            if invalid_rule:
+                items.append({"index": index, "status": "invalid", "reason": f"{invalid_rule} must be an object"})
+                continue
+            if url in batch_urls or self._repo.list_versions("book", url):
+                items.append({"index": index, "status": "skipped_duplicate", "source_url": url})
+                batch_urls.add(url)
+                continue
+
+            sanitized = _sanitize_legado_value(record)
+            sanitized["bookSourceName"] = name.strip()
+            sanitized["bookSourceUrl"] = url
+            version = self._repo.create_candidate_version("book", url, sanitized, actor_id)
+            batch_urls.add(url)
+            items.append({"index": index, "status": "created", "source_url": url, "source_version_id": version.id})
+        return {"items": items}
+
+    async def export_legado_sources(self, actor_id: str) -> list[dict]:
+        versions = self._repo.list_published_versions()
+        versions.extend(
+            item
+            for item in self._repo.list_recent_versions(limit=10_000)
+            if item.status == "candidate" and item.created_by == actor_id
+        )
+        result: list[dict] = []
+        exported_urls: set[str] = set()
+        for version in versions:
+            source = version.payload
+            url = source.get("bookSourceUrl") if isinstance(source, dict) else None
+            name = source.get("bookSourceName") if isinstance(source, dict) else None
+            if not isinstance(url, str) or not url or not isinstance(name, str) or not name or url in exported_urls:
+                continue
+            result.append({field: _sanitize_legado_value(source[field]) for field in _LEGADO_EXPORT_FIELDS if field in source})
+            exported_urls.add(url)
+        return result
 
     async def repair(self, source_version_id: str, actor_id: str) -> dict:
         version = self._repo.get_version(source_version_id)

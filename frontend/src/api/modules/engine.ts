@@ -71,6 +71,13 @@ export interface EngineSourceBuildSubmission {
   source_version_status: string
 }
 
+export interface RegexTestResult {
+  match_count: number
+  matches: Array<{ match: string; groups: Array<string | undefined>; span: [number, number] }>
+  replacement_preview: string | null
+  error: string | null
+}
+
 export async function listEngineRuns() {
   return apiClient.get<EngineRunRow[]>('/engine/runs') as Promise<ApiEnvelope<EngineRunRow[]>>
 }
@@ -91,4 +98,8 @@ export function submitEngineSourceBuild(payload: {
     url: payload.url,
     keyword: payload.keyword ?? '',
   })
+}
+
+export function testEngineRegex(payload: { text: string; pattern: string; replacement?: string | null }): Promise<ApiEnvelope<RegexTestResult>> {
+  return apiClient.post('/engine/regex-test', payload)
 }

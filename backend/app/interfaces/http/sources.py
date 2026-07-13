@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
+from typing import Any
+
 from pydantic import BaseModel
 
 from app.core.permissions import Permission
@@ -19,6 +21,25 @@ class BookSourcePayload(BaseModel):
 class LocalBookSourceImportRequest(BaseModel):
     file_path: str
     replace_existing: bool = True
+
+
+@router.post("/import")
+async def import_legado_json_sources(
+    payload: Any = Body(...),
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    data = await build_source_runtime_service().import_legado_sources(payload, str(identity.user_id))
+    return {"success": True, "code": "OK", "message": "Legado 书源导入完成", "data": data, "meta": {}, "trace_id": None}
+
+
+@router.get("/export")
+async def export_legado_json_sources(
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
+):
+    data = await build_source_runtime_service().export_legado_sources(str(identity.user_id))
+    return {"success": True, "code": "OK", "message": "Legado 书源导出完成", "data": data, "meta": {"total": len(data)}, "trace_id": None}
 
 
 @router.get("/book_sources")
