@@ -86,7 +86,7 @@ class TestRAGRetriever:
     @pytest.fixture
     async def retriever(self):
         db = await aiosqlite.connect(":memory:")
-        with open("app/database_migrations/novel_schema.sql") as f:
+        with open("app/database_migrations/novel_schema.sql", encoding="utf-8") as f:
             await db.executescript(f.read())
         repo = SqliteNovelRepository(db)
         retriever = RAGRetriever(repo)

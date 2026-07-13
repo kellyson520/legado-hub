@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -34,3 +35,22 @@ def reload_app_modules():
         if any(name == prefix or name.startswith(prefix + ".") for prefix in MODULE_PREFIXES):
             sys.modules.pop(name, None)
     yield
+
+
+@pytest.fixture
+def fresh_event_bus():
+    from app.core.events import MemoryEventBus
+
+    return MemoryEventBus()
+
+
+@pytest_asyncio.fixture
+async def started_event_bus():
+    from app.core.events import MemoryEventBus
+
+    bus = MemoryEventBus()
+    await bus.start()
+    try:
+        yield bus
+    finally:
+        await bus.stop()

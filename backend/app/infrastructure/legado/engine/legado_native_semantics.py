@@ -13,6 +13,7 @@ class LegadoJsCompatProfile:
     allowed_stages: tuple[str, ...] = (
         "search_url_js",
         "search_rule_js",
+        "executor_js_rule",
         "book_info_init",
         "toc_rule_js",
         "content_rule_js",

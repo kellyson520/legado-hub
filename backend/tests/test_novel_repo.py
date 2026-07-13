@@ -47,7 +47,7 @@ from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRep
 @pytest.fixture
 async def repo():
     db = await aiosqlite.connect(":memory:")
-    with open("app/database_migrations/novel_schema.sql") as f:
+    with open("app/database_migrations/novel_schema.sql", encoding="utf-8") as f:
         await db.executescript(f.read())
     repo = SqliteNovelRepository(db)
     yield repo
