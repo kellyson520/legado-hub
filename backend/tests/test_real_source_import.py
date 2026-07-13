@@ -12,10 +12,7 @@
 
 import json
 import pytest
-import httpx
-from unittest.mock import patch, AsyncMock, MagicMock
-
-pytestmark = pytest.mark.asyncio
+from fastapi.testclient import TestClient
 
 
 def _load_real_sources():
@@ -326,164 +323,98 @@ class TestRealSourceParseAndValidate:
 
 
 class TestRealSourceImportViaAPI:
-    """通过 API 导入真实书源的端到端流程测试"""
+    """通过当前 Legado JSON API 导入真实书源的端到端流程测试。"""
 
     @pytest.fixture
-    async def client(self):
-        """FastAPI 测试客户端"""
-        with patch("app.core.redis_client.redis_client") as mock_redis, \
-             patch("app.core.events.event_bus") as mock_bus, \
-             patch("app.tasks.scheduler.start_scheduler"), \
-             patch("app.tasks.scheduler.stop_scheduler"):
-            mock_redis.is_connected = False
-            mock_redis.connect = AsyncMock()
-            mock_redis.disconnect = AsyncMock()
-            mock_redis.check_rate_limit = AsyncMock(return_value=(True, 60, 30))
-            mock_bus.start = AsyncMock()
-            mock_bus.stop = AsyncMock()
-            mock_bus.publish = AsyncMock()
+    def client_and_headers(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("APP_ENV", "test")
+        monkeypatch.setenv("DB_PATH", str(tmp_path / "real-source-import.sqlite3"))
+        monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
 
-            from app.main import app
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=app),
-                base_url="http://test"
-            ) as ac:
-                yield ac
+        from app.core.security import create_access_token
+        from app.main import app
 
-    @pytest.fixture
-    def mock_source_repo(self):
-        """Mock 源仓储"""
-        repo = MagicMock()
-        repo.list_book_sources = AsyncMock(return_value=([], 0))
-        repo.get_book_source = AsyncMock(return_value=None)
-        repo.save_book_source = AsyncMock(side_effect=lambda x: x)
-        repo.save_book_sources = AsyncMock(return_value=0)
-        repo.delete_book_source = AsyncMock(return_value=True)
-        repo.list_rss_sources = AsyncMock(return_value=([], 0))
-        repo.get_rss_source = AsyncMock(return_value=None)
-        repo.save_rss_source = AsyncMock(side_effect=lambda x: x)
-        repo.save_rss_sources = AsyncMock(return_value=0)
-        repo.delete_rss_source = AsyncMock(return_value=True)
-        repo.list_subscriptions = AsyncMock(return_value=[])
-        repo.save_subscription = AsyncMock(side_effect=lambda x: x)
-        repo.delete_subscription = AsyncMock(return_value=True)
-        repo.list_filter_rules = AsyncMock(return_value=[])
-        repo.save_filter_rule = AsyncMock(side_effect=lambda x: x)
-        repo.delete_filter_rule = AsyncMock(return_value=True)
-        return repo
+        token = create_access_token(
+            {
+                "sub": "7",
+                "permissions": ["book_sources.write", "book_sources.read"],
+                "sid": "real-source-import",
+            }
+        )
+        return TestClient(app), {"Authorization": f"Bearer {token}"}
 
-    async def test_import_real_sources_via_api(self, client, mock_source_repo):
-        """端到端：真实书源数据 -> API 导入 -> 查询"""
+    def test_import_real_sources_via_api(self, client_and_headers):
+        """真实书源数据可通过当前 JSON 导入和导出接口完成往返。"""
         from app.services.fetcher import SourceFetcher
 
+        client, headers = client_and_headers
         test_sources = _load_real_sources()[:3]
         text = json.dumps(test_sources)
         fetcher = SourceFetcher()
         book_sources, _ = fetcher.parse_sources_from_text(text, origin=REAL_SOURCE_URL)
 
         assert len(book_sources) == 3
-        print(f"\n[端到端] 准备导入 {len(book_sources)} 个真实书源:")
-        for s in book_sources:
-            print(f"  - {s.get('bookSourceName')} ({s.get('bookSourceUrl')})")
+        response = client.post("/api/sources/import", json=book_sources, headers=headers)
 
-        # Mock repo
-        saved_sources = []
-        mock_source_repo.save_book_sources = AsyncMock(side_effect=lambda entities: (saved_sources.extend(entities), len(entities))[1])
+        assert response.status_code == 200
+        imported = response.json()
+        assert imported["success"] is True
+        assert [item["status"] for item in imported["data"]["items"]] == ["created"] * len(book_sources)
 
-        async def mock_list(group=None, status=None, enabled_only=False, page=1, page_size=50):
-            return saved_sources, len(saved_sources)
+        response = client.get("/api/sources/export", headers=headers)
 
-        mock_source_repo.list_book_sources = AsyncMock(side_effect=mock_list)
+        assert response.status_code == 200
+        exported = {source["bookSourceUrl"]: source for source in response.json()["data"]}
+        assert response.json()["meta"]["total"] == len(book_sources)
+        assert set(exported) == {source["bookSourceUrl"] for source in book_sources}
+        for source in book_sources:
+            assert exported[source["bookSourceUrl"]]["bookSourceName"] == source["bookSourceName"]
 
-        # 导入
-        with patch("app.interfaces.api.dependencies.get_source_repo", return_value=mock_source_repo):
-            resp = await client.post("/api/sources/book/import", json=book_sources)
+    def test_real_source_round_trip_strips_sensitive_fields(self, client_and_headers):
+        """当前导出接口仅返回白名单字段，避免真实书源敏感配置回显。"""
+        client, headers = client_and_headers
+        source = _load_real_sources()[0].copy()
+        source["cookie"] = "session=secret"
+        source["header"] = {"Authorization": "Bearer secret", "User-Agent": "Legado"}
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["data"]["count"] == 3
-        print(f"[端到端] 导入成功: count={data['data']['count']}")
+        response = client.post("/api/sources/import", json=source, headers=headers)
 
-        # 查询
-        with patch("app.interfaces.api.dependencies.get_source_repo", return_value=mock_source_repo):
-            resp = await client.get("/api/sources/book")
+        assert response.status_code == 200
+        assert response.json()["data"]["items"][0]["status"] == "created"
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data["data"]) == 3
-        assert data["meta"]["total"] == 3
-        print(f"[端到端] 查询成功: total={data['meta']['total']}")
+        response = client.get("/api/sources/export", headers=headers)
 
-        # 验证字段
-        first = data["data"][0]
-        assert "bookSourceUrl" in first
-        assert "bookSourceName" in first
-        print(f"[端到端] 字段验证: {first.get('bookSourceName')}")
+        assert response.status_code == 200
+        exported = response.json()["data"]
+        assert len(exported) == 1
+        assert exported[0]["bookSourceUrl"] == source["bookSourceUrl"]
+        assert exported[0]["bookSourceName"] == source["bookSourceName"]
+        assert exported[0]["header"] == {"User-Agent": "Legado"}
+        assert "cookie" not in exported[0]
+        assert "Authorization" not in exported[0]["header"]
 
-    async def test_real_source_round_trip(self, client, mock_source_repo):
-        """端到端：创建 -> 查询 -> 删除 -> 404"""
-        sources = _load_real_sources()
-        sample = sources[0]
-
-        saved = []
-        mock_source_repo.save_book_source = AsyncMock(side_effect=lambda entity: (saved.append(entity), entity)[1])
-
-        def mock_get(url):
-            for s in saved:
-                if getattr(s, "bookSourceUrl", "") == url:
-                    return s
-            return None
-
-        mock_source_repo.get_book_source = AsyncMock(side_effect=mock_get)
-        mock_source_repo.delete_book_source = AsyncMock(return_value=True)
-
-        url = sample["bookSourceUrl"]
-        name = sample["bookSourceName"]
-        print(f"\n[Round Trip] 测试: {name} ({url})")
-
-        # 创建
-        with patch("app.interfaces.api.dependencies.get_source_repo", return_value=mock_source_repo):
-            resp = await client.post("/api/sources/book", json=sample)
-        assert resp.status_code == 200
-
-        # 查询
-        with patch("app.interfaces.api.dependencies.get_source_repo", return_value=mock_source_repo):
-            resp = await client.get(f"/api/sources/book/{url}")
-        assert resp.status_code == 200
-        assert resp.json()["data"]["bookSourceName"] == name
-
-        # 删除
-        with patch("app.interfaces.api.dependencies.get_source_repo", return_value=mock_source_repo):
-            resp = await client.delete(f"/api/sources/book/{url}")
-        assert resp.status_code == 200
-
-        # 删除后 404
-        saved.clear()
-        with patch("app.interfaces.api.dependencies.get_source_repo", return_value=mock_source_repo):
-            resp = await client.get(f"/api/sources/book/{url}")
-        assert resp.status_code == 404
-        print(f"[Round Trip] 全部通过")
-
-    async def test_import_all_real_sources(self, client, mock_source_repo):
-        """导入全部真实书源并验证"""
+    def test_import_all_real_sources(self, client_and_headers):
+        """全部真实书源导入后，导出数量与解析后的数据集一致。"""
         from app.services.fetcher import SourceFetcher
 
+        client, headers = client_and_headers
         sources = _load_real_sources()
         text = json.dumps(sources)
         fetcher = SourceFetcher()
         book_sources, _ = fetcher.parse_sources_from_text(text, origin=REAL_SOURCE_URL)
 
-        saved_count = 0
-        mock_source_repo.save_book_sources = AsyncMock(side_effect=lambda entities: globals().__setitem__('_saved', len(entities)) or len(entities))
-        mock_source_repo.list_book_sources = AsyncMock(return_value=([], 0))
+        response = client.post("/api/sources/import", json=book_sources, headers=headers)
 
-        with patch("app.interfaces.api.dependencies.get_source_repo", return_value=mock_source_repo):
-            resp = await client.post("/api/sources/book/import", json=book_sources)
+        assert response.status_code == 200
+        assert [item["status"] for item in response.json()["data"]["items"]] == ["created"] * len(book_sources)
 
-        assert resp.status_code == 200
-        assert resp.json()["data"]["count"] == len(sources)
-        print(f"\n[批量导入] 成功导入 {saved_count} 个真实书源")
+        response = client.get("/api/sources/export", headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == len(book_sources)
+        assert {source["bookSourceUrl"] for source in response.json()["data"]} == {
+            source["bookSourceUrl"] for source in book_sources
+        }
 
 
 class TestSourceFetcherParseEdgeCases:
