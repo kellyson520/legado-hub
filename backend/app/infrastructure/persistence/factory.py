@@ -1,4 +1,5 @@
 from app.application.services.ai_service import AIService
+from app.application.services.ai_workspace_service import AIWorkspaceService
 from app.application.services.agent_runtime_service import AgentRuntimeService
 from app.application.services.character_calibration_service import CharacterCalibrationService
 from app.application.services.canonical_content_service import CanonicalContentService
@@ -29,6 +30,7 @@ from app.application.services.work_knowledge_service import WorkKnowledgeService
 from app.core.config import settings
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
 from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIRuntimeRepository
+from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_runtime_repo_impl import SQLiteNovelRuntimeRepository
 from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLiteEventDeliveryRepository
@@ -269,6 +271,17 @@ def build_ai_service() -> AIService:
     return AIService(
         platform=build_provider_platform_service(),
         repo=build_ai_runtime_repository(),
+    )
+
+
+def build_ai_workspace_service() -> AIWorkspaceService:
+    bootstrap_sqlite()
+    return AIWorkspaceService(
+        platform=build_provider_platform_service(),
+        conversations=SQLiteAIConversationRepository(),
+        sources=build_source_runtime_repository(),
+        ai_tasks=build_ai_runtime_repository(),
+        audit=build_auth_repository(),
     )
 
 

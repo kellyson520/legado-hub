@@ -400,6 +400,28 @@ class AITaskModel(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class AIConversationModel(Base):
+    __tablename__ = "ai_conversations"
+
+    id = Column(String, primary_key=True)
+    actor_id = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False, default="")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class AIConversationMessageModel(Base):
+    __tablename__ = "ai_conversation_messages"
+
+    id = Column(String, primary_key=True)
+    conversation_id = Column(String, ForeignKey("ai_conversations.id"), nullable=False, index=True)
+    role = Column(String, nullable=False)
+    mode = Column(String, nullable=False, default="chat")
+    content = Column(Text, nullable=False, default="")
+    status = Column(String, nullable=False, default="succeeded")
+    tool_calls = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
 class TranslationTaskModel(Base):
     __tablename__ = "translation_tasks"
 
