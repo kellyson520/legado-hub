@@ -28,6 +28,33 @@ export interface LegadoSource {
   [key: string]: unknown
 }
 
+export interface SourceValidationStep {
+  passed: boolean
+  elapsed_ms?: number
+  status?: string
+}
+
+export interface SourceVersionResponse {
+  source_version_id: string
+  source_type: string
+  source_id: string
+  status: string
+  payload: Record<string, unknown>
+  created_by?: string
+  created_at?: string | null
+  latest_validation?: {
+    id: string
+    trigger: string
+    score: number
+    grade: string
+    step_results: Record<string, SourceValidationStep>
+    diagnostics: string[]
+    created_at?: string | null
+  } | null
+  content_status: string
+  publish_allowed: boolean
+}
+
 export async function listBookSources(params: SourceListParams = {}) {
   return apiClient.get<SourceRow[]>('/sources/book_sources', { params }) as Promise<ApiEnvelope<SourceRow[]>>
 }
@@ -38,4 +65,23 @@ export function importLegadoSources(payload: LegadoSource | LegadoSource[]): Pro
 
 export function exportLegadoSources(): Promise<ApiEnvelope<LegadoSource[]>> {
   return apiClient.get('/sources/export')
+}
+
+export function getSourceVersion(sourceVersionId: string): Promise<ApiEnvelope<SourceVersionResponse>> {
+  return apiClient.get(`/sources/versions/${sourceVersionId}`)
+}
+
+export function createSourceDraft(
+  sourceVersionId: string,
+  payload: Record<string, unknown>
+): Promise<ApiEnvelope<SourceVersionResponse>> {
+  return apiClient.post(`/sources/versions/${sourceVersionId}/drafts`, payload)
+}
+
+export function validateSourceVersion(sourceVersionId: string): Promise<ApiEnvelope<SourceVersionResponse>> {
+  return apiClient.post(`/sources/versions/${sourceVersionId}/validate`)
+}
+
+export function publishSourceVersion(sourceVersionId: string): Promise<ApiEnvelope<SourceVersionResponse>> {
+  return apiClient.post(`/sources/versions/${sourceVersionId}/publish`)
 }

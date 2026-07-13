@@ -15,6 +15,7 @@ import { SourceBuildsPage } from '@/features/operations/SourceBuildsPage'
 import { SourceHealthPage } from '@/features/sources/SourceHealthPage'
 import { SourceHealthDetailPage } from '@/features/sources/SourceHealthDetailPage'
 import { SourceListPage } from '@/features/sources/SourceListPage'
+import { SourceRuleEditorPage } from '@/features/sources/SourceRuleEditorPage'
 import { SystemSettingsPage } from '@/features/system/SystemSettingsPage'
 import { TranslationJobsPage } from '@/features/translation/TranslationJobsPage'
 import { RequireAuth } from '@/app/router/RequireAuth'
@@ -25,6 +26,7 @@ export const appRoutes = [
   { path: '/sources', element: <SourceListPage /> },
   { path: '/sources/health', element: <SourceHealthPage /> },
   { path: '/sources/health/:sourceId', element: <SourceHealthDetailPage /> },
+  { path: '/sources/rules/:sourceVersionId', element: <SourceRuleEditorPage /> },
   { path: '/engine', element: <EngineRunsPage /> },
   { path: '/admin/users', element: <AdminUsersPage /> },
   { path: '/admin/audit', element: <AdminAuditPage /> },
@@ -49,6 +51,7 @@ export function AppRoutes() {
           <Route path="/sources" element={<SourceListPage />} />
           <Route path="/sources/health" element={<SourceHealthPage />} />
           <Route path="/sources/health/:sourceId" element={<SourceHealthDetailPage />} />
+          <Route path="/sources/rules/:sourceVersionId" element={<SourceRuleEditorPage />} />
         </Route>
         <Route element={<RequirePermission permission="engine.test" />}><Route path="/engine" element={<EngineRunsPage />} /></Route>
         <Route element={<RequirePermission permission="users.read" />}><Route path="/admin/users" element={<AdminUsersPage />} /></Route>
