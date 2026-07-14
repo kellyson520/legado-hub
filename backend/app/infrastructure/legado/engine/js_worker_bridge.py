@@ -132,12 +132,12 @@ class JsWorkerClient:
                 return self._failed_output(context, code, started_at, 'MALFORMED_RESPONSE')
             if message.get("type") == "bridge_http":
                 if not isinstance(message.get('request'), dict) or not message.get('id'):
-                    return self._failed_output(context, code, started_at, 'MALFORMED_RESPONSE')
+                    return self._bridge_failure_output(context, code, started_at, 'MALFORMED_RESPONSE')
                 response, bridge_error = self._bridge_response(message['request'], deadline)
                 if bridge_error == 'EXECUTION_TIMEOUT':
                     return self._timeout_output(context, code, started_at)
                 if bridge_error:
-                    return self._failed_output(context, code, started_at, bridge_error)
+                    return self._bridge_failure_output(context, code, started_at, bridge_error)
                 try:
                     self._process.stdin.write(
                         (
@@ -154,7 +154,7 @@ class JsWorkerClient:
                     )
                     self._process.stdin.flush()
                 except (BrokenPipeError, OSError, KeyError):
-                    return self._failed_output(context, code, started_at, 'WORKER_IO_ERROR')
+                    return self._bridge_failure_output(context, code, started_at, 'WORKER_IO_ERROR')
                 continue
             break
 
@@ -208,6 +208,16 @@ class JsWorkerClient:
     def _timeout_output(self, context: JsExecutionContext, code: str, started_at: float) -> JsWorkerOutput:
         self._terminate_process()
         return self._failed_output(context, code, started_at, 'EXECUTION_TIMEOUT')
+
+    def _bridge_failure_output(
+        self,
+        context: JsExecutionContext,
+        code: str,
+        started_at: float,
+        error_code: str,
+    ) -> JsWorkerOutput:
+        self._terminate_process()
+        return self._failed_output(context, code, started_at, error_code)
 
     def _failed_output(
         self,

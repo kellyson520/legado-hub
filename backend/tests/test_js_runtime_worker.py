@@ -1,5 +1,6 @@
 import shutil
 import time
+import threading
 from threading import Event, Thread
 
 import pytest
@@ -158,9 +159,17 @@ def test_worker_client_returns_stable_failure_for_malformed_bridge_message(monke
         stdin = FakeInput()
         stdout = FakeOutput()
 
-        @staticmethod
-        def poll():
-            return None
+        def __init__(self):
+            self.returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
 
     client = JsWorkerClient()
     client._process = FakeProcess()
@@ -267,3 +276,34 @@ def test_worker_client_times_out_slow_bridge_handler_within_response_deadline(tm
     assert output.success is False
     assert output.error_code == 'EXECUTION_TIMEOUT'
     assert client._process is None
+
+
+def test_bridge_capacity_failure_resets_worker_before_next_execution(tmp_path, monkeypatch):
+    import app.infrastructure.legado.engine.js_worker_bridge as bridge
+
+    worker = tmp_path / 'stateful_bridge_worker.js'
+    worker.write_text(
+        "const fs=require('fs'); const marker=__dirname+'/bridge-once';\n"
+        "process.stdin.on('data', () => {\n"
+        "  if (!fs.existsSync(marker)) { fs.writeFileSync(marker, '1');\n"
+        "    process.stdout.write(JSON.stringify({type:'bridge_http',id:'bridge-1',request:{url:'https://example.test'}})+'\\n');\n"
+        "  } else { process.stdout.write(JSON.stringify({success:true,value:'fresh'})+'\\n'); }\n"
+        "});\n",
+        encoding='utf-8',
+    )
+    monkeypatch.setattr(bridge, '_BRIDGE_CALLBACK_SLOTS', threading.BoundedSemaphore(0))
+    client = JsWorkerClient(worker_path=worker, bridge_http_handler=lambda _request: {})
+    context = JsExecutionContext(
+        stage='search_rule_js', source={}, result={}, base_url='', cache={}, variables={}, headers={},
+    )
+
+    failed = client.execute('return 1', context)
+
+    assert failed.success is False
+    assert failed.error_code == 'BRIDGE_CAPACITY_EXHAUSTED'
+    assert client._process is None
+
+    recovered = client.execute('return 1', context)
+
+    assert recovered.success is True
+    assert recovered.value == 'fresh'
