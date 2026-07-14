@@ -110,3 +110,45 @@ async def test_source_build_success_records_linked_ids(tmp_path, monkeypatch):
     assert task["status"] == "succeeded"
     assert task["result"]["source_version_id"] == "sv-2"
     assert task["result"]["agent_run_id"] == "run-2"
+
+
+@pytest.mark.asyncio
+async def test_source_build_success_persists_runner_repair_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "ai-runtime.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.ai_service import AIService
+    from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIRuntimeRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    repair = {
+        "state": "validated_for_review",
+        "patch": {"searchUrl": "https://books.test/search?q={{key}}"},
+        "validation": {"search": {"passed": True}},
+        "review": {"review_id": "review-1"},
+        "prompt_version": "source-build-agent/v1",
+        "tool_count": 4,
+    }
+
+    async def successful_runner():
+        return {
+            "provider_name": "test", "model": "test-model", "output": {"text": "ok"},
+            "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+            "repair": repair,
+        }
+
+    bootstrap_sqlite()
+    service = AIService(platform=RecordingPlatform(), repo=SQLiteAIRuntimeRepository())
+    task = await service.run_source_build_repair(
+        {"source_version_id": "sv-3", "agent_run_id": "run-3", "url": "https://books.test"},
+        actor_id="tenant-1",
+        runner=successful_runner,
+    )
+
+    assert task["provider"] == "test"
+    assert task["model"] == "test-model"
+    assert task["usage"]["total_tokens"] == 5
+    assert task["result"]["output"] == {"text": "ok"}
+    assert task["result"]["repair"] == repair
+    assert (await service.list_tasks())[0]["result"]["repair"] == repair

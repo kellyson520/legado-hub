@@ -62,6 +62,8 @@ class AIService:
                 "url": payload.get("url"),
                 "output": self._normalize_output(invocation.get("output")),
             }
+            if isinstance(invocation.get("repair"), dict):
+                result["repair"] = invocation["repair"]
             task = AITask(
                 id=uuid4().hex,
                 kind="source_build_repair",
