@@ -23,6 +23,12 @@ export interface LLMSettings {
   api_key_configured?: boolean
 }
 
+export interface SourceBuildAgentSettings {
+  enabled: boolean
+  providerConfigured?: boolean
+  provider_configured?: boolean
+}
+
 export async function listProviders() {
   return apiClient.get<ProviderRow[]>('/system/providers') as Promise<ApiEnvelope<ProviderRow[]>>
 }
@@ -47,4 +53,14 @@ export function updateLLMSettings(payload: {
     api_key: payload.apiKey,
     model: payload.model,
   })
+}
+
+export function getSourceBuildAgentSettings(): Promise<ApiEnvelope<SourceBuildAgentSettings>> {
+  return apiClient.get<SourceBuildAgentSettings>('/system/source-build-agent-settings')
+}
+
+export function updateSourceBuildAgentSettings(payload: {
+  enabled: boolean
+}): Promise<ApiEnvelope<SourceBuildAgentSettings>> {
+  return apiClient.put<SourceBuildAgentSettings>('/system/source-build-agent-settings', payload)
 }
