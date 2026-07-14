@@ -23,6 +23,7 @@ class SourceToInsightAcceptanceService:
         character_service=None,
         knowledge_service=None,
         provider_platform=None,
+        job_repository=None,
     ):
         self._source_build_service = source_build_service
         self._source_build_runtime = source_build_runtime
@@ -31,6 +32,7 @@ class SourceToInsightAcceptanceService:
         self._character_service = character_service
         self._knowledge_service = knowledge_service
         self._provider_platform = provider_platform
+        self._job_repository = job_repository
 
     async def run(self, scenario: dict[str, Any]) -> dict[str, Any]:
         started = time.time()
@@ -97,15 +99,16 @@ class SourceToInsightAcceptanceService:
             )
             runtime_result = {}
             if self._source_build_runtime is not None:
-                if hasattr(self._source_build_runtime, "handle_source_version"):
+                if self._job_repository is not None and hasattr(self._source_build_runtime, "handle_job"):
+                    job = self._job_repository.get_job(submission.job_id)
+                    runtime_result = self._source_build_runtime.handle_job(job)
+                elif hasattr(self._source_build_runtime, "handle_source_version"):
                     runtime_result = self._source_build_runtime.handle_source_version(
                         source_version_id=submission.source_version_id,
                         job_id=submission.job_id,
                         url=submission.normalized_url,
                         tenant_id=tenant_id,
                     )
-                else:
-                    runtime_result = {}
             return {
                 "url": url,
                 "normalized_url": submission.normalized_url,

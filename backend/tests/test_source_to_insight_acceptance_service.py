@@ -68,3 +68,59 @@ async def test_acceptance_submits_all_urls_to_source_build_engine():
     assert report["source_builds"][0]["agent_run_id"] == "run-version-1"
     assert report["source_builds"][0]["decision"] == "canary"
     assert report["source_builds"][0]["source_rule"]["ruleSearch"]["bookList"] == ".item"
+
+
+class FakeJobRuntime:
+    def __init__(self):
+        self.seen = []
+
+    def handle_job(self, job):
+        self.seen.append(job)
+        return {
+            "agent_run_id": "run-real",
+            "source_version_id": job.payload["source_version_id"],
+            "decision": "canary",
+            "strategy": "deterministic_patch",
+            "review_required": False,
+        }
+
+
+class FakeJobRepository:
+    def __init__(self):
+        self.jobs = {}
+
+    def get_job(self, job_id):
+        return self.jobs[job_id]
+
+
+@pytest.mark.asyncio
+async def test_acceptance_can_execute_runtime_with_job_repository():
+    from app.application.services.source_to_insight_acceptance_service import (
+        SourceToInsightAcceptanceService,
+    )
+    from app.domain.entities.job import Job
+
+    job_repo = FakeJobRepository()
+    runtime = FakeJobRuntime()
+    build = FakeSourceBuildService()
+    job_repo.jobs["job-1"] = Job(
+        id="job-1",
+        kind="source.build",
+        tenant_id="operator",
+        payload={"url": "https://a.test", "source_version_id": "version-1"},
+        status="queued",
+    )
+    service = SourceToInsightAcceptanceService(
+        source_build_service=build,
+        source_build_runtime=runtime,
+        job_repository=job_repo,
+    )
+
+    report = await service.run({
+        "source_urls": ["https://a.test"],
+        "book_name": "斗罗大陆",
+        "tenant_id": "operator",
+    })
+
+    assert report["source_builds"][0]["agent_run_id"] == "run-real"
+    assert runtime.seen[0].id == "job-1"
