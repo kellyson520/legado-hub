@@ -1,4 +1,5 @@
 import pytest
+import threading
 
 
 def _configure_database(monkeypatch, tmp_path, name: str) -> None:
@@ -206,3 +207,50 @@ async def test_run_source_build_job_does_not_audit_when_runtime_fails(monkeypatc
     assert result['jobs'][0]['job_id'] == job.id
     assert result['jobs'][0]['status'] == 'queued'
     assert audit.calls == []
+
+
+@pytest.mark.asyncio
+async def test_run_source_build_job_executes_build_and_audit_off_event_loop_thread(monkeypatch, tmp_path):
+    _configure_database(monkeypatch, tmp_path, 'source-build-audit-worker-thread.sqlite3')
+
+    from app.application.services.job_service import JobService
+    from app.infrastructure.persistence import factory
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
+    from app.tasks.scheduler import run_source_build_job
+
+    bootstrap_sqlite()
+    JobService(SQLiteJobRepository()).enqueue(
+        kind='source.build',
+        tenant_id='system',
+        payload={'source_version_id': 'candidate-1'},
+    )
+    event_loop_thread_id = threading.get_ident()
+
+    class FakeBuildRuntime:
+        def __init__(self):
+            self.thread_id = None
+
+        def handle_job(self, handled_job):
+            self.thread_id = threading.get_ident()
+            return {'source_version_id': handled_job.payload['source_version_id']}
+
+    class FakeAuditService:
+        def __init__(self):
+            self.thread_id = None
+
+        def audit_blocking(self, source_version_id, *, completed_repair_attempt=None):
+            self.thread_id = threading.get_ident()
+            return {'source_version_id': source_version_id, 'status': 'passed'}
+
+    runtime = FakeBuildRuntime()
+    audit = FakeAuditService()
+    monkeypatch.setattr(factory, 'build_source_build_runtime_service', lambda: runtime)
+    monkeypatch.setattr(factory, 'build_source_build_audit_service', lambda: audit, raising=False)
+
+    result = await run_source_build_job(limit=1)
+
+    assert result['jobs'][0]['status'] == 'succeeded'
+    assert runtime.thread_id is not None
+    assert runtime.thread_id != event_loop_thread_id
+    assert audit.thread_id == runtime.thread_id

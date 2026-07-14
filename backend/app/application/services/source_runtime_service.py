@@ -226,6 +226,7 @@ class SourceRuntimeService:
             raise NotFoundException("source version not found")
         if version.status != "candidate":
             raise ValidationException("Only candidate source versions can be published")
+        self._assert_source_audit_publishable(version)
 
         latest_runs = self._repo.list_test_runs(source_version_id)
         latest_run = latest_runs[0] if latest_runs else None

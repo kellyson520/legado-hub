@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -79,3 +80,86 @@ def test_source_rule_editor_api_requires_write_permission_and_blocks_verificatio
     )
     assert publish.status_code == 422
     assert "verification_wall" in publish.json()["message"]
+
+
+@pytest.mark.parametrize(
+    "source_audit",
+    [
+        {"status": "pending", "attempt": 0},
+        {"status": "failed", "attempt": 5},
+        {"status": "retry_queued", "attempt": 1},
+        {"status": "passed", "attempt": 1, "test_run_pending": True},
+    ],
+    ids=["pending", "failed", "retry", "pending-checkpoint"],
+)
+def test_direct_rule_publish_rejects_unsettled_source_audit(tmp_path, monkeypatch, source_audit):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / f"source-rule-audit-{source_audit['status']}.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+    from app.main import app
+
+    bootstrap_sqlite()
+    repo = SQLiteSourceRuntimeRepository()
+    version = repo.create_candidate_version(
+        "book",
+        "https://example.test/audit-blocked",
+        _source_payload(source_audit=source_audit),
+        "7",
+    )
+    repo.record_test_run(
+        source_version_id=version.id,
+        trigger="rule_editor",
+        score=100,
+        grade="A",
+        step_results={"content": {"passed": True, "status": "ready", "elapsed_ms": 0}},
+    )
+    writer = create_access_token({"sub": "7", "permissions": ["book_sources.write"], "roles": []})
+
+    response = TestClient(app).post(
+        f"/api/sources/versions/{version.id}/publish",
+        headers={"Authorization": f"Bearer {writer}"},
+    )
+
+    assert response.status_code == 422
+    assert "source audit" in response.json()["message"].lower()
+    assert repo.get_version(version.id).status == "candidate"
+
+
+def test_direct_rule_publish_allows_passed_settled_source_audit(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-rule-audit-passed.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+    from app.main import app
+
+    bootstrap_sqlite()
+    repo = SQLiteSourceRuntimeRepository()
+    version = repo.create_candidate_version(
+        "book",
+        "https://example.test/audit-passed",
+        _source_payload(source_audit={"status": "passed", "attempt": 1, "test_run_pending": False}),
+        "7",
+    )
+    repo.record_test_run(
+        source_version_id=version.id,
+        trigger="rule_editor",
+        score=100,
+        grade="A",
+        step_results={"content": {"passed": True, "status": "ready", "elapsed_ms": 0}},
+    )
+    writer = create_access_token({"sub": "7", "permissions": ["book_sources.write"], "roles": []})
+
+    response = TestClient(app).post(
+        f"/api/sources/versions/{version.id}/publish",
+        headers={"Authorization": f"Bearer {writer}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "published"

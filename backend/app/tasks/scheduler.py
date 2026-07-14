@@ -473,7 +473,7 @@ async def run_source_build_job(limit: int = 1) -> dict:
 
     processed: list[dict] = []
     for _ in range(max(limit, 0)):
-        result = worker.run_once()
+        result = await asyncio.to_thread(worker.run_once)
         if result is None:
             break
         processed.append(
