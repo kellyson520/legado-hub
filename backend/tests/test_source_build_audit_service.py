@@ -84,6 +84,20 @@ class SlowProbe(PassingProbe):
         return await super().probe_source(source, keyword_samples, probe_mode)
 
 
+class SlowClosingProbe(PassingProbe):
+    def __init__(self):
+        super().__init__()
+        self.close_cancelled = False
+
+    async def aclose(self):
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            self.close_cancelled = True
+            raise
+        await super().aclose()
+
+
 class FakeBuildService:
     def __init__(self):
         self.repairs = []
@@ -133,6 +147,9 @@ class FakeReviewRepository:
     def save_item(self, item):
         self.items.append(item)
         return item
+
+    def get_item(self, item_id):
+        return next((item for item in self.items if item.id == item_id), None)
 
     def list_items(self, *, status=None, review_type=None):
         return [
@@ -566,6 +583,32 @@ def test_audit_failure_review_enqueue_is_idempotent_for_candidate_version():
     assert len(repo.items) == 1
 
 
+def test_sqlite_audit_failure_review_uses_stable_terminal_item_id(tmp_path, monkeypatch):
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-audit-review.sqlite3'))
+
+    from app.application.services.source_review_service import SourceReviewService
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.source_review_repo_impl import SQLiteSourceReviewRepository
+
+    bootstrap_sqlite()
+    repo = SQLiteSourceReviewRepository()
+    service = SourceReviewService(repo)
+
+    first = service.enqueue_audit_failure(
+        source_version_id='candidate-1',
+        source_url='https://example.test',
+        audit_report={'status': 'failed'},
+    )
+    second = service.enqueue_audit_failure(
+        source_version_id='candidate-1',
+        source_url='https://example.test',
+        audit_report={'status': 'failed'},
+    )
+
+    assert first.id == second.id == 'source-audit-failed:candidate-1'
+    assert [item.id for item in repo.list_items(review_type='source_audit_failed')] == [first.id]
+
+
 async def test_probe_total_budget_cancels_slow_probe_and_queues_repair():
     from app.application.services.source_build_audit_service import SourceBuildAuditService
 
@@ -608,4 +651,48 @@ async def test_probe_total_budget_cancels_slow_probe_and_queues_repair():
     assert result['report']['reason'] == 'probe_timeout'
     assert probes[0].cancelled is True
     assert probes[0].closed is True
+    assert build.repairs[0]['next_attempt'] == 2
+
+
+async def test_probe_total_budget_cancels_slow_close_and_queues_repair():
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    version = SourceVersion(
+        id='candidate-1',
+        source_definition_id=17,
+        source_type='book',
+        source_id='https://example.test',
+        status='candidate',
+        created_by='tenant-1',
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://example.test',
+            'source_rule': {'bookSourceUrl': 'https://example.test'},
+            'source_audit': {'status': 'pending', 'attempt': 0, 'max_attempts': 5, 'history': []},
+        },
+    )
+    runtime = FakeRuntimeRepository(version)
+    build = FakeBuildService()
+    probes = []
+
+    def probe_factory():
+        probe = SlowClosingProbe()
+        probes.append(probe)
+        return probe
+
+    service = SourceBuildAuditService(
+        runtime_repo=runtime,
+        probe_service_factory=probe_factory,
+        build_service=build,
+        review_service=FakeReviewService(),
+    )
+    service.MAX_TOTAL_ELAPSED_MS = 20
+    started = time.perf_counter()
+
+    result = await service.audit('candidate-1')
+
+    assert time.perf_counter() - started < 0.15
+    assert result['status'] == 'retry_queued'
+    assert result['report']['reason'] == 'probe_timeout'
+    assert probes[0].close_cancelled is True
     assert build.repairs[0]['next_attempt'] == 2

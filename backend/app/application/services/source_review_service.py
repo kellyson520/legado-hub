@@ -72,11 +72,12 @@ class SourceReviewService:
         audit_report: dict,
         created_by: str = 'system',
     ) -> SourceReviewItem:
-        for item in self._repo.list_items(status='candidate', review_type='source_audit_failed'):
-            if item.source_version_id == source_version_id:
-                return item
+        item_id = f'source-audit-failed:{source_version_id}'
+        existing = self._repo.get_item(item_id)
+        if existing is not None:
+            return existing
         item = SourceReviewItem(
-            id=uuid4().hex,
+            id=item_id,
             review_type='source_audit_failed',
             source_version_id=source_version_id,
             source_url=source_url,

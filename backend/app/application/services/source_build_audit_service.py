@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from copy import deepcopy
 
 
@@ -13,6 +14,7 @@ class SourceBuildAuditService:
     MAX_ATTEMPTS = 5
     MAX_STAGE_ELAPSED_MS = 10_000
     MAX_TOTAL_ELAPSED_MS = 25_000
+    MIN_CLOSE_TIMEOUT_SECONDS = 0.001
 
     def __init__(self, *, runtime_repo, probe_service_factory, build_service, review_service):
         self._runtime = runtime_repo
@@ -43,6 +45,8 @@ class SourceBuildAuditService:
         if source_rule:
             source_rule.setdefault('id', version.source_definition_id)
             probe = None
+            close_timed_out = False
+            deadline = time.monotonic() + (self.MAX_TOTAL_ELAPSED_MS / 1000)
             try:
                 probe = self._probe_service_factory()
                 evidence = await asyncio.wait_for(
@@ -51,7 +55,7 @@ class SourceBuildAuditService:
                         keyword_samples=[keyword],
                         probe_mode='full_chain',
                     ),
-                    timeout=self.MAX_TOTAL_ELAPSED_MS / 1000,
+                    timeout=self._remaining_seconds(deadline),
                 )
             except asyncio.TimeoutError:
                 report, passed, diagnostics, step_passes = self._probe_timeout_evaluation()
@@ -60,14 +64,26 @@ class SourceBuildAuditService:
             else:
                 report, passed, diagnostics, step_passes = self._evaluate(evidence)
             finally:
-                close = getattr(probe, 'aclose', None) if probe is not None else None
+                close = None
+                if probe is not None:
+                    close = getattr(probe, 'aclose', None) or getattr(probe, 'close', None)
                 if callable(close):
                     try:
                         result = close()
                         if inspect.isawaitable(result):
-                            await result
+                            await asyncio.wait_for(
+                                result,
+                                timeout=max(
+                                    self._remaining_seconds(deadline),
+                                    self.MIN_CLOSE_TIMEOUT_SECONDS,
+                                ),
+                            )
+                    except asyncio.TimeoutError:
+                        close_timed_out = True
                     except Exception:
                         pass
+            if close_timed_out:
+                report, passed, diagnostics, step_passes = self._probe_timeout_evaluation()
         else:
             report, passed, diagnostics, step_passes = self._missing_rule_evaluation()
         audit = dict(payload.get('source_audit') or {})
@@ -226,6 +242,10 @@ class SourceBuildAuditService:
     @staticmethod
     def _job_id(job) -> str:
         return str(getattr(job, 'id', '') or '')
+
+    @staticmethod
+    def _remaining_seconds(deadline: float) -> float:
+        return max(0.0, deadline - time.monotonic())
 
     def _record_test_run(self, version, score: int, grade: str, report: dict, step_passes: dict, diagnostics: list[str]):
         self._runtime.record_test_run(
