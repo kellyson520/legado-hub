@@ -130,6 +130,66 @@ def test_operations_source_builds_endpoint_lists_candidate_versions(monkeypatch,
     assert row['latest_run']['grade'] == 'B'
 
 
+def test_operations_source_builds_endpoint_includes_failed_terminal_audit_versions(monkeypatch, tmp_path):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-terminal-audit.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    terminal_audit = {
+        'status': 'failed',
+        'attempt': 5,
+        'max_attempts': 5,
+        'score': 0,
+        'grade': 'F',
+        'report': {
+            'status': 'failed',
+            'reason': 'content parse failed',
+            'total_elapsed_ms': 480,
+            'stages': {
+                'search': {'status': 'ok', 'elapsed_ms': 120, 'hit_count': 1, 'title': 'Sample Book'},
+                'toc': {'status': 'ok', 'elapsed_ms': 160, 'hit_count': 9, 'title': 'Chapter 1'},
+                'content': {'status': 'failed', 'elapsed_ms': 200, 'content_length': 0, 'title': 'Chapter 1'},
+            },
+        },
+    }
+    bootstrap_sqlite()
+    repo = build_source_runtime_repository()
+    candidate = repo.create_candidate_version(
+        source_type='book',
+        source_id='https://example.test/candidate',
+        payload={'canonical_url': 'https://example.test/candidate'},
+        created_by='tenant-console',
+    )
+    failed = repo.create_candidate_version(
+        source_type='book',
+        source_id='https://example.test/audit-failed',
+        payload={
+            'canonical_url': 'https://example.test/audit-failed',
+            'source_audit': terminal_audit,
+        },
+        created_by='system',
+    )
+    repo.update_version_status(failed.id, 'failed')
+
+    from app.main import app
+
+    token = create_access_token({'sub': '1', 'permissions': ['book_sources.read']})
+    response = TestClient(app).get('/api/events/source-builds', headers={'Authorization': f'Bearer {token}'})
+
+    assert response.status_code == 200
+    rows = response.json()['data']
+    assert {row['id'] for row in rows} == {candidate.id, failed.id}
+    assert len(rows) <= 50
+    assert rows == sorted(rows, key=lambda row: (row['created_at'] or '', row['id']), reverse=True)
+    failed_row = next(row for row in rows if row['id'] == failed.id)
+    assert failed_row['status'] == 'failed'
+    assert failed_row['payload']['source_audit'] == terminal_audit
+
+
 def test_operations_source_builds_endpoint_exposes_autonomous_build_backflow(monkeypatch, tmp_path):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-autonomous.sqlite3'))
