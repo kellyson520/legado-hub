@@ -1,4 +1,5 @@
 import shutil
+import time
 
 import pytest
 from bs4 import BeautifulSoup
@@ -98,3 +99,75 @@ def test_worker_client_serializes_html_tag_context_as_string():
     assert output.success is True
     assert "斗罗大陆" in output.value
     client.close()
+
+
+def test_worker_client_times_out_and_terminates_infinite_js_execution():
+    client = JsWorkerClient(response_timeout_seconds=0.1)
+    context = JsExecutionContext(
+        stage="search_rule_js",
+        source={},
+        result={},
+        base_url="",
+        cache={},
+        variables={},
+        headers={},
+    )
+    started = time.monotonic()
+
+    output = client.execute("while (true) {}", context)
+
+    assert time.monotonic() - started < 1
+    assert output.success is False
+    assert output.error_code == "EXECUTION_TIMEOUT"
+    assert client._process is None
+
+
+def test_js_runtime_close_delegates_to_worker_client():
+    class CloseableWorker:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    worker = CloseableWorker()
+    runtime = JsRuntime(worker_client=worker)
+
+    runtime.close()
+
+    assert worker.close_calls == 1
+
+
+def test_worker_client_returns_stable_failure_for_malformed_bridge_message(monkeypatch):
+    import app.infrastructure.legado.engine.js_worker_bridge as bridge
+
+    class FakeInput:
+        def write(self, _value):
+            return 0
+
+        def flush(self):
+            return None
+
+    class FakeOutput:
+        def readline(self):
+            return '{"type":"bridge_http"}\n'
+
+    class FakeProcess:
+        stdin = FakeInput()
+        stdout = FakeOutput()
+
+        @staticmethod
+        def poll():
+            return None
+
+    client = JsWorkerClient()
+    client._process = FakeProcess()
+    monkeypatch.setattr(bridge.select, 'select', lambda *_args: ([client._process.stdout], [], []))
+    context = JsExecutionContext(
+        stage='search_rule_js', source={}, result={}, base_url='', cache={}, variables={}, headers={},
+    )
+
+    output = client.execute('return 1', context)
+
+    assert output.success is False
+    assert output.error_code == 'MALFORMED_RESPONSE'

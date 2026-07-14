@@ -22,7 +22,11 @@ class SourceBuildAuditService:
         self._build_service = build_service
         self._review_service = review_service
 
-    async def audit(self, source_version_id: str) -> dict:
+    async def audit(
+        self,
+        source_version_id: str,
+        completed_repair_attempt: int | None = None,
+    ) -> dict:
         version = self._runtime.get_version(source_version_id)
         if version is None:
             return {'status': 'missing'}
@@ -36,9 +40,15 @@ class SourceBuildAuditService:
         payload = deepcopy(version.payload)
         existing_audit = dict(payload.get('source_audit') or {})
         if existing_audit.get('status') == 'retry_pending':
-            return self._recover_retry_pending(version, payload, existing_audit)
+            pending_attempt = int(existing_audit.get('repair_next_attempt', 0) or 0)
+            if completed_repair_attempt != pending_attempt:
+                return self._recover_retry_pending(version, payload, existing_audit)
         if existing_audit.get('status') == 'terminal_review_pending':
             return self._recover_terminal_review_pending(version, payload, existing_audit)
+        if existing_audit.get('status') == 'terminal_finalizing':
+            return self._recover_terminal_finalizing(version, payload, existing_audit)
+        if existing_audit.get('status') == 'failed' and existing_audit.get('finalization_pending'):
+            return self._finish_terminal_status(version, existing_audit)
         raw_source_rule = payload.get('source_rule')
         source_rule = dict(raw_source_rule) if isinstance(raw_source_rule, dict) else {}
         keyword = str(payload.get('keyword') or 'sample')
@@ -96,24 +106,22 @@ class SourceBuildAuditService:
             'score': score,
             'grade': grade,
         })
-        audit_status = 'passed' if passed else 'failed'
-        queued_repair = None
-        recovery_error = None
         if not passed and attempt < self.MAX_ATTEMPTS:
-            try:
-                queued_repair = self._submit_repair(
-                    version=version,
-                    payload=payload,
-                    source_rule=source_rule,
-                    keyword=keyword,
-                    next_attempt=attempt + 1,
-                )
-                audit_status = 'retry_queued'
-            except Exception as error:
-                audit_status = 'retry_pending'
-                report['recovery_state'] = 'retry_pending'
-                recovery_error = error
-        elif not passed:
+            return self._queue_repair_after_pending(
+                version=version,
+                payload=payload,
+                audit=audit,
+                report=report,
+                score=score,
+                grade=grade,
+                step_passes=step_passes,
+                diagnostics=diagnostics,
+                source_rule=source_rule,
+                keyword=keyword,
+                attempt=attempt,
+            )
+        audit_status = 'passed' if passed else 'failed'
+        if not passed:
             audit_status = 'terminal_review_pending'
             report['recovery_state'] = 'terminal_review_pending'
         audit.update({
@@ -123,41 +131,92 @@ class SourceBuildAuditService:
             'report': report,
             'history': list(audit.get('history') or [])[-4:] + [report],
         })
-        if not passed and attempt < self.MAX_ATTEMPTS:
-            audit['repair_next_attempt'] = attempt + 1
-            repair_job_id = self._job_id(queued_repair)
-            if repair_job_id:
-                audit['repair_job_id'] = repair_job_id
         payload['source_audit'] = audit
-        self._runtime.update_version_payload(version.id, payload)
-        if recovery_error is not None:
-            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
-            raise SourceAuditRecoveryError('source audit repair enqueue requires recovery') from recovery_error
-        if not passed and attempt >= self.MAX_ATTEMPTS:
-            terminal_report = {**report, 'recovery_state': 'failed'}
-            try:
-                review_item = self._review_service.enqueue_audit_failure(
-                    source_version_id=version.id,
-                    source_url=str(payload.get('canonical_url') or source_rule.get('bookSourceUrl') or version.source_id),
-                    audit_report=terminal_report,
-                    created_by='system',
-                )
-            except Exception as error:
-                self._record_test_run(version, score, grade, report, step_passes, diagnostics)
-                raise SourceAuditRecoveryError('source audit terminal review requires recovery') from error
-            audit['status'] = 'failed'
-            report = terminal_report
-            review_item_id = self._job_id(review_item)
-            if review_item_id:
-                audit['review_item_id'] = review_item_id
-            audit['report'] = report
-            payload['source_audit'] = audit
+        try:
             self._runtime.update_version_payload(version.id, payload)
-            self._runtime.update_version_status(version.id, 'failed')
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit terminal checkpoint requires recovery') from error
+        if not passed and attempt >= self.MAX_ATTEMPTS:
+            return self._begin_terminal_finalization(
+                version=version,
+                payload=payload,
+                audit=audit,
+                report=report,
+                score=score,
+                grade=grade,
+                step_passes=step_passes,
+                diagnostics=diagnostics,
+                source_rule=source_rule,
+            )
         self._record_test_run(version, score, grade, report, step_passes, diagnostics)
         return {
             'source_version_id': version.id,
             'status': audit['status'],
+            'score': score,
+            'grade': grade,
+            'report': report,
+        }
+
+    def _queue_repair_after_pending(
+        self,
+        *,
+        version,
+        payload: dict,
+        audit: dict,
+        report: dict,
+        score: int,
+        grade: str,
+        step_passes: dict,
+        diagnostics: list[str],
+        source_rule: dict,
+        keyword: str,
+        attempt: int,
+    ) -> dict:
+        next_attempt = attempt + 1
+        report['recovery_state'] = 'retry_pending'
+        audit.update({
+            'status': 'retry_pending',
+            'attempt': attempt,
+            'max_attempts': self.MAX_ATTEMPTS,
+            'report': report,
+            'history': list(audit.get('history') or [])[-4:] + [report],
+            'repair_next_attempt': next_attempt,
+        })
+        payload['source_audit'] = audit
+        try:
+            self._runtime.update_version_payload(version.id, payload)
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit repair checkpoint requires recovery') from error
+
+        try:
+            queued_repair = self._submit_repair(
+                version=version,
+                payload=payload,
+                source_rule=source_rule,
+                keyword=keyword,
+                next_attempt=next_attempt,
+            )
+        except Exception as error:
+            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+            raise SourceAuditRecoveryError('source audit repair enqueue requires recovery') from error
+
+        audit['status'] = 'retry_queued'
+        report['recovery_state'] = 'retry_queued'
+        audit['report'] = report
+        repair_job_id = self._job_id(queued_repair)
+        if repair_job_id:
+            audit['repair_job_id'] = repair_job_id
+        payload['source_audit'] = audit
+        try:
+            self._runtime.update_version_payload(version.id, payload)
+        except Exception as error:
+            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+            raise SourceAuditRecoveryError('source audit repair handoff requires recovery') from error
+
+        self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+        return {
+            'source_version_id': version.id,
+            'status': 'retry_queued',
             'score': score,
             'grade': grade,
             'report': report,
@@ -178,7 +237,6 @@ class SourceBuildAuditService:
                 next_attempt=next_attempt,
             )
         except Exception as error:
-            self._runtime.update_version_payload(version.id, payload)
             raise SourceAuditRecoveryError('source audit repair enqueue requires recovery') from error
 
         audit['status'] = 'retry_queued'
@@ -188,7 +246,10 @@ class SourceBuildAuditService:
         if repair_job_id:
             audit['repair_job_id'] = repair_job_id
         payload['source_audit'] = audit
-        self._runtime.update_version_payload(version.id, payload)
+        try:
+            self._runtime.update_version_payload(version.id, payload)
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit repair handoff requires recovery') from error
         return {
             'source_version_id': version.id,
             'status': 'retry_queued',
@@ -201,6 +262,35 @@ class SourceBuildAuditService:
         report = dict(audit.get('report') or {})
         source_rule = payload.get('source_rule')
         source_rule = dict(source_rule) if isinstance(source_rule, dict) else {}
+        score = int(report.get('score', 0) or 0)
+        grade = str(report.get('grade') or 'F')
+        step_passes = self._step_passes_from_report(report)
+        diagnostics = [str(report.get('reason') or 'source_audit_failed')]
+        return self._begin_terminal_finalization(
+            version=version,
+            payload=payload,
+            audit=audit,
+            report=report,
+            score=score,
+            grade=grade,
+            step_passes=step_passes,
+            diagnostics=diagnostics,
+            source_rule=source_rule,
+        )
+
+    def _begin_terminal_finalization(
+        self,
+        *,
+        version,
+        payload: dict,
+        audit: dict,
+        report: dict,
+        score: int,
+        grade: str,
+        step_passes: dict,
+        diagnostics: list[str],
+        source_rule: dict,
+    ) -> dict:
         terminal_report = {**report, 'recovery_state': 'failed'}
         try:
             review_item = self._review_service.enqueue_audit_failure(
@@ -210,24 +300,90 @@ class SourceBuildAuditService:
                 created_by='system',
             )
         except Exception as error:
-            self._runtime.update_version_payload(version.id, payload)
             raise SourceAuditRecoveryError('source audit terminal review requires recovery') from error
 
-        audit['status'] = 'failed'
-        report = terminal_report
-        audit['report'] = report
+        audit['status'] = 'terminal_finalizing'
+        audit['report'] = terminal_report
         review_item_id = self._job_id(review_item)
         if review_item_id:
             audit['review_item_id'] = review_item_id
         payload['source_audit'] = audit
-        self._runtime.update_version_payload(version.id, payload)
-        self._runtime.update_version_status(version.id, 'failed')
+        try:
+            self._runtime.update_version_payload(version.id, payload)
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit terminal finalization requires recovery') from error
+        return self._complete_terminal_finalization(
+            version=version,
+            payload=payload,
+            audit=audit,
+            report=terminal_report,
+            score=score,
+            grade=grade,
+            step_passes=step_passes,
+            diagnostics=diagnostics,
+        )
+
+    def _recover_terminal_finalizing(self, version, payload: dict, audit: dict) -> dict:
+        report = dict(audit.get('report') or {})
+        return self._complete_terminal_finalization(
+            version=version,
+            payload=payload,
+            audit=audit,
+            report=report,
+            score=int(report.get('score', 0) or 0),
+            grade=str(report.get('grade') or 'F'),
+            step_passes=self._step_passes_from_report(report),
+            diagnostics=[str(report.get('reason') or 'source_audit_failed')],
+        )
+
+    def _complete_terminal_finalization(
+        self,
+        *,
+        version,
+        payload: dict,
+        audit: dict,
+        report: dict,
+        score: int,
+        grade: str,
+        step_passes: dict,
+        diagnostics: list[str],
+    ) -> dict:
+        try:
+            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit terminal test run requires recovery') from error
+
+        audit['status'] = 'failed'
+        audit['finalization_pending'] = True
+        audit['report'] = report
+        payload['source_audit'] = audit
+        try:
+            self._runtime.update_version_payload(version.id, payload)
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit terminal finalization requires recovery') from error
+        return self._finish_terminal_status(version, audit)
+
+    def _finish_terminal_status(self, version, audit: dict) -> dict:
+        try:
+            self._runtime.update_version_status(version.id, 'failed')
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit terminal status requires recovery') from error
         return {
             'source_version_id': version.id,
             'status': 'failed',
-            'score': int(report.get('score', 0) or 0),
-            'grade': str(report.get('grade') or 'F'),
-            'report': report,
+            'score': int(audit.get('report', {}).get('score', 0) or 0),
+            'grade': str(audit.get('report', {}).get('grade') or 'F'),
+            'report': audit.get('report') or {},
+        }
+
+    @staticmethod
+    def _step_passes_from_report(report: dict) -> dict:
+        stages = report.get('stages') or {}
+        return {
+            'search': (stages.get('search') or {}).get('status') == 'ok',
+            'toc': (stages.get('toc') or {}).get('status') == 'ok',
+            'content': (stages.get('content') or {}).get('status') == 'ok'
+            and int((stages.get('content') or {}).get('content_length', 0) or 0) >= 80,
         }
 
     def _submit_repair(self, *, version, payload: dict, source_rule: dict, keyword: str, next_attempt: int):
