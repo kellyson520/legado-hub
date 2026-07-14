@@ -35,6 +35,11 @@ def _iso(value) -> str | None:
 
 
 def _source_review_evidence(payload: dict, source_url: str) -> str:
+    audit_report = payload.get('audit_report')
+    if isinstance(audit_report, dict):
+        audit_reason = audit_report.get('reason')
+        if isinstance(audit_reason, str) and audit_reason.strip():
+            return audit_reason.strip()
     reason = payload.get('reason')
     if isinstance(reason, str) and reason.strip():
         return reason.strip()

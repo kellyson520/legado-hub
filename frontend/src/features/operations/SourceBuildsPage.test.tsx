@@ -32,6 +32,23 @@ const operationsMocks = vi.hoisted(() => ({
               quality_score: 80,
             },
           },
+          source_audit: {
+            status: 'passed',
+            attempt: 1,
+            max_attempts: 5,
+            score: 100,
+            grade: 'A',
+            test_run_pending: false,
+            report: {
+              status: 'passed',
+              total_elapsed_ms: 480,
+              stages: {
+                search: { status: 'ok', elapsed_ms: 120 },
+                toc: { status: 'ok', elapsed_ms: 160 },
+                content: { status: 'ok', elapsed_ms: 200 },
+              },
+            },
+          },
         },
         createdBy: 'tenant-console',
         createdAt: '2026-07-12T10:00:00Z',
@@ -59,7 +76,7 @@ vi.mock('@/api/modules/operations', async () => {
 
 import { SourceBuildsPage } from './SourceBuildsPage'
 
-test('source builds page renders candidate url, keyword, latest grade, and automation summary', async () => {
+test('source builds page renders candidate url, audit trace, latest grade, and automation summary', async () => {
   render(<SourceBuildsPage />)
 
   expect(await screen.findByRole('heading', { name: 'Source build candidates' })).toBeInTheDocument()
@@ -67,9 +84,58 @@ test('source builds page renders candidate url, keyword, latest grade, and autom
   expect(screen.getByText('sample')).toBeInTheDocument()
   expect(screen.getByText('candidate')).toBeInTheDocument()
   expect(screen.getByText('B')).toBeInTheDocument()
+  expect(screen.getByText('Audit: passed · 1/5 · A')).toBeInTheDocument()
+  expect(screen.getByText('search/toc/content: ok / ok / ok · 480ms')).toBeInTheDocument()
+  expect(screen.getByText('total parse: 480ms')).toBeInTheDocument()
   expect(screen.getByText('canary')).toBeInTheDocument()
   expect(screen.getByText('configured_catalog 路 deterministic_patch')).toBeInTheDocument()
   expect(screen.getByText('validation: B (80)')).toBeInTheDocument()
   expect(screen.getByText('search/toc/content: ok / ok / failed')).toBeInTheDocument()
   expect(screen.getByText('content endpoint returned html')).toBeInTheDocument()
+})
+
+test('source builds page announces terminal audit failure reason and timing', async () => {
+  operationsMocks.listSourceBuildCandidates.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [
+      {
+        id: 'version-audit-failed',
+        sourceId: 'https://example.test/audit-failed',
+        sourceType: 'book',
+        status: 'failed',
+        payload: {
+          canonical_url: 'https://example.test/audit-failed',
+          source_audit: {
+            status: 'failed',
+            attempt: 5,
+            max_attempts: 5,
+            score: 0,
+            grade: 'F',
+            report: {
+              status: 'failed',
+              reason: 'content parse failed',
+              total_elapsed_ms: 480,
+              stages: {
+                search: { status: 'ok', elapsed_ms: 120 },
+                toc: { status: 'ok', elapsed_ms: 160 },
+                content: { status: 'failed', elapsed_ms: 200 },
+              },
+            },
+          },
+        },
+      },
+    ],
+    meta: { total: 1 },
+    trace_id: null,
+  })
+
+  render(<SourceBuildsPage />)
+
+  expect(await screen.findByText('Audit: failed · 5/5 · F')).toBeInTheDocument()
+  expect(screen.getByText('search/toc/content: ok / ok / failed · 480ms')).toBeInTheDocument()
+  expect(screen.getByText('total parse: 480ms')).toBeInTheDocument()
+  expect(screen.getByText('content parse failed')).toBeInTheDocument()
+  expect(screen.getByRole('alert')).toHaveTextContent('Audit: failed · 5/5 · F')
 })

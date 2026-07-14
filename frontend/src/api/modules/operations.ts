@@ -54,6 +54,77 @@ export interface OperationDeliveryAttemptRow {
   createdAt?: string | null
 }
 
+export interface OperationSourceBuildAuditStage {
+  status?: string
+  elapsed_ms?: number
+  elapsedMs?: number
+  hit_count?: number
+  hitCount?: number
+  content_length?: number
+  contentLength?: number
+  title?: string
+}
+
+export interface OperationSourceBuildAuditReport {
+  status?: string
+  attempt?: number
+  max_attempts?: number
+  maxAttempts?: number
+  score?: number
+  grade?: string
+  test_run_pending?: boolean
+  testRunPending?: boolean
+  total_elapsed_ms?: number
+  totalElapsedMs?: number
+  stages?: {
+    search?: OperationSourceBuildAuditStage
+    toc?: OperationSourceBuildAuditStage
+    content?: OperationSourceBuildAuditStage
+  }
+  reason?: string
+}
+
+export interface OperationSourceBuildAuditSummary {
+  status?: string
+  attempt?: number
+  max_attempts?: number
+  maxAttempts?: number
+  score?: number
+  grade?: string
+  test_run_pending?: boolean
+  testRunPending?: boolean
+  report?: OperationSourceBuildAuditReport
+}
+
+export interface OperationSourceBuildAutonomousSummary {
+  decision?: string
+  strategy?: string
+  trigger?: string
+  agent_run_id?: string
+  probe?: {
+    search_status?: string
+    toc_status?: string
+    content_status?: string
+    sample_title?: string
+    failure_reason?: string
+  }
+  validation?: {
+    grade?: string
+    quality_score?: number
+  }
+}
+
+export interface OperationSourceBuildPayload {
+  canonical_url?: string
+  keyword?: string
+  submitted_by?: string
+  autonomous_build?: OperationSourceBuildAutonomousSummary
+  autonomousBuild?: OperationSourceBuildAutonomousSummary
+  source_audit?: OperationSourceBuildAuditSummary
+  sourceAudit?: OperationSourceBuildAuditSummary
+  [key: string]: unknown
+}
+
 export interface OperationSourceBuildRow {
   id: string
   source_definition_id?: number
@@ -63,12 +134,7 @@ export interface OperationSourceBuildRow {
   source_id?: string
   sourceId?: string
   status: string
-  payload: {
-    canonical_url?: string
-    keyword?: string
-    submitted_by?: string
-    [key: string]: unknown
-  }
+  payload: OperationSourceBuildPayload
   created_by?: string
   createdBy?: string
   created_at?: string | null
@@ -91,6 +157,14 @@ export interface OperationSourceBuildRow {
   } | null
 }
 
+export interface OperationReviewQueuePayload {
+  source_audit?: OperationSourceBuildAuditSummary
+  sourceAudit?: OperationSourceBuildAuditSummary
+  audit_report?: OperationSourceBuildAuditReport
+  auditReport?: OperationSourceBuildAuditReport
+  [key: string]: unknown
+}
+
 export interface OperationReviewQueueRow {
   id: string
   item_type?: string
@@ -107,7 +181,7 @@ export interface OperationReviewQueueRow {
   object_name?: string
   objectName?: string
   evidence: string
-  payload?: Record<string, unknown>
+  payload?: OperationReviewQueuePayload
   status: string
   created_by?: string
   createdBy?: string
