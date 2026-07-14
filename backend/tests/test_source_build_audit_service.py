@@ -1074,3 +1074,49 @@ async def test_retry_audit_post_run_checkpoint_failure_recovers_without_duplicat
     assert len(runtime.runs) == 1
     assert len(build.repairs) == 1
     assert len(probes) == 1
+
+
+async def test_retry_enqueue_failure_recovers_pending_run_before_queueing_repair():
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    version = SourceVersion(
+        id='candidate-1', source_definition_id=17, source_type='book',
+        source_id='https://example.test', status='candidate', created_by='tenant-1',
+        payload={
+            'keyword': 'sample', 'canonical_url': 'https://example.test',
+            'source_rule': {'bookSourceUrl': 'https://example.test'},
+            'source_audit': {'status': 'pending', 'attempt': 0, 'max_attempts': 5, 'history': []},
+        },
+    )
+    runtime = FakeRuntimeRepository(version, fail_test_runs=1)
+    build = FlakyBuildService(failures=1)
+    probes = []
+
+    def probe_factory():
+        probe = ShortContentProbe()
+        probes.append(probe)
+        return probe
+
+    service = SourceBuildAuditService(
+        runtime_repo=runtime, probe_service_factory=probe_factory,
+        build_service=build, review_service=FakeReviewService(),
+    )
+
+    with pytest.raises(RuntimeError):
+        await service.audit('candidate-1')
+
+    pending = version.payload['source_audit']
+    assert pending['status'] == 'retry_pending'
+    assert pending['test_run_pending'] is True
+    assert pending['test_run_attempt'] == 1
+    assert runtime.runs == []
+    assert len(build.repairs) == 1
+    assert len(probes) == 1
+
+    result = await service.audit('candidate-1')
+
+    assert result['status'] == 'retry_queued'
+    assert version.payload['source_audit']['attempt'] == 1
+    assert len(runtime.runs) == 1
+    assert len(build.repairs) == 2
+    assert len(probes) == 1

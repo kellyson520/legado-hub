@@ -5,6 +5,7 @@ import os
 import select
 import subprocess
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 
@@ -12,6 +13,21 @@ from app.infrastructure.legado.engine.js_session_models import (
     JsExecutionContext,
     JsExecutionTrace,
 )
+
+
+BRIDGE_CALLBACK_MAX_WORKERS = 4
+_BRIDGE_CALLBACK_SLOTS = threading.BoundedSemaphore(BRIDGE_CALLBACK_MAX_WORKERS)
+_BRIDGE_CALLBACK_EXECUTOR = ThreadPoolExecutor(
+    max_workers=BRIDGE_CALLBACK_MAX_WORKERS,
+    thread_name_prefix='legado-bridge',
+)
+
+
+def _bridge_callback_target(handler, request: dict):
+    try:
+        return handler(request)
+    finally:
+        _BRIDGE_CALLBACK_SLOTS.release()
 
 
 class JsWorkerOutput:
@@ -167,16 +183,24 @@ class JsWorkerClient:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return None, 'EXECUTION_TIMEOUT'
-        executor = ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(self._bridge_http_handler, request)
+        # Timed-out synchronous callbacks cannot be killed safely. Keep them bounded globally
+        # by retaining a semaphore slot until the callback actually returns.
+        if not _BRIDGE_CALLBACK_SLOTS.acquire(blocking=False):
+            return None, 'BRIDGE_CAPACITY_EXHAUSTED'
+        future = _BRIDGE_CALLBACK_EXECUTOR.submit(
+            _bridge_callback_target,
+            self._bridge_http_handler,
+            request,
+        )
         try:
-            return future.result(timeout=remaining), None
+            response = future.result(timeout=remaining)
+            if not isinstance(response, dict):
+                return None, 'WORKER_IO_ERROR'
+            return response, None
         except TimeoutError:
             return None, 'EXECUTION_TIMEOUT'
         except Exception:
             return None, 'WORKER_IO_ERROR'
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
 
     def close(self) -> None:
         self._terminate_process()

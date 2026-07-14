@@ -40,7 +40,15 @@ class SourceBuildAuditService:
         payload = deepcopy(version.payload)
         existing_audit = dict(payload.get('source_audit') or {})
         if existing_audit.get('test_run_pending'):
-            return self._recover_pending_test_run(version, payload, existing_audit)
+            pending_result = self._recover_pending_test_run(
+                version,
+                payload,
+                existing_audit,
+                completed_repair_attempt=completed_repair_attempt,
+            )
+            if pending_result is not None:
+                return pending_result
+            existing_audit = dict(payload.get('source_audit') or {})
         if existing_audit.get('status') == 'retry_pending':
             pending_attempt = int(existing_audit.get('repair_next_attempt', 0) or 0)
             if completed_repair_attempt != pending_attempt:
@@ -185,6 +193,9 @@ class SourceBuildAuditService:
             'report': report,
             'history': list(audit.get('history') or [])[-4:] + [report],
             'repair_next_attempt': next_attempt,
+            'test_run_pending': True,
+            'test_run_attempt': attempt,
+            'test_run_status': 'retry_pending',
         })
         payload['source_audit'] = audit
         try:
@@ -201,7 +212,19 @@ class SourceBuildAuditService:
                 next_attempt=next_attempt,
             )
         except Exception as error:
-            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+            try:
+                self._settle_pending_test_run(
+                    version=version,
+                    payload=payload,
+                    audit=audit,
+                    report=report,
+                    score=score,
+                    grade=grade,
+                    step_passes=step_passes,
+                    diagnostics=diagnostics,
+                )
+            except Exception as record_error:
+                raise SourceAuditRecoveryError('source audit test run requires recovery') from record_error
             raise SourceAuditRecoveryError('source audit repair enqueue requires recovery') from error
 
         audit['status'] = 'retry_queued'
@@ -236,6 +259,7 @@ class SourceBuildAuditService:
     ) -> dict:
         stable_status = str(audit.get('status') or 'failed')
         audit['test_run_pending'] = True
+        audit['test_run_attempt'] = int(report.get('attempt', 0) or 0)
         audit['test_run_status'] = stable_status
         audit['report'] = report
         payload['source_audit'] = audit
@@ -244,48 +268,67 @@ class SourceBuildAuditService:
         except Exception as error:
             raise SourceAuditRecoveryError('source audit test run checkpoint requires recovery') from error
 
-        attempt = int(report.get('attempt', 0) or 0)
-        if not self._has_recorded_audit_run(version.id, attempt):
-            try:
-                self._record_test_run(version, score, grade, report, step_passes, diagnostics)
-            except Exception as error:
-                raise SourceAuditRecoveryError('source audit test run requires recovery') from error
-
-        audit.pop('test_run_pending', None)
-        audit.pop('test_run_status', None)
-        payload['source_audit'] = audit
-        try:
-            self._runtime.update_version_payload(version.id, payload)
-        except Exception as error:
-            raise SourceAuditRecoveryError('source audit test run finalization requires recovery') from error
+        self._settle_pending_test_run(
+            version=version,
+            payload=payload,
+            audit=audit,
+            report=report,
+            score=score,
+            grade=grade,
+            step_passes=step_passes,
+            diagnostics=diagnostics,
+        )
         return self._audit_result(version, audit)
 
-    def _recover_pending_test_run(self, version, payload: dict, audit: dict) -> dict:
+    def _recover_pending_test_run(
+        self,
+        version,
+        payload: dict,
+        audit: dict,
+        *,
+        completed_repair_attempt: int | None = None,
+    ) -> dict | None:
         report = dict(audit.get('report') or {})
-        attempt = int(report.get('attempt', audit.get('attempt', 0)) or 0)
         stable_status = str(audit.get('test_run_status') or audit.get('status') or 'failed')
-        if not self._has_recorded_audit_run(version.id, attempt):
-            try:
-                self._record_test_run(
-                    version,
-                    int(report.get('score', 0) or 0),
-                    str(report.get('grade') or 'F'),
-                    report,
-                    self._step_passes_from_report(report),
-                    [str(report.get('reason'))] if report.get('reason') else [],
-                )
-            except Exception as error:
-                raise SourceAuditRecoveryError('source audit test run requires recovery') from error
+        self._settle_pending_test_run(
+            version=version,
+            payload=payload,
+            audit=audit,
+            report=report,
+            score=int(report.get('score', 0) or 0),
+            grade=str(report.get('grade') or 'F'),
+            step_passes=self._step_passes_from_report(report),
+            diagnostics=[str(report.get('reason'))] if report.get('reason') else [],
+        )
         audit['status'] = stable_status
+        if stable_status == 'retry_pending':
+            pending_attempt = int(audit.get('repair_next_attempt', 0) or 0)
+            if completed_repair_attempt == pending_attempt:
+                return None
+            return self._recover_retry_pending(version, payload, audit)
+        return self._audit_result(version, audit)
+
+    def _settle_pending_test_run(
+        self,
+        *,
+        version,
+        payload: dict,
+        audit: dict,
+        report: dict,
+        score: int,
+        grade: str,
+        step_passes: dict,
+        diagnostics: list[str],
+    ) -> None:
+        attempt = int(audit.get('test_run_attempt', report.get('attempt', 0)) or 0)
+        if not self._has_recorded_audit_run(version.id, attempt):
+            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
         audit['report'] = report
         audit.pop('test_run_pending', None)
+        audit.pop('test_run_attempt', None)
         audit.pop('test_run_status', None)
         payload['source_audit'] = audit
-        try:
-            self._runtime.update_version_payload(version.id, payload)
-        except Exception as error:
-            raise SourceAuditRecoveryError('source audit test run finalization requires recovery') from error
-        return self._audit_result(version, audit)
+        self._runtime.update_version_payload(version.id, payload)
 
     @staticmethod
     def _audit_result(version, audit: dict) -> dict:

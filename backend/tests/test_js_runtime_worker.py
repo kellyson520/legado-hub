@@ -243,10 +243,10 @@ def test_worker_client_times_out_slow_bridge_handler_within_response_deadline(tm
         encoding='utf-8',
     )
 
-    bridge_calls = []
+    marker = tmp_path / 'bridge-called'
 
     def slow_bridge(_request):
-        bridge_calls.append(True)
+        marker.write_text('called', encoding='utf-8')
         time.sleep(0.6)
         return {'status': 200, 'text': 'late', 'headers': {}}
 
@@ -263,7 +263,7 @@ def test_worker_client_times_out_slow_bridge_handler_within_response_deadline(tm
     output = client.execute('return 1', context)
 
     assert time.monotonic() - started < 0.45
-    assert bridge_calls == [True]
+    assert marker.read_text(encoding='utf-8') == 'called'
     assert output.success is False
     assert output.error_code == 'EXECUTION_TIMEOUT'
     assert client._process is None
