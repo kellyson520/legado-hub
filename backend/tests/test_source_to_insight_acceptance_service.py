@@ -90,7 +90,7 @@ class FakeJobRepository:
     def __init__(self):
         self.jobs = {}
 
-    def get_job(self, job_id):
+    def get(self, job_id):
         return self.jobs[job_id]
 
 

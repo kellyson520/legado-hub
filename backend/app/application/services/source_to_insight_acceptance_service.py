@@ -315,7 +315,7 @@ class SourceToInsightAcceptanceService:
             runtime_result = {}
             if self._source_build_runtime is not None:
                 if self._job_repository is not None and hasattr(self._source_build_runtime, "handle_job"):
-                    job = self._job_repository.get_job(submission.job_id)
+                    job = _get_job(self._job_repository, submission.job_id)
                     runtime_result = self._source_build_runtime.handle_job(job)
                 elif hasattr(self._source_build_runtime, "handle_source_version"):
                     runtime_result = self._source_build_runtime.handle_source_version(
@@ -533,6 +533,16 @@ def _step_status(*, passed: int, total: int, skipped: bool = False, failed: bool
     if passed > 0:
         return "partial"
     return "failed"
+
+
+def _get_job(repository, job_id: str):
+    getter = getattr(repository, "get", None) or getattr(repository, "get_job", None)
+    if not callable(getter):
+        raise AttributeError("job repository does not provide get(job_id)")
+    job = getter(job_id)
+    if job is None:
+        raise ValueError(f"source build job not found: {job_id}")
+    return job
 
 
 def _source_evidence_error(evidence: dict[str, Any], *, expected_source_id: int, stage: str) -> str:
