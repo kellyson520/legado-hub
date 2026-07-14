@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from copy import deepcopy
+
+
+class SourceAuditRecoveryError(RuntimeError):
+    pass
 
 
 class SourceBuildAuditService:
@@ -27,6 +32,11 @@ class SourceBuildAuditService:
             }
 
         payload = deepcopy(version.payload)
+        existing_audit = dict(payload.get('source_audit') or {})
+        if existing_audit.get('status') == 'retry_pending':
+            return self._recover_retry_pending(version, payload, existing_audit)
+        if existing_audit.get('status') == 'terminal_review_pending':
+            return self._recover_terminal_review_pending(version, payload, existing_audit)
         raw_source_rule = payload.get('source_rule')
         source_rule = dict(raw_source_rule) if isinstance(raw_source_rule, dict) else {}
         keyword = str(payload.get('keyword') or 'sample')
@@ -35,11 +45,16 @@ class SourceBuildAuditService:
             probe = None
             try:
                 probe = self._probe_service_factory()
-                evidence = await probe.probe_source(
-                    source_rule,
-                    keyword_samples=[keyword],
-                    probe_mode='full_chain',
+                evidence = await asyncio.wait_for(
+                    probe.probe_source(
+                        source_rule,
+                        keyword_samples=[keyword],
+                        probe_mode='full_chain',
+                    ),
+                    timeout=self.MAX_TOTAL_ELAPSED_MS / 1000,
                 )
+            except asyncio.TimeoutError:
+                report, passed, diagnostics, step_passes = self._probe_timeout_evaluation()
             except Exception:
                 report, passed, diagnostics, step_passes = self._probe_error_evaluation()
             else:
@@ -66,8 +81,25 @@ class SourceBuildAuditService:
             'grade': grade,
         })
         audit_status = 'passed' if passed else 'failed'
+        queued_repair = None
+        recovery_error = None
         if not passed and attempt < self.MAX_ATTEMPTS:
-            audit_status = 'retry_queued'
+            try:
+                queued_repair = self._submit_repair(
+                    version=version,
+                    payload=payload,
+                    source_rule=source_rule,
+                    keyword=keyword,
+                    next_attempt=attempt + 1,
+                )
+                audit_status = 'retry_queued'
+            except Exception as error:
+                audit_status = 'retry_pending'
+                report['recovery_state'] = 'retry_pending'
+                recovery_error = error
+        elif not passed:
+            audit_status = 'terminal_review_pending'
+            report['recovery_state'] = 'terminal_review_pending'
         audit.update({
             'status': audit_status,
             'attempt': attempt,
@@ -75,24 +107,127 @@ class SourceBuildAuditService:
             'report': report,
             'history': list(audit.get('history') or [])[-4:] + [report],
         })
+        if not passed and attempt < self.MAX_ATTEMPTS:
+            audit['repair_next_attempt'] = attempt + 1
+            repair_job_id = self._job_id(queued_repair)
+            if repair_job_id:
+                audit['repair_job_id'] = repair_job_id
         payload['source_audit'] = audit
         self._runtime.update_version_payload(version.id, payload)
-        if not passed and attempt < self.MAX_ATTEMPTS:
-            self._build_service.submit_audit_repair(
-                tenant_id=version.created_by or 'system',
-                source_version_id=version.id,
-                url=str(payload.get('canonical_url') or source_rule.get('bookSourceUrl') or version.source_id),
-                keyword=keyword,
-                next_attempt=attempt + 1,
-            )
-        elif not passed:
+        if recovery_error is not None:
+            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+            raise SourceAuditRecoveryError('source audit repair enqueue requires recovery') from recovery_error
+        if not passed and attempt >= self.MAX_ATTEMPTS:
+            terminal_report = {**report, 'recovery_state': 'failed'}
+            try:
+                review_item = self._review_service.enqueue_audit_failure(
+                    source_version_id=version.id,
+                    source_url=str(payload.get('canonical_url') or source_rule.get('bookSourceUrl') or version.source_id),
+                    audit_report=terminal_report,
+                    created_by='system',
+                )
+            except Exception as error:
+                self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+                raise SourceAuditRecoveryError('source audit terminal review requires recovery') from error
+            audit['status'] = 'failed'
+            report = terminal_report
+            review_item_id = self._job_id(review_item)
+            if review_item_id:
+                audit['review_item_id'] = review_item_id
+            audit['report'] = report
+            payload['source_audit'] = audit
+            self._runtime.update_version_payload(version.id, payload)
             self._runtime.update_version_status(version.id, 'failed')
-            self._review_service.enqueue_audit_failure(
+        self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+        return {
+            'source_version_id': version.id,
+            'status': audit['status'],
+            'score': score,
+            'grade': grade,
+            'report': report,
+        }
+
+    def _recover_retry_pending(self, version, payload: dict, audit: dict) -> dict:
+        report = dict(audit.get('report') or {})
+        source_rule = payload.get('source_rule')
+        source_rule = dict(source_rule) if isinstance(source_rule, dict) else {}
+        keyword = str(payload.get('keyword') or 'sample')
+        next_attempt = int(audit.get('repair_next_attempt') or int(audit.get('attempt', 0) or 0) + 1)
+        try:
+            queued_repair = self._submit_repair(
+                version=version,
+                payload=payload,
+                source_rule=source_rule,
+                keyword=keyword,
+                next_attempt=next_attempt,
+            )
+        except Exception as error:
+            self._runtime.update_version_payload(version.id, payload)
+            raise SourceAuditRecoveryError('source audit repair enqueue requires recovery') from error
+
+        audit['status'] = 'retry_queued'
+        report['recovery_state'] = 'retry_queued'
+        audit['report'] = report
+        repair_job_id = self._job_id(queued_repair)
+        if repair_job_id:
+            audit['repair_job_id'] = repair_job_id
+        payload['source_audit'] = audit
+        self._runtime.update_version_payload(version.id, payload)
+        return {
+            'source_version_id': version.id,
+            'status': 'retry_queued',
+            'score': int(report.get('score', 0) or 0),
+            'grade': str(report.get('grade') or 'F'),
+            'report': report,
+        }
+
+    def _recover_terminal_review_pending(self, version, payload: dict, audit: dict) -> dict:
+        report = dict(audit.get('report') or {})
+        source_rule = payload.get('source_rule')
+        source_rule = dict(source_rule) if isinstance(source_rule, dict) else {}
+        terminal_report = {**report, 'recovery_state': 'failed'}
+        try:
+            review_item = self._review_service.enqueue_audit_failure(
                 source_version_id=version.id,
                 source_url=str(payload.get('canonical_url') or source_rule.get('bookSourceUrl') or version.source_id),
-                audit_report=report,
+                audit_report=terminal_report,
                 created_by='system',
             )
+        except Exception as error:
+            self._runtime.update_version_payload(version.id, payload)
+            raise SourceAuditRecoveryError('source audit terminal review requires recovery') from error
+
+        audit['status'] = 'failed'
+        report = terminal_report
+        audit['report'] = report
+        review_item_id = self._job_id(review_item)
+        if review_item_id:
+            audit['review_item_id'] = review_item_id
+        payload['source_audit'] = audit
+        self._runtime.update_version_payload(version.id, payload)
+        self._runtime.update_version_status(version.id, 'failed')
+        return {
+            'source_version_id': version.id,
+            'status': 'failed',
+            'score': int(report.get('score', 0) or 0),
+            'grade': str(report.get('grade') or 'F'),
+            'report': report,
+        }
+
+    def _submit_repair(self, *, version, payload: dict, source_rule: dict, keyword: str, next_attempt: int):
+        return self._build_service.submit_audit_repair(
+            tenant_id=version.created_by or 'system',
+            source_version_id=version.id,
+            url=str(payload.get('canonical_url') or source_rule.get('bookSourceUrl') or version.source_id),
+            keyword=keyword,
+            next_attempt=next_attempt,
+        )
+
+    @staticmethod
+    def _job_id(job) -> str:
+        return str(getattr(job, 'id', '') or '')
+
+    def _record_test_run(self, version, score: int, grade: str, report: dict, step_passes: dict, diagnostics: list[str]):
         self._runtime.record_test_run(
             source_version_id=version.id,
             trigger='source_audit',
@@ -108,13 +243,6 @@ class SourceBuildAuditService:
             },
             diagnostics=diagnostics,
         )
-        return {
-            'source_version_id': version.id,
-            'status': audit['status'],
-            'score': score,
-            'grade': grade,
-            'report': report,
-        }
 
     def _evaluate(self, evidence):
         search = evidence.search
@@ -208,5 +336,23 @@ class SourceBuildAuditService:
             },
             False,
             ['probe_error'],
+            {'search': False, 'toc': False, 'content': False},
+        )
+
+    def _probe_timeout_evaluation(self):
+        stages = {
+            'search': {'status': 'failed', 'elapsed_ms': self.MAX_TOTAL_ELAPSED_MS, 'hit_count': 0, 'title': ''},
+            'toc': {'status': 'skipped', 'elapsed_ms': 0, 'hit_count': 0, 'title': ''},
+            'content': {'status': 'skipped', 'elapsed_ms': 0, 'content_length': 0, 'title': ''},
+        }
+        return (
+            {
+                'status': 'failed',
+                'reason': 'probe_timeout',
+                'total_elapsed_ms': self.MAX_TOTAL_ELAPSED_MS,
+                'stages': stages,
+            },
+            False,
+            ['probe_timeout'],
             {'search': False, 'toc': False, 'content': False},
         )
