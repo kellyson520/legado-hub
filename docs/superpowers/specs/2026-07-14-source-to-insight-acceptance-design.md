@@ -34,6 +34,17 @@ The acceptance path must be able to run without a live provider by using determi
 
 ## Proposed Shape
 
+### Real Source Targets
+
+The first real-source acceptance run should use these operator-provided sites:
+
+- `https://www.biquga.com/list/0/1.html`
+- `https://www.beiquge.com/rank/`
+- `https://m.biqugen.com/`
+- `https://www.bqg39.cc/`
+
+These URLs are not hand-authored into final Legado source rules. They are submitted to the existing source-writing engine first. The acceptance run measures whether the engine can inspect the site, generate a candidate source rule, and produce enough search/toc/content behavior for downstream reading tests.
+
 ### 1. Acceptance Runner
 
 Add a backend acceptance runner that can be invoked as a script and covered by tests:
@@ -52,7 +63,12 @@ The runner accepts a small scenario:
   "author_hint": "唐家三少",
   "chapter_index": 0,
   "chapter_title": "第一章",
-  "source_json_path": "测试源/shareBookSource.json",
+  "source_urls": [
+    "https://www.biquga.com/list/0/1.html",
+    "https://www.beiquge.com/rank/",
+    "https://m.biqugen.com/",
+    "https://www.bqg39.cc/"
+  ],
   "source_limit": 5,
   "use_ai": false
 }
@@ -64,18 +80,20 @@ The default path uses existing services directly. It does not ask an LLM to choo
 
 The acceptance service runs these deterministic steps:
 
-1. Import or select sources.
-   - If `source_json_path` is provided, import a bounded subset of valid sources from the file.
-   - If existing published/candidate sources are available, reuse them.
-   - Record source import counts: created, duplicate, invalid.
+1. Submit URLs to the source-writing engine.
+   - Call `SourceBuildService.submit()` for each `source_url`.
+   - Process the resulting `source.build` jobs through `SourceBuildRuntimeService.handle_job()` or the existing job worker handler.
+   - Record source version ids, job ids, agent run ids, source.inspect evidence, rule.validate/review.request decisions, and `autonomous_build` payloads.
+   - If a URL times out or is blocked during probe, keep it in the report as a failed source-build target instead of hiding it.
 
 2. Validate source candidates.
-   - Run existing source validation where a source version is part of the scenario.
+   - Run existing source validation against the engine-generated candidate rule.
    - Keep validation results in the report.
    - Do not publish automatically.
 
 3. Search by book name.
    - Call `SourceReadService.search_books()`.
+   - Prefer engine-generated candidates whose autonomous build decision is `canary`, then fall back to candidates that reached review with usable partial evidence.
    - Use source health/routing if available.
    - Keep the top candidates with source id, source name, source URL, book URL, author, and route decision.
 
@@ -223,13 +241,15 @@ Rules:
 
 1. Unit-test the acceptance service with fake source repo, fake fetcher, fake complement, fake knowledge service, and fake provider.
 2. Contract-test the smoke script with a tiny fixture source JSON, not the 21.6MB local file.
-3. Run existing focused backend tests:
+3. Contract-test the source-build-engine path with fake probe evidence that confirms the report includes job id, source version id, agent run id, decision, rule patch, and generated source rule.
+4. Run existing focused backend tests:
    - `tests/test_source_read_service.py`
    - `tests/test_source_complement_app_service.py`
    - `tests/test_character_calibration_service.py`
    - `tests/test_work_knowledge_service.py`
-4. Run the smoke script without AI and confirm it produces a deterministic report.
-5. After provider API credentials are supplied, run the smoke script with `use_ai=true` and confirm only the analysis node consumes provider tokens.
+5. Run the smoke script without AI in fixture mode and confirm it produces a deterministic report.
+6. Run the smoke script in real-source mode for the four configured URLs and confirm source-build outcomes are recorded for all targets.
+7. After provider API credentials are supplied, run the smoke script with `use_ai=true` and confirm only the analysis node consumes provider tokens.
 
 ## Open Operational Choice
 
