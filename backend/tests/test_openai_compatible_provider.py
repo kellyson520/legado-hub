@@ -24,40 +24,38 @@ def test_normalizes_openai_compatible_base_url_once(base_url, expected):
 @pytest.mark.asyncio
 async def test_provider_forwards_tool_fields_and_returns_tool_calls():
     captured: dict = {}
+    response_body = {
+        "model": "deepseek-chat",
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "source.inspect",
+                                "arguments": '{"url":"https://example.test"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured.update(json.loads(request.read()))
-        return httpx.Response(
-            200,
-            json={
-                "model": "deepseek-chat",
-                "choices": [
-                    {
-                        "message": {
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": "call-1",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "source.inspect",
-                                        "arguments": '{"url":"https://example.test"}',
-                                    },
-                                }
-                            ],
-                        }
-                    }
-                ],
-                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
-            },
-        )
+        return httpx.Response(200, json=response_body)
 
     from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
 
     provider = OpenAICompatibleProvider(
         "test",
         "https://api.example.test/v1",
-        "key",
+        "provider-api-key-should-not-leak",
         transport=httpx.MockTransport(handler),
     )
     result = await provider.invoke_chat(
@@ -68,6 +66,7 @@ async def test_provider_forwards_tool_fields_and_returns_tool_calls():
             "tool_choice": "auto",
             "max_tokens": 32,
             "temperature": 0.2,
+            "unexpected": "must-not-be-forwarded",
         },
     )
 
@@ -75,7 +74,13 @@ async def test_provider_forwards_tool_fields_and_returns_tool_calls():
     assert captured["tool_choice"] == "auto"
     assert captured["max_tokens"] == 32
     assert captured["temperature"] == 0.2
-    assert result["output"]["tool_calls"][0]["function"]["name"] == "source.inspect"
+    assert "unexpected" not in captured
+    provider_message = response_body["choices"][0]["message"]
+    assert result["output"]["text"] == ""
+    assert result["output"]["message"] == provider_message
+    assert result["output"]["tool_calls"] == provider_message["tool_calls"]
+    assert result["output"]["raw"] == response_body
+    assert "provider-api-key-should-not-leak" not in str(result)
     await provider.aclose()
 
 
