@@ -186,6 +186,35 @@ class FakeReviewRepository:
         ]
 
 
+@pytest.mark.asyncio
+async def test_audit_blocking_runs_inside_an_active_event_loop():
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    service = SourceBuildAuditService(
+        runtime_repo=None,
+        probe_service_factory=None,
+        build_service=None,
+        review_service=None,
+    )
+
+    async def fake_audit(source_version_id, completed_repair_attempt=None):
+        return {
+            'source_version_id': source_version_id,
+            'status': 'passed',
+            'completed_repair_attempt': completed_repair_attempt,
+        }
+
+    service.audit = fake_audit
+
+    result = service.audit_blocking('candidate-1', completed_repair_attempt=2)
+
+    assert result == {
+        'source_version_id': 'candidate-1',
+        'status': 'passed',
+        'completed_repair_attempt': 2,
+    }
+
+
 async def test_audit_candidate_passes_with_compact_report_and_closes_fresh_probe():
     from app.application.services.source_build_audit_service import SourceBuildAuditService
 

@@ -338,6 +338,7 @@ class SourceRuntimeService:
             raise NotFoundException("source version not found")
         if version.status != "candidate":
             raise ValidationException("Only candidate source versions can be published")
+        self._assert_source_audit_publishable(version)
 
         superseded_version_ids: list[str] = []
         for item in self._repo.list_versions(version.source_type, version.source_id):
@@ -473,6 +474,31 @@ class SourceRuntimeService:
             if isinstance(probe, dict) and isinstance(probe.get("content_status"), str):
                 return probe["content_status"]
         return "ready"
+
+    def _assert_source_audit_publishable(self, version) -> None:
+        payload = version.payload if isinstance(version.payload, dict) else {}
+        if "source_audit" not in payload:
+            return
+        audit = payload["source_audit"]
+        if not isinstance(audit, dict) or audit.get("status") != "passed":
+            raise ValidationException("source audit must pass before publication")
+        if audit.get("test_run_pending"):
+            raise ValidationException("source audit test-run checkpoint must settle before publication")
+
+        attempt = int(audit.get("attempt", 0) or 0)
+        for run in self._repo.list_test_runs(version.id):
+            step_results = getattr(run, "step_results", None)
+            if not isinstance(step_results, dict):
+                continue
+            checkpoint = step_results.get("source_audit")
+            if (
+                isinstance(checkpoint, dict)
+                and checkpoint.get("passed") is True
+                and checkpoint.get("status") == "recorded"
+                and int(checkpoint.get("attempt", 0) or 0) == attempt
+            ):
+                return
+        raise ValidationException("source audit test-run checkpoint must settle before publication")
 
     @staticmethod
     def _serialize_test_run(run) -> dict | None:

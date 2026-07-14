@@ -436,14 +436,34 @@ def _catalog_source_discovery_priority(source: dict) -> int:
 
 async def run_source_build_job(limit: int = 1) -> dict:
     from ..application.services.job_worker import JobWorker
-    from ..infrastructure.persistence.factory import build_job_service, build_source_build_runtime_service
+    from ..infrastructure.persistence.factory import (
+        build_job_service,
+        build_source_build_audit_service,
+        build_source_build_runtime_service,
+    )
 
     service = build_job_service()
     runtime = build_source_build_runtime_service()
+    audit_service = build_source_build_audit_service()
     outcomes: dict[str, dict] = {}
 
     def handler(job) -> None:
-        outcomes[job.id] = runtime.handle_job(job)
+        build_result = runtime.handle_job(job)
+        source_version_id = build_result.get('source_version_id') or job.payload.get('source_version_id')
+        if not isinstance(source_version_id, str) or not source_version_id:
+            raise ValueError('source.build job missing source version id for source audit')
+        completed_repair_attempt = (
+            job.payload.get('source_audit_attempt')
+            if job.payload.get('trigger') == 'source_audit_repair'
+            else None
+        )
+        outcomes[job.id] = {
+            'build_result': build_result,
+            'audit_result': audit_service.audit_blocking(
+                source_version_id,
+                completed_repair_attempt=completed_repair_attempt,
+            ),
+        }
 
     worker = JobWorker(
         service,
@@ -460,7 +480,8 @@ async def run_source_build_job(limit: int = 1) -> dict:
             {
                 'job_id': result.id,
                 'status': result.status,
-                'build_result': outcomes.get(result.id),
+                'build_result': outcomes.get(result.id, {}).get('build_result'),
+                'audit_result': outcomes.get(result.id, {}).get('audit_result'),
             }
         )
 

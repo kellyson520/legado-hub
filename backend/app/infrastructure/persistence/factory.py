@@ -14,6 +14,7 @@ from app.application.services.provider_platform_service import ProviderPlatformS
 from app.application.services.source_complement_app_service import SourceComplementAppService
 from app.application.services.source_build_agent import SourceBuildAgent
 from app.application.services.source_build_ai_repair_service import SourceBuildAIRepairService
+from app.application.services.source_build_audit_service import SourceBuildAuditService
 from app.application.services.source_build_runtime_service import SourceBuildRuntimeService
 from app.application.services.source_build_service import SourceBuildService
 from app.application.services.source_health_admin_service import SourceHealthAdminService
@@ -131,6 +132,15 @@ def build_source_build_service() -> SourceBuildService:
     return SourceBuildService(
         build_job_service(),
         build_source_runtime_repository(),
+    )
+
+
+def build_source_build_audit_service() -> SourceBuildAuditService:
+    return SourceBuildAuditService(
+        runtime_repo=build_source_runtime_repository(),
+        probe_service_factory=build_source_probe_service,
+        build_service=build_source_build_service(),
+        review_service=build_source_review_service(),
     )
 
 

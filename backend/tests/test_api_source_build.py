@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -331,7 +332,96 @@ def test_review_queue_includes_persisted_source_review_items(monkeypatch, tmp_pa
     assert row['created_by'] == 'builder-1'
 
 
-def test_operations_review_queue_can_publish_source_build_candidate(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    'audit',
+    [
+        {'status': 'pending', 'attempt': 0},
+        {'status': 'failed', 'attempt': 5},
+        {'status': 'passed', 'attempt': 1, 'test_run_pending': True},
+    ],
+    ids=['pending', 'failed', 'pending-checkpoint'],
+)
+def test_operations_review_queue_rejects_unsettled_source_audit(monkeypatch, tmp_path, audit):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / f"api-source-build-audit-{audit['status']}.sqlite3"))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    repo = build_source_runtime_repository()
+    version = repo.create_candidate_version(
+        source_type='book',
+        source_id='https://example.test/audit-blocked',
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://example.test/audit-blocked',
+            'source_audit': audit,
+        },
+        created_by='tenant-console',
+    )
+
+    from app.main import app
+
+    token = create_access_token({'sub': '1', 'permissions': ['agent_runs.write', 'engine.deploy']})
+    response = TestClient(app).post(
+        f'/api/events/review-queue/{version.id}/resolve',
+        headers={'Authorization': f'Bearer {token}'},
+        json={'item_type': 'source_version', 'action': 'publish'},
+    )
+
+    assert response.status_code == 422
+    assert 'source audit' in response.json()['message'].lower()
+    assert repo.get_version(version.id).status == 'candidate'
+
+
+def test_operations_review_queue_can_publish_source_build_candidate_with_settled_audit(monkeypatch, tmp_path):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-audit-passed.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    repo = build_source_runtime_repository()
+    version = repo.create_candidate_version(
+        source_type='book',
+        source_id='https://example.test/audit-passed',
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://example.test/audit-passed',
+            'source_audit': {'status': 'passed', 'attempt': 1},
+        },
+        created_by='tenant-console',
+    )
+    repo.record_test_run(
+        source_version_id=version.id,
+        trigger='source_audit',
+        score=100,
+        grade='A',
+        step_results={
+            'source_audit': {'passed': True, 'status': 'recorded', 'attempt': 1},
+        },
+    )
+
+    from app.main import app
+
+    token = create_access_token({'sub': '1', 'permissions': ['agent_runs.write', 'engine.deploy']})
+    response = TestClient(app).post(
+        f'/api/events/review-queue/{version.id}/resolve',
+        headers={'Authorization': f'Bearer {token}'},
+        json={'item_type': 'source_version', 'action': 'publish'},
+    )
+
+    assert response.status_code == 200
+    assert response.json()['data']['status'] == 'published'
+
+
+def test_operations_review_queue_can_publish_legacy_unmarked_source_build_candidate(monkeypatch, tmp_path):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-review-resolve.sqlite3'))
     monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')

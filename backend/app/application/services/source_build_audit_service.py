@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 
 
@@ -177,6 +178,24 @@ class SourceBuildAuditService:
             step_passes=step_passes,
             diagnostics=diagnostics,
         )
+
+    def audit_blocking(
+        self,
+        source_version_id: str,
+        *,
+        completed_repair_attempt: int | None = None,
+    ) -> dict:
+        coroutine = self.audit(
+            source_version_id,
+            completed_repair_attempt=completed_repair_attempt,
+        )
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, coroutine).result()
 
     def _queue_repair_after_pending(
         self,
