@@ -1,13 +1,19 @@
 import asyncio
 import concurrent.futures
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.parse import urlparse
 
 from app.application.services.agent_runtime_service import AgentRuntimeService
 from app.application.services.agent_tool_registry import AgentToolRegistry
-from app.application.services.source_build_tool_executor import SourceBuildToolContext, SourceBuildToolExecutor
+from app.application.services.source_build_tool_executor import (
+    ALLOWED_PATCH_FIELDS,
+    SourceBuildToolContext,
+    SourceBuildToolExecutor,
+)
+from app.application.services.source_page_tool_executor import SourcePageToolExecutor
 from app.application.services.site_profile_service import SiteProfile
 from app.application.services.source_build_agent import SourceBuildAgent
 from app.core.compatibility import CompatibilityEngine
@@ -39,6 +45,9 @@ class SourceBuildRuntimeService:
         probe_factory: Callable[[], Any] | None = None,
         compatibility_engine: CompatibilityEngine | None = None,
         ai_repair_service=None,
+        system_settings_service=None,
+        page_tool_factory: Callable[[str], Any] | None = None,
+        review_service=None,
     ):
         self._runtime_repo = runtime_repo
         self._agent_runtime = agent_runtime
@@ -46,6 +55,9 @@ class SourceBuildRuntimeService:
         self._probe_factory = probe_factory
         self._compatibility = compatibility_engine or CompatibilityEngine()
         self._ai_repair = ai_repair_service
+        self._system_settings = system_settings_service
+        self._page_tool_factory = page_tool_factory or SourcePageToolExecutor
+        self._review_service = review_service
 
     def handle_job(self, job: Job) -> dict:
         source_version_id = str(job.payload.get('source_version_id') or '').strip()
@@ -55,6 +67,8 @@ class SourceBuildRuntimeService:
         version = self._runtime_repo.get_version(source_version_id)
         if version is None:
             raise ValueError('source version not found')
+        if version.status != 'candidate':
+            raise ValueError('source build requires a candidate source version')
 
         candidate_url = str(job.payload.get('url') or version.source_id or '').strip()
         if not candidate_url:
@@ -154,36 +168,48 @@ class SourceBuildRuntimeService:
         )
 
         ai_task = None
-        if result.strategy == 'llm_repair' and self._ai_repair is not None:
-            source_rule = (
-                live_probe_context.get('source_rule', {})
-                if live_probe_context is not None else dict(version.payload.get('source_rule') or {})
-            )
-            validation = (
-                live_probe_context.get('validation', {})
-                if live_probe_context is not None else {}
-            )
-            executor = SourceBuildToolExecutor(SourceBuildToolContext(
-                source_version_id=source_version_id,
-                source_url=candidate_url,
-                source_rule=source_rule,
-                inspect_data=(live_probe_context.get('inspect_result', {}) if live_probe_context else {}),
-                validate_patch=lambda _patch: validation,
-                request_review=lambda arguments: {
-                    'requested': True,
-                    'source_version_id': source_version_id,
-                    'reason': arguments.get('reason', 'ai_repair_failed'),
-                },
-            ))
-            registry = AgentToolRegistry(source_build_handlers=executor.handlers())
-            ai_task = self._run_async(self._ai_repair.repair(
-                tenant_id=tenant_id,
-                run_id=run.id,
-                source_version_id=source_version_id,
-                url=candidate_url,
-                model=str(job.payload.get('model') or 'gpt-4.1-mini'),
-                registry=registry,
-            ))
+        agent_state = self._agent_not_requested_state(result.strategy)
+        agent_source_rule = None
+        if result.strategy == 'llm_repair':
+            agent_settings = self._get_agent_settings()
+            if not agent_settings['enabled']:
+                agent_state = self._agent_skipped_state('disabled')
+            elif not agent_settings['provider_configured']:
+                agent_state = self._agent_skipped_state('provider_not_configured')
+            elif self._ai_repair is None:
+                agent_state = self._agent_skipped_state('repair_service_unavailable')
+            else:
+                base_source_rule = (
+                    live_probe_context.get('source_rule', {})
+                    if live_probe_context is not None
+                    else dict(version.payload.get('source_rule') or {})
+                )
+                agent_outcome = self._run_async(self._run_agent_repair(
+                    tenant_id=tenant_id,
+                    run_id=run.id,
+                    source_version_id=source_version_id,
+                    candidate_url=candidate_url,
+                    model=str(job.payload.get('model') or 'gpt-4.1-mini'),
+                    source_rule=base_source_rule,
+                    inspect_data=(live_probe_context.get('inspect_result', {}) if live_probe_context else {}),
+                    keyword_samples=self._build_keyword_samples(
+                        candidate_url=candidate_url,
+                        source_name=self._resolve_source_name(candidate_url, version.payload, job.payload),
+                        version_payload=version.payload,
+                        job_payload=job.payload,
+                    ),
+                ))
+                ai_task = agent_outcome['ai_task']
+                agent_state = agent_outcome['agent_state']
+                agent_source_rule = agent_outcome['source_rule']
+                if agent_outcome['validated_for_review']:
+                    result = type(result)(
+                        decision='review',
+                        strategy='agent_tool_loop',
+                        review_required=True,
+                        attempt_count=result.attempt_count,
+                        review_item=agent_outcome['review_item'],
+                    )
 
         decision_tool_name = 'review.request' if result.review_required else 'rule.validate'
         decision_category = 'propose' if result.review_required else 'operate'
@@ -235,6 +261,7 @@ class SourceBuildRuntimeService:
                 if result.review_item and result.review_item.get('id')
                 else None
             ),
+            'agent': agent_state,
             'updated_at': _utcnow().isoformat(),
         }
         if ai_task is not None:
@@ -253,8 +280,11 @@ class SourceBuildRuntimeService:
             updated_payload['autonomous_build']['inspection_mode'] = 'live_probe'
             updated_payload['autonomous_build']['probe'] = live_probe_context['probe_summary']
             updated_payload['autonomous_build']['validation'] = live_probe_context.get('validation')
-            updated_payload['source_rule'] = live_probe_context.get('source_rule')
             updated_payload['rule_patch'] = live_probe_context.get('rule_patch')
+        if agent_source_rule is not None:
+            updated_payload['source_rule'] = agent_source_rule
+        elif live_probe_context is not None and live_probe_context.get('probe_summary'):
+            updated_payload['source_rule'] = live_probe_context.get('source_rule')
         self._runtime_repo.update_version_payload(source_version_id, updated_payload)
 
         return {
@@ -266,6 +296,206 @@ class SourceBuildRuntimeService:
             'review_item': result.review_item,
             'ai_task_id': ai_task['id'] if ai_task is not None else None,
         }
+
+    def _get_agent_settings(self) -> dict[str, bool]:
+        if self._system_settings is None:
+            return {'enabled': False, 'provider_configured': False}
+        try:
+            raw = self._system_settings.get_source_build_agent_settings()
+        except Exception:
+            raw = {}
+        return {
+            'enabled': bool(raw.get('enabled', False)) if isinstance(raw, dict) else False,
+            'provider_configured': bool(raw.get('provider_configured', False)) if isinstance(raw, dict) else False,
+        }
+
+    @staticmethod
+    def _agent_not_requested_state(strategy: str) -> dict[str, str]:
+        return {
+            'state': 'not_requested',
+            'status': 'not_requested',
+            'reason': 'deterministic_success' if strategy == 'deterministic_patch' else 'policy_not_llm_repair',
+        }
+
+    @staticmethod
+    def _agent_skipped_state(reason: str) -> dict[str, str]:
+        return {
+            'state': 'not_requested',
+            'status': 'skipped_not_configured',
+            'reason': reason,
+        }
+
+    async def _run_agent_repair(
+        self,
+        *,
+        tenant_id: str,
+        run_id: str,
+        source_version_id: str,
+        candidate_url: str,
+        model: str,
+        source_rule: dict,
+        inspect_data: dict,
+        keyword_samples: list[str],
+    ) -> dict[str, Any]:
+        """Run an enabled repair loop and retain only a fully-validated review candidate."""
+        base_rule = deepcopy(source_rule) if isinstance(source_rule, dict) else {}
+        validated_patch: dict[str, Any] | None = None
+        validated_rule: dict[str, Any] | None = None
+        review_item: dict[str, Any] | None = None
+
+        async def validate_patch(patch: dict) -> dict:
+            nonlocal validated_patch, validated_rule
+            merged = self._merge_agent_patch(base_rule, patch)
+            if merged is None:
+                return {'search': {'passed': False}, 'toc': {'passed': False}, 'content': {'passed': False}}
+            probe_source = {**merged, 'id': source_version_id}
+            try:
+                probe = await self._probe_candidate(
+                    probe_service=self._probe_factory(),
+                    source=probe_source,
+                    keyword_samples=keyword_samples,
+                ) if self._probe_factory is not None else None
+            except Exception:
+                probe = None
+            if probe is None:
+                return {'search': {'passed': False}, 'toc': {'passed': False}, 'content': {'passed': False}}
+            compatibility_score = self._compatibility.get_compatibility_score(probe_source)
+            validation = self._build_rule_validation(
+                self._build_probe_summary(
+                    probe,
+                    compatibility_site=self._compatibility.match_site(candidate_url),
+                    compatibility_score=compatibility_score,
+                ),
+                compatibility_score=compatibility_score,
+                source_rule=merged,
+            )
+            if self._full_validation_passed(validation):
+                validated_patch = deepcopy(patch)
+                validated_rule = merged
+            return validation
+
+        executor: SourceBuildToolExecutor
+
+        def request_review(arguments: dict) -> dict:
+            nonlocal review_item
+            if self._review_service is None or validated_patch is None or validated_rule is None:
+                return {'requested': False, 'reason': 'review_service_unavailable'}
+            item = self._review_service.enqueue_build_escalation(
+                source_version_id=source_version_id,
+                source_url=candidate_url,
+                reason_tags=['agent:validated_for_review'],
+                model_context={
+                    'agent': 'source_build',
+                    'reason': arguments.get('reason', 'full_validation_passed'),
+                    'patch': deepcopy(validated_patch),
+                },
+                created_by=tenant_id,
+            )
+            review_item = {
+                'id': item.id,
+                'status': item.status,
+                'source_version_id': item.source_version_id,
+                'source_url': item.source_url,
+            }
+            return {'requested': True, 'review_id': item.id, 'source_version_id': source_version_id}
+
+        executor = SourceBuildToolExecutor(SourceBuildToolContext(
+            source_version_id=source_version_id,
+            source_url=candidate_url,
+            source_rule=base_rule,
+            inspect_data=deepcopy(inspect_data),
+            validate_patch=validate_patch,
+            request_review=request_review,
+        ))
+        page_tools = None
+        try:
+            page_tools = self._page_tool_factory(candidate_url)
+            registry = AgentToolRegistry(source_build_handlers={
+                **executor.handlers(),
+                **page_tools.handlers(),
+            })
+            ai_task = await self._ai_repair.repair(
+                tenant_id=tenant_id,
+                run_id=run_id,
+                source_version_id=source_version_id,
+                url=candidate_url,
+                model=model,
+                registry=registry,
+            )
+        except Exception as exc:
+            ai_task = {
+                'id': None,
+                'status': 'failed',
+                'provider': '',
+                'model': model,
+                'result': {'error': str(exc) or exc.__class__.__name__},
+            }
+        finally:
+            if page_tools is not None:
+                await self._aclose(page_tools)
+
+        repair = self._agent_repair_result(ai_task)
+        validated_for_review = (
+            str(repair.get('state') or '') == 'validated_for_review'
+            and self._full_validation_passed(repair.get('validation'))
+            and isinstance(repair.get('patch'), dict)
+            and review_item is not None
+            and validated_rule is not None
+        )
+        if validated_for_review:
+            agent_state = {
+                'state': 'validated_for_review',
+                'status': str(ai_task.get('status') or 'succeeded'),
+                'task_id': str(ai_task.get('id') or ''),
+            }
+        else:
+            agent_state = {
+                'state': str(repair.get('state') or 'failed'),
+                'status': str(ai_task.get('status') or 'failed'),
+                'reason': 'agent_not_validated',
+            }
+        return {
+            'ai_task': ai_task,
+            'agent_state': agent_state,
+            'review_item': review_item,
+            'source_rule': validated_rule if validated_for_review else None,
+            'validated_for_review': validated_for_review,
+        }
+
+    @staticmethod
+    async def _aclose(value: Any) -> None:
+        close = getattr(value, 'aclose', None)
+        if not callable(close):
+            close = getattr(value, 'close', None)
+        if not callable(close):
+            return
+        result = close()
+        if hasattr(result, '__await__'):
+            await result
+
+    @staticmethod
+    def _agent_repair_result(ai_task: Any) -> dict:
+        if not isinstance(ai_task, dict):
+            return {}
+        result = ai_task.get('result')
+        repair = result.get('repair') if isinstance(result, dict) else None
+        return repair if isinstance(repair, dict) else {}
+
+    @staticmethod
+    def _full_validation_passed(validation: Any) -> bool:
+        return isinstance(validation, dict) and all(
+            isinstance(validation.get(stage), dict) and validation[stage].get('passed') is True
+            for stage in ('search', 'toc', 'content')
+        )
+
+    @staticmethod
+    def _merge_agent_patch(source_rule: dict, patch: Any) -> dict | None:
+        if not isinstance(patch, dict) or not patch or set(patch) - ALLOWED_PATCH_FIELDS:
+            return None
+        merged = deepcopy(source_rule)
+        for field, value in patch.items():
+            merged[field] = deepcopy(value)
+        return merged
 
     @staticmethod
     def _build_profile(candidate_url: str, raw_profile: dict | None) -> SiteProfile:

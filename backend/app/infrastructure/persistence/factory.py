@@ -153,6 +153,8 @@ def build_source_build_runtime_service(*, use_ai_repair: bool = True) -> SourceB
         build_agent=build_source_build_agent(),
         probe_factory=build_source_probe_service,
         ai_repair_service=(build_source_build_ai_repair_service() if use_ai_repair else None),
+        system_settings_service=build_system_settings_service(),
+        review_service=build_source_review_service(),
     )
 
 
