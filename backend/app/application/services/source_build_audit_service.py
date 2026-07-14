@@ -348,10 +348,12 @@ class SourceBuildAuditService:
         step_passes: dict,
         diagnostics: list[str],
     ) -> dict:
-        try:
-            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
-        except Exception as error:
-            raise SourceAuditRecoveryError('source audit terminal test run requires recovery') from error
+        attempt = int(report.get('attempt', 0) or 0)
+        if not self._has_recorded_audit_run(version.id, attempt):
+            try:
+                self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+            except Exception as error:
+                raise SourceAuditRecoveryError('source audit terminal test run requires recovery') from error
 
         audit['status'] = 'failed'
         audit['finalization_pending'] = True
@@ -403,20 +405,39 @@ class SourceBuildAuditService:
     def _remaining_seconds(deadline: float) -> float:
         return max(0.0, deadline - time.monotonic())
 
+    def _has_recorded_audit_run(self, source_version_id: str, attempt: int) -> bool:
+        list_runs = getattr(self._runtime, 'list_test_runs', None)
+        if not callable(list_runs):
+            return False
+        for run in list_runs(source_version_id):
+            step_results = run.get('step_results', {}) if isinstance(run, dict) else getattr(run, 'step_results', {})
+            metadata = step_results.get('source_audit', {}) if isinstance(step_results, dict) else {}
+            if int(metadata.get('attempt', -1) or -1) == attempt:
+                return True
+        return False
+
     def _record_test_run(self, version, score: int, grade: str, report: dict, step_passes: dict, diagnostics: list[str]):
+        audit_attempt = int(report.get('attempt', 0) or 0)
+        step_results = {
+            name: {
+                'passed': step_passes[name],
+                'status': stage['status'],
+                'elapsed_ms': stage['elapsed_ms'],
+            }
+            for name, stage in report['stages'].items()
+        }
+        step_results['source_audit'] = {
+            'passed': True,
+            'status': 'recorded',
+            'elapsed_ms': 0,
+            'attempt': audit_attempt,
+        }
         self._runtime.record_test_run(
             source_version_id=version.id,
             trigger='source_audit',
             score=score,
             grade=grade,
-            step_results={
-                name: {
-                    'passed': step_passes[name],
-                    'status': stage['status'],
-                    'elapsed_ms': stage['elapsed_ms'],
-                }
-                for name, stage in report['stages'].items()
-            },
+            step_results=step_results,
             diagnostics=diagnostics,
         )
 

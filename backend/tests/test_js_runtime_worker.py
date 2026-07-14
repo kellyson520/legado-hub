@@ -1,5 +1,6 @@
 import shutil
 import time
+from threading import Event, Thread
 
 import pytest
 from bs4 import BeautifulSoup
@@ -149,8 +150,9 @@ def test_worker_client_returns_stable_failure_for_malformed_bridge_message(monke
             return None
 
     class FakeOutput:
-        def readline(self):
-            return '{"type":"bridge_http"}\n'
+        @staticmethod
+        def fileno():
+            return 99
 
     class FakeProcess:
         stdin = FakeInput()
@@ -163,6 +165,7 @@ def test_worker_client_returns_stable_failure_for_malformed_bridge_message(monke
     client = JsWorkerClient()
     client._process = FakeProcess()
     monkeypatch.setattr(bridge.select, 'select', lambda *_args: ([client._process.stdout], [], []))
+    monkeypatch.setattr(bridge.os, 'read', lambda *_args: b'{"type":"bridge_http"}\n')
     context = JsExecutionContext(
         stage='search_rule_js', source={}, result={}, base_url='', cache={}, variables={}, headers={},
     )
@@ -171,3 +174,63 @@ def test_worker_client_returns_stable_failure_for_malformed_bridge_message(monke
 
     assert output.success is False
     assert output.error_code == 'MALFORMED_RESPONSE'
+
+
+def test_worker_client_times_out_when_worker_stalls_after_partial_line(tmp_path):
+    worker = tmp_path / 'partial_worker.js'
+    worker.write_text(
+        "process.stdin.on('data', () => process.stdout.write('{\\\"success\\\":'));\n",
+        encoding='utf-8',
+    )
+    client = JsWorkerClient(
+        worker_path=worker,
+        response_timeout_seconds=0.05,
+        max_response_bytes=1024,
+    )
+    context = JsExecutionContext(
+        stage='search_rule_js', source={}, result={}, base_url='', cache={}, variables={}, headers={},
+    )
+    outcome = {}
+    finished = Event()
+
+    def execute():
+        try:
+            outcome['output'] = client.execute('return 1', context)
+        except Exception as error:
+            outcome['error'] = error
+        finally:
+            finished.set()
+
+    thread = Thread(target=execute)
+    thread.start()
+    thread.join(0.3)
+    completed_without_forced_close = finished.is_set()
+    if not completed_without_forced_close:
+        client.close()
+        thread.join(1)
+
+    assert completed_without_forced_close is True
+    assert outcome['output'].error_code == 'EXECUTION_TIMEOUT'
+    assert client._process is None
+
+
+def test_worker_client_rejects_oversized_response_before_json_parsing(tmp_path):
+    worker = tmp_path / 'large_worker.js'
+    worker.write_text(
+        "process.stdin.on('data', () => process.stdout.write(JSON.stringify({success:true,value:'x'.repeat(4096)}) + '\\n'));\n",
+        encoding='utf-8',
+    )
+    client = JsWorkerClient(
+        worker_path=worker,
+        response_timeout_seconds=0.5,
+        max_response_bytes=128,
+    )
+    context = JsExecutionContext(
+        stage='search_rule_js', source={}, result={}, base_url='', cache={}, variables={}, headers={},
+    )
+
+    output = client.execute('return 1', context)
+
+    assert output.success is False
+    assert output.error_code == 'RESPONSE_TOO_LARGE'
+    assert client._process is None

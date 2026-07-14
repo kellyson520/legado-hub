@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import subprocess
 import time
@@ -41,14 +42,19 @@ class JsWorkerClient:
         worker_path: Path | None = None,
         bridge_http_handler=None,
         response_timeout_seconds: float = 8.0,
+        max_response_bytes: int = 1_048_576,
     ):
         if response_timeout_seconds <= 0:
             raise ValueError('response_timeout_seconds must be positive')
+        if max_response_bytes <= 0:
+            raise ValueError('max_response_bytes must be positive')
         self._node_binary = node_binary
         self._worker_path = worker_path or Path(__file__).resolve().parents[4] / "nodejs" / "legado_js_worker.js"
         self._bridge_http_handler = bridge_http_handler
         self._response_timeout_seconds = response_timeout_seconds
-        self._process: subprocess.Popen[str] | None = None
+        self._max_response_bytes = max_response_bytes
+        self._process: subprocess.Popen[bytes] | None = None
+        self._stdout_buffer = bytearray()
 
     def _ensure_started(self) -> None:
         if self._process and self._process.poll() is None:
@@ -59,9 +65,8 @@ class JsWorkerClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
         )
+        self._stdout_buffer.clear()
 
     def execute(self, code: str, context: JsExecutionContext) -> JsWorkerOutput:
         self._ensure_started()
@@ -87,7 +92,7 @@ class JsWorkerClient:
 
         try:
             self._process.stdin.write(
-                json.dumps(payload, ensure_ascii=False, default=self._json_default) + "\n"
+                (json.dumps(payload, ensure_ascii=False, default=self._json_default) + "\n").encode('utf-8')
             )
             self._process.stdin.flush()
         except (BrokenPipeError, OSError):
@@ -95,21 +100,14 @@ class JsWorkerClient:
 
         deadline = time.monotonic() + self._response_timeout_seconds
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return self._timeout_output(context, code, started_at)
+            raw, read_error = self._read_response_line(deadline)
+            if read_error:
+                if read_error in {'EXECUTION_TIMEOUT', 'RESPONSE_TOO_LARGE'}:
+                    self._terminate_process()
+                return self._failed_output(context, code, started_at, read_error)
             try:
-                ready, _, _ = select.select([self._process.stdout], [], [], remaining)
-            except (OSError, ValueError):
-                return self._failed_output(context, code, started_at, 'WORKER_IO_ERROR')
-            if not ready:
-                return self._timeout_output(context, code, started_at)
-            raw = self._process.stdout.readline()
-            if not raw:
-                return self._failed_output(context, code, started_at, 'WORKER_EOF')
-            try:
-                message = json.loads(raw)
-            except json.JSONDecodeError:
+                message = json.loads(raw.decode('utf-8'))
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 return self._failed_output(context, code, started_at, 'MALFORMED_RESPONSE')
             if not isinstance(message, dict):
                 return self._failed_output(context, code, started_at, 'MALFORMED_RESPONSE')
@@ -123,15 +121,17 @@ class JsWorkerClient:
                 )
                 try:
                     self._process.stdin.write(
-                        json.dumps(
-                            {
-                                "type": "bridge_http_result",
-                                "id": message["id"],
-                                "response": response,
-                            },
-                            ensure_ascii=False,
-                        )
-                        + "\n"
+                        (
+                            json.dumps(
+                                {
+                                    "type": "bridge_http_result",
+                                    "id": message["id"],
+                                    "response": response,
+                                },
+                                ensure_ascii=False,
+                            )
+                            + "\n"
+                        ).encode('utf-8')
                     )
                     self._process.stdin.flush()
                 except (BrokenPipeError, OSError, KeyError):
@@ -186,9 +186,41 @@ class JsWorkerClient:
             trace=trace,
         )
 
+    def _read_response_line(self, deadline: float) -> tuple[bytes | None, str | None]:
+        assert self._process is not None
+        assert self._process.stdout is not None
+        stdout = self._process.stdout
+        while True:
+            newline_index = self._stdout_buffer.find(b'\n')
+            if newline_index >= 0:
+                if newline_index > self._max_response_bytes:
+                    return None, 'RESPONSE_TOO_LARGE'
+                line = bytes(self._stdout_buffer[:newline_index])
+                del self._stdout_buffer[:newline_index + 1]
+                return line, None
+            if len(self._stdout_buffer) > self._max_response_bytes:
+                return None, 'RESPONSE_TOO_LARGE'
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None, 'EXECUTION_TIMEOUT'
+            try:
+                ready, _, _ = select.select([stdout], [], [], remaining)
+            except (OSError, ValueError):
+                return None, 'WORKER_IO_ERROR'
+            if not ready:
+                return None, 'EXECUTION_TIMEOUT'
+            try:
+                chunk = os.read(stdout.fileno(), 65_536)
+            except OSError:
+                return None, 'WORKER_IO_ERROR'
+            if not chunk:
+                return None, 'WORKER_EOF'
+            self._stdout_buffer.extend(chunk)
+
     def _terminate_process(self) -> None:
         process = self._process
         self._process = None
+        self._stdout_buffer.clear()
         if process is None or process.poll() is not None:
             return
         process.terminate()

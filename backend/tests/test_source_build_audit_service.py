@@ -48,6 +48,12 @@ class FakeRuntimeRepository:
             raise RuntimeError('test run persistence unavailable')
         self.runs.append(kwargs)
 
+    def list_test_runs(self, source_version_id=None):
+        return [
+            run for run in self.runs
+            if source_version_id is None or run['source_version_id'] == source_version_id
+        ]
+
 
 class PassingProbe:
     def __init__(self):
@@ -241,6 +247,7 @@ async def test_audit_candidate_passes_with_compact_report_and_closes_fresh_probe
         'score': 100,
         'grade': 'A',
         'step_results': {
+            'source_audit': {'passed': True, 'status': 'recorded', 'elapsed_ms': 0, 'attempt': 1},
             'search': {'passed': True, 'status': 'ok', 'elapsed_ms': 12},
             'toc': {'passed': True, 'status': 'ok', 'elapsed_ms': 15},
             'content': {'passed': True, 'status': 'ok', 'elapsed_ms': 25},
@@ -899,4 +906,46 @@ async def test_terminal_status_failure_finalizes_existing_failed_payload_without
     assert version.payload['source_audit']['attempt'] == 5
     assert len(runtime.runs) == 1
     assert len(review_repo.items) == 1
+    assert len(probes) == 1
+
+
+async def test_terminal_finalization_reuses_recorded_attempt_after_payload_checkpoint_failure():
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+    from app.application.services.source_review_service import SourceReviewService
+
+    version = SourceVersion(
+        id='candidate-1', source_definition_id=17, source_type='book',
+        source_id='https://example.test', status='candidate', created_by='tenant-1',
+        payload={
+            'keyword': 'sample', 'canonical_url': 'https://example.test',
+            'source_rule': {'bookSourceUrl': 'https://example.test'},
+            'source_audit': {'status': 'retry_queued', 'attempt': 4, 'max_attempts': 5, 'history': []},
+        },
+    )
+    runtime = FakeRuntimeRepository(version, fail_payload_updates={3})
+    review_repo = FakeReviewRepository()
+    probes = []
+
+    def probe_factory():
+        probe = ShortContentProbe()
+        probes.append(probe)
+        return probe
+
+    service = SourceBuildAuditService(
+        runtime_repo=runtime, probe_service_factory=probe_factory,
+        build_service=FakeBuildService(), review_service=SourceReviewService(review_repo),
+    )
+
+    with pytest.raises(RuntimeError):
+        await service.audit('candidate-1')
+
+    assert version.payload['source_audit']['status'] == 'terminal_finalizing'
+    assert len(runtime.runs) == 1
+
+    result = await service.audit('candidate-1')
+
+    assert result['status'] == 'failed'
+    assert version.status == 'failed'
+    assert len(runtime.runs) == 1
+    assert runtime.runs[0]['step_results']['source_audit']['attempt'] == 5
     assert len(probes) == 1
