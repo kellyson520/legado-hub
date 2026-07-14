@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import time
 import re
-from urllib.parse import quote
+from copy import deepcopy
+from urllib.parse import quote, urlencode, urljoin
+
+from bs4 import BeautifulSoup, Tag
 
 from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
 from app.infrastructure.legado.engine.url_utils import UrlUtils
@@ -16,6 +19,88 @@ class SourceProbeService:
         close = getattr(self._fetcher, "close", None)
         if close is not None:
             await close()
+
+    async def synthesize_source_rule(
+        self,
+        *,
+        source: dict,
+        entry_url: str,
+        keyword: str,
+    ) -> dict:
+        """Infer a portable Legado rule from a public HTML search flow."""
+        http = getattr(self._fetcher, "_http", None)
+        get = getattr(http, "get", None)
+        post = getattr(http, "post", None)
+        if not callable(get) or not callable(post):
+            return source
+
+        result = deepcopy(source)
+        headers = UrlUtils.parse_headers(result.get("header", ""))
+        try:
+            entry_response = await get(entry_url, headers=headers)
+            if not _is_html_success(entry_response):
+                return source
+            entry_base_url = getattr(entry_response, "url", "") or entry_url
+            form = _find_search_form(entry_response.text)
+            if form is None:
+                return source
+
+            field_name, action_url, method = _search_form_request(form, entry_base_url)
+            if not field_name or not action_url:
+                return source
+            encoded_body = urlencode({field_name: keyword})
+            if method == "POST":
+                headers = {
+                    **headers,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }
+                search_response = await post(action_url, data=encoded_body, headers=headers)
+                search_url = f"{action_url}::POST\n{field_name}={{{{key}}}}"
+            else:
+                separator = "&" if "?" in action_url else "?"
+                search_url = f"{action_url}{separator}{field_name}={{{{key}}}}"
+                search_response = await get(f"{action_url}{separator}{encoded_body}", headers=headers)
+            if not _is_html_success(search_response):
+                return source
+
+            search_rules, selected_book_url = _discover_search_rules(
+                BeautifulSoup(search_response.text, "lxml"),
+                keyword=keyword,
+                base_url=getattr(search_response, "url", "") or action_url,
+            )
+            if not search_rules or not selected_book_url:
+                return source
+
+            book_response = await get(selected_book_url, headers=headers)
+            if not _is_html_success(book_response):
+                return source
+            toc_rules, selected_chapter_url = _discover_toc_rules(
+                BeautifulSoup(book_response.text, "lxml"),
+                base_url=getattr(book_response, "url", "") or selected_book_url,
+            )
+            if not toc_rules or not selected_chapter_url:
+                return source
+
+            chapter_response = await get(selected_chapter_url, headers=headers)
+            if not _is_html_success(chapter_response):
+                return source
+            content_rule = _discover_content_rule(BeautifulSoup(chapter_response.text, "lxml"))
+            if not content_rule:
+                return source
+
+            result.update(
+                {
+                    "searchUrl": search_url,
+                    "ruleSearch": search_rules,
+                    "ruleToc": toc_rules,
+                    "ruleContent": {"content": content_rule},
+                    "header": _format_headers(headers),
+                    "bookSourceComment": "[source-build] public HTML form and DOM synthesis",
+                }
+            )
+            return result
+        except Exception:
+            return source
 
     async def probe_source(
         self,
@@ -71,7 +156,7 @@ class SourceProbeService:
                     elapsed_ms=int((time.perf_counter() - toc_started) * 1000),
                     hit_count=len(chapters),
                     sample_title=chapters[0].get("title", "") if chapters else "",
-                    detail={"first_chapter": chapters[0] if chapters else {}},
+                    detail={"first_chapter": _chapter_evidence(chapters[0]) if chapters else {}},
                 )
                 if not chapters:
                     toc.detail.update(
@@ -285,3 +370,191 @@ class SourceProbeService:
             **({"block_reason": "verification_wall"} if is_verification_wall else {}),
             "http_elapsed_ms": response.elapsed_ms,
         }
+
+
+def _is_html_success(response) -> bool:
+    return bool(getattr(response, "success", False) and getattr(response, "is_html", False))
+
+
+def _chapter_evidence(chapter: dict) -> dict:
+    return {
+        key: chapter[key]
+        for key in ("title", "url", "index")
+        if key in chapter
+    }
+
+
+def _find_search_form(document: str) -> Tag | None:
+    soup = BeautifulSoup(document, "lxml")
+    for form in soup.find_all("form"):
+        for field in form.find_all("input"):
+            name = str(field.get("name") or "").strip()
+            field_type = str(field.get("type") or "text").lower()
+            if name and field_type in {"text", "search"}:
+                return form
+    return None
+
+
+def _search_form_request(form: Tag, base_url: str) -> tuple[str, str, str]:
+    field = next(
+        (
+            item
+            for item in form.find_all("input")
+            if str(item.get("name") or "").strip()
+            and str(item.get("type") or "text").lower() in {"text", "search"}
+        ),
+        None,
+    )
+    if field is None:
+        return "", "", "GET"
+    return (
+        str(field.get("name")).strip(),
+        urljoin(base_url, str(form.get("action") or base_url)),
+        str(form.get("method") or "GET").upper(),
+    )
+
+
+def _discover_search_rules(document: BeautifulSoup, *, keyword: str, base_url: str) -> tuple[dict, str]:
+    anchor = next(
+        (
+            item
+            for item in document.find_all("a", href=True)
+            if keyword in item.get_text(" ", strip=True)
+        ),
+        None,
+    )
+    if anchor is None:
+        return {}, ""
+    item = _repeated_result_card(anchor)
+    if item is None:
+        return {}, ""
+    container = item.parent
+    if not isinstance(container, Tag):
+        return {}, ""
+    title_rule = _relative_css(anchor, item)
+    if not title_rule:
+        return {}, ""
+    author = _author_node(item, anchor)
+    rules = {
+        "bookList": f"@css:{_css_selector(container)} > {_css_selector(item)}",
+        "name": f"@css:{title_rule}@text",
+        "bookUrl": f"@css:{title_rule}@href",
+    }
+    if author is not None:
+        author_rule = _relative_css(author, item)
+        if author_rule:
+            rules["author"] = f"@css:{author_rule}@text"
+    return rules, urljoin(base_url, str(anchor.get("href") or ""))
+
+
+def _repeated_result_card(anchor: Tag) -> Tag | None:
+    """Return the nearest result card repeated among its parent's children."""
+    for item in [anchor, *anchor.parents]:
+        if not isinstance(item, Tag) or item.name not in {"li", "article", "tr", "dl", "div"}:
+            continue
+        container = item.parent
+        if not isinstance(container, Tag):
+            continue
+        selector = _css_selector(item)
+        cards = [
+            child
+            for child in container.find_all(item.name, recursive=False)
+            if _css_selector(child) == selector
+        ]
+        if len(cards) >= 2:
+            return item
+    return None
+
+
+def _author_node(item: Tag, anchor: Tag) -> Tag | None:
+    class_author = item.select_one(".author")
+    if class_author is not None:
+        return class_author
+    title_parent = anchor.parent
+    if not isinstance(title_parent, Tag):
+        return None
+    seen_title = False
+    for sibling in item.find_all(["span", "p", "dd"], recursive=False):
+        if sibling is title_parent:
+            seen_title = True
+            continue
+        if seen_title and sibling.get_text(" ", strip=True):
+            return sibling
+    return None
+
+
+def _discover_toc_rules(document: BeautifulSoup, *, base_url: str) -> tuple[dict, str]:
+    container, chapters = _best_chapter_container(document)
+    if container is None or not chapters:
+        return {}, ""
+    chapter = chapters[0]
+    if chapter.parent is not None and chapter.parent.name == "li" and chapter.parent.parent is container:
+        chapter_selector = f"{_css_selector(container)} > li > a"
+    else:
+        chapter_selector = f"{_css_selector(container)} a"
+    return {
+        "chapterList": f"@css:{chapter_selector}",
+        "chapterName": "@css:text",
+        "chapterUrl": "@css:href",
+    }, urljoin(base_url, str(chapter.get("href") or ""))
+
+
+def _best_chapter_container(document: BeautifulSoup) -> tuple[Tag | None, list[Tag]]:
+    candidates: list[tuple[tuple[int, int, int], Tag, list[Tag]]] = []
+    for container in document.find_all(["ul", "ol", "dl", "div"]):
+        chapters = [
+            item for item in container.find_all("a", href=True)
+            if re.match(
+                r"^(?:第|序章|引子|楔子|chapter(?:\s|:|-))",
+                item.get_text(" ", strip=True),
+                flags=re.IGNORECASE,
+            )
+        ]
+        if len(chapters) < 2:
+            continue
+        marker = " ".join([str(container.get("id") or ""), *container.get("class", [])]).lower()
+        marker_score = sum(token in marker for token in ("chapter", "catalog", "directory", "dir", "list"))
+        tag_score = 2 if container.name in {"ul", "ol", "dl"} else 1
+        candidates.append(((tag_score, marker_score, len(chapters)), container, chapters))
+    if not candidates:
+        return None, []
+    _, container, chapters = max(candidates, key=lambda item: item[0])
+    return container, chapters
+
+
+def _discover_content_rule(document: BeautifulSoup) -> str:
+    candidates = []
+    for item in document.find_all(["article", "div", "section"]):
+        marker = " ".join([str(item.get("id") or ""), *item.get("class", [])]).lower()
+        text = item.get_text(" ", strip=True)
+        if marker and any(token in marker for token in ("content", "chapter", "read", "text")) and text:
+            candidates.append((len(text), item))
+    if not candidates:
+        return ""
+    return f"@css:{_css_selector(max(candidates, key=lambda item: item[0])[1])}@html"
+
+
+def _relative_css(node: Tag, ancestor: Tag) -> str:
+    parts = []
+    current: Tag | None = node
+    while current is not None and current is not ancestor:
+        parts.append(_css_selector(current))
+        parent = current.parent
+        current = parent if isinstance(parent, Tag) else None
+    return " > ".join(reversed(parts)) if current is ancestor else ""
+
+
+def _css_selector(node: Tag) -> str:
+    node_id = str(node.get("id") or "").strip()
+    if node_id:
+        return f"#{node_id}"
+    classes = [
+        str(name).strip()
+        for name in node.get("class", [])
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_-]*$", str(name))
+    ]
+    return f"{node.name}{''.join(f'.{name}' for name in classes)}"
+
+
+def _format_headers(headers: dict[str, str]) -> str:
+    return "\n".join(f"{key}: {value}" for key, value in headers.items())

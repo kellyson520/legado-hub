@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 
@@ -150,6 +152,7 @@ class FakeGeneratedSourceRepository:
 class FakeReadingService:
     def __init__(self):
         self.search_source_ids = []
+        self.closed = False
 
     async def search_books(self, keyword, source_ids=None, limit_per_source=3, author_hint=None, routing_mode="auto", include_health=False):
         self.search_source_ids.append(source_ids)
@@ -166,11 +169,18 @@ class FakeReadingService:
         }
 
     async def get_book_toc(self, source_id, book_url, book_name=None, author_hint=None, routing_mode="auto"):
+        from bs4 import BeautifulSoup
+
         return {
             "source_id": source_id,
             "resolved_source_id": source_id,
             "book_url": book_url,
-            "chapters": [{"title": "第一章", "url": "https://a.test/book/1/1", "index": 0}],
+            "chapters": [{
+                "title": "第一章",
+                "url": "https://a.test/book/1/1",
+                "index": 0,
+                "_raw": BeautifulSoup("<a>第一章</a>", "lxml").a,
+            }],
             "fallback_used": False,
         }
 
@@ -183,6 +193,9 @@ class FakeReadingService:
             "content": "唐三来到斗罗大陆，武魂觉醒的世界规则逐渐展开。",
             "fallback_used": False,
         }
+
+    async def aclose(self):
+        self.closed = True
 
 
 class FakeComplementService:
@@ -243,9 +256,12 @@ async def test_acceptance_reads_and_complements_after_canary_source_build():
     assert reading_service.search_source_ids == [[101]]
     assert generated_sources.upserted[0]["bookSourceUrl"] == "https://a.test"
     assert report["toc_candidates"][0]["chapters"][0]["title"] == "第一章"
+    assert "_raw" not in report["toc_candidates"][0]["chapters"][0]
     assert report["chapter_candidates"][0]["content_preview"].startswith("唐三")
     assert report["complement"]["status"] == "success"
     assert report["insights"]["characters"]
+    json.dumps(report, ensure_ascii=False)
+    assert reading_service.closed is True
 
 
 class FakeTwoCanaryBuildRuntime:
@@ -525,7 +541,10 @@ async def test_acceptance_retrieves_persisted_source_rule_after_handle_job():
             "ruleSearch": {"bookList": ".item"},
             "ruleToc": {"chapterList": "#list a"},
             "ruleContent": {"content": "#content@text"},
-        }
+        },
+        "autonomous_build": {
+            "probe": {"search_status": "ok", "toc_status": "ok", "content_status": "ok"},
+        },
     }
     service = SourceToInsightAcceptanceService(
         source_build_service=FakeSourceBuildService(),
@@ -544,6 +563,7 @@ async def test_acceptance_retrieves_persisted_source_rule_after_handle_job():
 
     assert runtime_repo.requested == ["version-1"]
     assert report["source_builds"][0]["source_rule"]["bookSourceUrl"] == "https://persisted.test"
+    assert report["source_builds"][0]["autonomous_build"]["probe"]["content_status"] == "ok"
     assert generated_sources.upserted[0]["bookSourceUrl"] == "https://persisted.test"
 
 

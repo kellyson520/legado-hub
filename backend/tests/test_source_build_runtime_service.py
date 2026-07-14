@@ -77,7 +77,7 @@ def test_source_build_runtime_service_records_agent_run_and_updates_candidate_ve
     assert updated.payload['autonomous_build']['trigger'] == 'configured_catalog'
 
 
-def test_source_build_runtime_service_uses_live_probe_when_payload_context_is_missing(tmp_path, monkeypatch):
+def test_source_build_runtime_service_verifies_synthesized_rules_in_a_fresh_probe_session(tmp_path, monkeypatch):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-build-runtime-probe.sqlite3'))
     monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
@@ -94,7 +94,31 @@ def test_source_build_runtime_service_uses_live_probe_when_payload_context_is_mi
     from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
 
     class FakeProbeService:
+        instances = []
+
+        def __init__(self):
+            self.synthesized_sources = []
+            self.synthesis_loop = None
+            self.probe_loop = None
+            self.closed = False
+            self.instances.append(self)
+
+        async def synthesize_source_rule(self, *, source, entry_url, keyword):
+            self.synthesis_loop = asyncio.get_running_loop()
+            self.synthesized_sources.append({
+                'source': source,
+                'entry_url': entry_url,
+                'keyword': keyword,
+            })
+            return {
+                **source,
+                'searchUrl': 'https://example.test/generated-search?key={{key}}',
+            }
+
         async def probe_source(self, source, keyword_samples, probe_mode='full_chain'):
+            self.probe_loop = asyncio.get_running_loop()
+            synthesis_loop = self.synthesis_loop or self.instances[0].synthesis_loop
+            assert self.probe_loop is synthesis_loop
             return SourceProbeEvidence(
                 source_id=source['id'],
                 source_name=source.get('bookSourceName', ''),
@@ -138,7 +162,7 @@ def test_source_build_runtime_service_uses_live_probe_when_payload_context_is_mi
             )
 
         async def aclose(self):
-            return None
+            self.closed = True
 
     bootstrap_sqlite()
     runtime_repo = SQLiteSourceRuntimeRepository()
@@ -189,6 +213,7 @@ def test_source_build_runtime_service_uses_live_probe_when_payload_context_is_mi
     assert history[1].result.data['validation']['content']['passed'] is True
     assert updated is not None
     assert updated.payload['source_rule']['bookSourceUrl'] == 'https://example.test/books'
+    assert updated.payload['source_rule']['searchUrl'] == 'https://example.test/generated-search?key={{key}}'
     assert updated.payload['rule_patch']['operations'][0]['field'] == 'ruleSearch'
     assert updated.payload['autonomous_build']['validation']['fixture_validation_passed'] is True
     assert updated.payload['autonomous_build']['validation']['sample_validation_passed'] is True
@@ -197,6 +222,9 @@ def test_source_build_runtime_service_uses_live_probe_when_payload_context_is_mi
     assert updated.payload['autonomous_build']['probe']['toc_status'] == 'ok'
     assert updated.payload['autonomous_build']['probe']['content_status'] == 'ok'
     assert updated.payload['autonomous_build']['probe']['sample_title'] == 'Chapter 1'
+    assert len(FakeProbeService.instances) == 2
+    assert FakeProbeService.instances[0].synthesis_loop is FakeProbeService.instances[1].probe_loop
+    assert all(instance.closed for instance in FakeProbeService.instances)
 
 
 def test_source_build_runtime_service_escalation_persists_review_queue_and_agent_trace(tmp_path, monkeypatch):

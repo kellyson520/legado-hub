@@ -282,7 +282,7 @@ class SourceToInsightAcceptanceService:
             status = "passed" if content_usable == len(source_urls) else "partial"
             if content_usable == 0:
                 status = "failed"
-        return {
+        report = {
             "scenario": {
                 "source_urls": source_urls,
                 "book_name": book_name,
@@ -303,6 +303,8 @@ class SourceToInsightAcceptanceService:
             "knowledge_proposals": [],
             "ai": {"used": ai_status == "completed", "status": ai_status, "provider": "", "model": "", "usage": {}},
         }
+        await self._close_reading_service()
+        return report
 
     def _run_source_build(self, *, url: str, tenant_id: str, keyword: str) -> dict[str, Any]:
         started = time.time()
@@ -324,7 +326,10 @@ class SourceToInsightAcceptanceService:
                         url=submission.normalized_url,
                         tenant_id=tenant_id,
                     )
-            source_rule = runtime_result.get("source_rule") or self._load_persisted_source_rule(submission.source_version_id)
+            persisted_payload = self._load_persisted_source_payload(submission.source_version_id)
+            source_rule = runtime_result.get("source_rule") or persisted_payload.get("source_rule") or {}
+            if not isinstance(source_rule, dict):
+                source_rule = {}
             return {
                 "url": url,
                 "normalized_url": submission.normalized_url,
@@ -338,7 +343,7 @@ class SourceToInsightAcceptanceService:
                 "strategy": runtime_result.get("strategy"),
                 "review_required": runtime_result.get("review_required"),
                 "source_rule": source_rule,
-                "autonomous_build": runtime_result.get("autonomous_build") or {},
+                "autonomous_build": runtime_result.get("autonomous_build") or persisted_payload.get("autonomous_build") or {},
                 "error": "",
             }
         except Exception as exc:
@@ -349,15 +354,12 @@ class SourceToInsightAcceptanceService:
                 "error": str(exc) or exc.__class__.__name__,
             }
 
-    def _load_persisted_source_rule(self, source_version_id: str) -> dict[str, Any]:
+    def _load_persisted_source_payload(self, source_version_id: str) -> dict[str, Any]:
         if self._source_runtime_repository is None:
             return {}
         version = self._source_runtime_repository.get_version(source_version_id)
         payload = getattr(version, "payload", {}) if version is not None else {}
-        if not isinstance(payload, dict):
-            return {}
-        source_rule = payload.get("source_rule") or {}
-        return source_rule if isinstance(source_rule, dict) else {}
+        return payload if isinstance(payload, dict) else {}
 
     async def _read_generated_source(
         self,
@@ -401,7 +403,7 @@ class SourceToInsightAcceptanceService:
                 author_hint=None,
                 routing_mode="auto",
             )
-            toc_candidates.append(toc)
+            toc_candidates.append(_toc_report_evidence(toc))
             toc_error = _source_evidence_error(toc, expected_source_id=source_id, stage="toc")
             if toc_error:
                 evidence_error = toc_error
@@ -502,6 +504,15 @@ class SourceToInsightAcceptanceService:
             generated_source_ids.append(source_id)
         return generated_source_ids
 
+    async def _close_reading_service(self) -> None:
+        close = getattr(self._reading_service, "aclose", None)
+        if not callable(close):
+            return
+        try:
+            await close()
+        except Exception:
+            return
+
 
 def _elapsed_ms(started: float) -> int:
     return int((time.time() - started) * 1000)
@@ -516,6 +527,24 @@ def _select_chapter(chapters: list[dict[str, Any]], chapter_index: int, chapter_
             if chapter_title in str(item.get("title", "")):
                 return item
     return chapters[0]
+
+
+def _toc_report_evidence(toc: dict[str, Any]) -> dict[str, Any]:
+    report = {
+        key: toc[key]
+        for key in ("source_id", "resolved_source_id", "book_url", "fallback_used")
+        if key in toc
+    }
+    report["chapters"] = [
+        {
+            key: chapter[key]
+            for key in ("title", "url", "index")
+            if key in chapter
+        }
+        for chapter in toc.get("chapters") or []
+        if isinstance(chapter, dict)
+    ]
+    return report
 
 
 def _preview(text: str, limit: int = 240) -> str:

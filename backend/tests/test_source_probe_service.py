@@ -35,6 +35,42 @@ async def test_probe_service_collects_three_stage_evidence_and_content_failure()
 
 
 @pytest.mark.asyncio
+async def test_probe_service_keeps_toc_evidence_json_serializable():
+    import json
+
+    from bs4 import BeautifulSoup
+
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class Fetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return [{
+                "title": "Chapter 1",
+                "url": f"{book_url}/1",
+                "index": 0,
+                "_raw": BeautifulSoup("<a>Chapter 1</a>", "lxml").a,
+            }]
+
+        async def get_content(self, source, chapter_url):
+            return {"content": "chapter content", "title": "Chapter 1"}
+
+    evidence = await SourceProbeService(fetcher=Fetcher()).probe_source(
+        source={"id": 1, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["Example"],
+    )
+
+    assert evidence.toc.detail["first_chapter"] == {
+        "title": "Chapter 1",
+        "url": "https://example.test/book/1/1",
+        "index": 0,
+    }
+    json.dumps(evidence.toc.detail)
+
+
+@pytest.mark.asyncio
 async def test_probe_service_collects_js_preflight_request_preview():
     from app.application.services.source_probe_service import SourceProbeService
 
@@ -207,3 +243,139 @@ async def test_content_verification_shell_is_classified_as_access_blocked():
 
     assert evidence.content.detail['block_reason'] == 'verification_wall'
     assert evidence.content.detail['parse_status'] == 'content_access_blocked'
+
+
+@pytest.mark.asyncio
+async def test_probe_service_synthesizes_legado_rules_from_html_search_form_and_pages():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class Response:
+        def __init__(self, url, text):
+            self.url = url
+            self.text = text
+            self.success = True
+            self.is_html = True
+
+    class FakeHttp:
+        def __init__(self):
+            self.posts = []
+
+        async def get(self, url, headers=None):
+            if url == 'https://example.test/':
+                return Response(url, '''
+                    <form method="post" action="/search.html">
+                      <input type="text" name="s" />
+                    </form>
+                ''')
+            if url == 'https://example.test/book/1':
+                return Response(url, '''
+                    <ul class="chapter-list">
+                      <li><a href="/book/1/1">第一章</a></li>
+                      <li><a href="/book/1/2">第二章</a></li>
+                    </ul>
+                ''')
+            if url == 'https://example.test/book/1/1':
+                return Response(url, '<div id="content">这是足够长的正文内容，用于确认自动写源引擎能选择正文容器。</div>')
+            raise AssertionError(f'unexpected GET {url}')
+
+        async def post(self, url, data=None, headers=None):
+            self.posts.append((url, data))
+            return Response(url, '''
+                <ul class="result-list">
+                  <li><span class="title"><a href="/book/1">斗罗大陆</a></span><span class="author">唐家三少</span></li>
+                  <li><span class="title"><a href="/book/2">斗罗大陆II</a></span><span class="author">唐家三少</span></li>
+                </ul>
+            ''')
+
+    class FakeFetcher:
+        def __init__(self):
+            self._http = FakeHttp()
+
+    fetcher = FakeFetcher()
+    rule = await SourceProbeService(fetcher=fetcher).synthesize_source_rule(
+        source={
+            'bookSourceUrl': 'https://example.test/',
+            'bookSourceName': 'Example',
+            'ruleSearch': {},
+            'ruleToc': {},
+            'ruleContent': {},
+        },
+        entry_url='https://example.test/',
+        keyword='斗罗大陆',
+    )
+
+    assert fetcher._http.posts == [('https://example.test/search.html', 's=%E6%96%97%E7%BD%97%E5%A4%A7%E9%99%86')]
+    assert rule['searchUrl'] == 'https://example.test/search.html::POST\ns={{key}}'
+    assert rule['header'] == 'Content-Type: application/x-www-form-urlencoded'
+    assert rule['ruleSearch'] == {
+        'bookList': '@css:ul.result-list > li',
+        'name': '@css:span.title > a@text',
+        'author': '@css:span.author@text',
+        'bookUrl': '@css:span.title > a@href',
+    }
+    assert rule['ruleToc'] == {
+        'chapterList': '@css:ul.chapter-list > li > a',
+        'chapterName': '@css:text',
+        'chapterUrl': '@css:href',
+    }
+    assert rule['ruleContent']['content'] == '@css:#content@html'
+
+
+def test_toc_rule_discovery_prefers_full_directory_over_latest_chapter_block():
+    from bs4 import BeautifulSoup
+
+    from app.application.services.source_probe_service import _discover_toc_rules
+
+    rules, first_chapter_url = _discover_toc_rules(
+        BeautifulSoup('''
+            <div class="page">
+              <ul class="section-list"><li><a href="/book/1/99">第九十九章</a></li><li><a href="/book/1/100">第一百章</a></li></ul>
+              <ul class="section-list directory"><li><a href="/book/1/1">第一章</a></li><li><a href="/book/1/2">第二章</a></li><li><a href="/book/1/3">第三章</a></li></ul>
+            </div>
+        ''', 'lxml'),
+        base_url='https://example.test/book/1',
+    )
+
+    assert rules['chapterList'] == '@css:ul.section-list.directory > li > a'
+    assert first_chapter_url == 'https://example.test/book/1/1'
+
+
+def test_search_rule_discovery_supports_repeated_article_cards_without_list_items():
+    from bs4 import BeautifulSoup
+
+    from app.application.services.source_probe_service import _discover_search_rules
+
+    rules, book_url = _discover_search_rules(
+        BeautifulSoup('''
+            <section class="results">
+              <article class="result-card"><a href="/book/1">Example Novel</a><span class="author">Author One</span></article>
+              <article class="result-card"><a href="/book/2">Example Novel II</a><span class="author">Author Two</span></article>
+            </section>
+        ''', 'lxml'),
+        keyword='Example Novel',
+        base_url='https://example.test/search',
+    )
+
+    assert rules['bookList'] == '@css:section.results > article.result-card'
+    assert rules['name'] == '@css:a@text'
+    assert rules['bookUrl'] == '@css:a@href'
+    assert book_url == 'https://example.test/book/1'
+
+
+def test_toc_rule_discovery_supports_english_chapter_titles():
+    from bs4 import BeautifulSoup
+
+    from app.application.services.source_probe_service import _discover_toc_rules
+
+    rules, chapter_url = _discover_toc_rules(
+        BeautifulSoup('''
+            <ol class="chapters">
+              <li><a href="/book/1/chapter-1">Chapter 1</a></li>
+              <li><a href="/book/1/chapter-2">Chapter 2</a></li>
+            </ol>
+        ''', 'lxml'),
+        base_url='https://example.test/book/1',
+    )
+
+    assert rules['chapterList'] == '@css:ol.chapters > li > a'
+    assert chapter_url == 'https://example.test/book/1/chapter-1'

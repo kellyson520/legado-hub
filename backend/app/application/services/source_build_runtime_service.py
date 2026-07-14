@@ -363,28 +363,30 @@ class SourceBuildRuntimeService:
         source_name = self._resolve_source_name(candidate_url, version_payload, job_payload)
         generated_source = self._compatibility.generate_from_url(candidate_url, source_name=source_name)
         generated_source['id'] = source_version_id
-        compatibility_site = self._compatibility.match_site(candidate_url)
-        compatibility_score = self._compatibility.get_compatibility_score(generated_source)
-        source_rule = self._sanitize_source_rule(generated_source)
-        rule_patch = self._build_rule_patch(
-            generated_source,
-            compatibility_site=compatibility_site,
-            compatibility_score=compatibility_score,
+        keyword_samples = self._build_keyword_samples(
+            candidate_url=candidate_url,
+            source_name=source_name,
+            version_payload=version_payload,
+            job_payload=job_payload,
         )
         probe_service = self._probe_factory()
         probe_summary: dict
         try:
-            probe = self._run_async(
-                self._probe_candidate(
+            generated_source, probe = self._run_async(
+                self._synthesize_and_probe_candidate(
                     probe_service=probe_service,
                     source=generated_source,
-                    keyword_samples=self._build_keyword_samples(
-                        candidate_url=candidate_url,
-                        source_name=source_name,
-                        version_payload=version_payload,
-                        job_payload=job_payload,
-                    ),
+                    entry_url=candidate_url,
+                    keyword_samples=keyword_samples,
                 )
+            )
+            compatibility_site = self._compatibility.match_site(candidate_url)
+            compatibility_score = self._compatibility.get_compatibility_score(generated_source)
+            source_rule = self._sanitize_source_rule(generated_source)
+            rule_patch = self._build_rule_patch(
+                generated_source,
+                compatibility_site=compatibility_site,
+                compatibility_score=compatibility_score,
             )
             probe_summary = self._build_probe_summary(
                 probe,
@@ -392,15 +394,18 @@ class SourceBuildRuntimeService:
                 compatibility_score=compatibility_score,
             )
         except Exception as exc:
+            compatibility_site = self._compatibility.match_site(candidate_url)
+            compatibility_score = self._compatibility.get_compatibility_score(generated_source)
+            source_rule = self._sanitize_source_rule(generated_source)
+            rule_patch = self._build_rule_patch(
+                generated_source,
+                compatibility_site=compatibility_site,
+                compatibility_score=compatibility_score,
+            )
             probe_summary = {
                 'source_name': source_name,
                 'source_url': candidate_url,
-                'keyword': self._build_keyword_samples(
-                    candidate_url=candidate_url,
-                    source_name=source_name,
-                    version_payload=version_payload,
-                    job_payload=job_payload,
-                )[0],
+                'keyword': keyword_samples[0],
                 'probe_mode': 'full_chain',
                 'search_status': 'failed',
                 'toc_status': 'skipped',
@@ -483,6 +488,42 @@ class SourceBuildRuntimeService:
             close = getattr(probe_service, 'aclose', None)
             if callable(close):
                 await close()
+
+    async def _synthesize_and_probe_candidate(
+        self,
+        *,
+        probe_service,
+        source: dict,
+        entry_url: str,
+        keyword_samples: list[str],
+    ) -> tuple[dict, Any]:
+        synthesize = getattr(probe_service, 'synthesize_source_rule', None)
+        try:
+            if callable(synthesize):
+                source_id = source.get('id')
+                try:
+                    synthesized = await synthesize(
+                        source=source,
+                        entry_url=entry_url,
+                        keyword=keyword_samples[0],
+                    )
+                    if isinstance(synthesized, dict):
+                        source = synthesized
+                        source['id'] = source_id
+                except Exception:
+                    pass
+        finally:
+            close = getattr(probe_service, 'aclose', None)
+            if callable(close):
+                await close()
+
+        verification_probe_service = self._probe_factory()
+        probe = await self._probe_candidate(
+            probe_service=verification_probe_service,
+            source=source,
+            keyword_samples=keyword_samples,
+        )
+        return source, probe
 
     @staticmethod
     def _run_async(coro):

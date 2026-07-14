@@ -22,6 +22,25 @@ class FakeFetcher:
 
 
 @pytest.mark.asyncio
+async def test_source_read_service_closes_fetcher():
+    from app.application.services.source_read_service import SourceReadService
+
+    class ClosableFetcher:
+        def __init__(self):
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    fetcher = ClosableFetcher()
+    service = SourceReadService(repo=object(), fetcher=fetcher)
+
+    await service.aclose()
+
+    assert fetcher.closed is True
+
+
+@pytest.mark.asyncio
 async def test_source_read_service_runs_search_toc_and_content():
     from app.application.services.source_read_service import SourceReadService
 

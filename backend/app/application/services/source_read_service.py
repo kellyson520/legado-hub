@@ -9,6 +9,11 @@ class SourceReadService:
         self._fetcher = fetcher
         self._routing_service = routing_service
 
+    async def aclose(self) -> None:
+        close = getattr(self._fetcher, "close", None)
+        if callable(close):
+            await close()
+
     async def search_books(
         self,
         keyword: str,
