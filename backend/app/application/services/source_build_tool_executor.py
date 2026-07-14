@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import inspect
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from app.domain.entities.agent_runtime import ToolResult
 
@@ -18,7 +19,7 @@ class SourceBuildToolContext:
     source_url: str
     source_rule: dict
     inspect_data: dict = field(default_factory=dict)
-    validate_patch: Callable[[dict], dict] | None = None
+    validate_patch: Callable[[dict], dict | Awaitable[dict]] | None = None
     request_review: Callable[[dict], dict] | None = None
 
 
@@ -38,7 +39,7 @@ class SourceBuildToolExecutor:
     def validation(self) -> dict | None:
         return deepcopy(self._validation) if self._validation is not None else None
 
-    def handlers(self) -> dict[str, Callable[[dict], ToolResult]]:
+    def handlers(self) -> dict[str, Callable[[dict], ToolResult | Awaitable[ToolResult]]]:
         return {
             'source.inspect': self._inspect,
             'source.probe': self._probe,
@@ -65,16 +66,41 @@ class SourceBuildToolExecutor:
         self._pending_patch = deepcopy(patch)
         return ToolResult(status='accepted', data={'patch_fields': sorted(patch)})
 
-    def _validate(self, arguments: dict) -> ToolResult:
+    def _validate(self, arguments: dict) -> ToolResult | Awaitable[ToolResult]:
         patch = arguments.get('patch', self._pending_patch)
         if not isinstance(patch, dict) or not patch or set(patch) - ALLOWED_PATCH_FIELDS:
             return ToolResult(status='rejected', error_code='invalid_rule_patch')
         if self._context.validate_patch is None:
             return ToolResult(status='rejected', error_code='validation_unavailable')
-        self._validation = self._context.validate_patch(deepcopy(patch))
+        validation = self._context.validate_patch(deepcopy(patch))
+        if inspect.isawaitable(validation):
+            return self._await_validation(validation)
+        return self._record_validation(validation)
+
+    async def _await_validation(self, validation: Awaitable[dict]) -> ToolResult:
+        try:
+            return self._record_validation(await validation)
+        except Exception:
+            return ToolResult(status='rejected', error_code='validation_failed')
+
+    def _record_validation(self, validation: Any) -> ToolResult:
+        if not isinstance(validation, dict):
+            return ToolResult(status='rejected', error_code='invalid_validation_result')
+        self._validation = deepcopy(validation)
         return ToolResult(status='accepted', data=deepcopy(self._validation))
 
     def _review(self, arguments: dict) -> ToolResult:
         if self._context.request_review is None:
             return ToolResult(status='rejected', error_code='review_unavailable')
+        if not self._full_validation_passed():
+            return ToolResult(status='rejected', error_code='full_validation_required')
         return ToolResult(status='accepted', data=self._context.request_review(deepcopy(arguments)))
+
+    def _full_validation_passed(self) -> bool:
+        if not isinstance(self._validation, dict):
+            return False
+        return all(
+            isinstance(self._validation.get(stage), dict)
+            and self._validation[stage].get('passed') is True
+            for stage in ('search', 'toc', 'content')
+        )

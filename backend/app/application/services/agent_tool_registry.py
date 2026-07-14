@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
@@ -16,7 +17,8 @@ class AgentToolRegistry:
     def __init__(self, source_build_handlers: Mapping[str, Any] | None = None):
         tools = self._builtin_tools()
         allowed_handlers = frozenset({
-            'source.inspect', 'source.probe', 'rule.propose', 'rule.validate', 'review.request',
+            'source.inspect', 'source.probe', 'page.inspect', 'page.request',
+            'rule.propose', 'rule.validate', 'review.request',
         })
         for name, handler in (source_build_handlers or {}).items():
             if name not in allowed_handlers or name not in tools or not callable(handler):
@@ -33,20 +35,32 @@ class AgentToolRegistry:
         arguments: dict[str, Any],
         tenant_id: str | None = None,
     ) -> ToolResult:
-        if not isinstance(arguments, dict):
-            raise AuthorizationException('tool arguments must be an object')
-        if not isinstance(tenant_id, str) or not tenant_id:
-            raise AuthorizationException('tenant_id is required')
-        self._assert_tenant_scope(arguments, tenant_id)
-
-        tool = self._tools.get(tool_name)
-        if tool is None:
-            raise AuthorizationException(f'tool is not authorized: {tool_name}')
-        if agent_kind not in tool.allowed_agent_kinds:
-            raise AuthorizationException(f'agent is not authorized for tool: {tool_name}')
+        tool = self._authorize(agent_kind, tool_name, arguments, tenant_id)
         if tool.handler is None:
             return ToolResult(status='rejected', error_code='tool_not_implemented')
-        return tool.handler(arguments)
+        if self._is_async_handler(tool.handler):
+            return ToolResult(status='rejected', error_code='async_tool_requires_ainvoke')
+        result = tool.handler(arguments)
+        if inspect.isawaitable(result):
+            close = getattr(result, 'close', None)
+            if callable(close):
+                close()
+            return ToolResult(status='rejected', error_code='async_tool_requires_ainvoke')
+        return result
+
+    async def ainvoke(
+        self,
+        *,
+        agent_kind: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        tenant_id: str | None = None,
+    ) -> ToolResult:
+        tool = self._authorize(agent_kind, tool_name, arguments, tenant_id)
+        if tool.handler is None:
+            return ToolResult(status='rejected', error_code='tool_not_implemented')
+        result = tool.handler(arguments)
+        return await result if inspect.isawaitable(result) else result
 
     def get(self, tool_name: str) -> AgentTool | None:
         return self._tools.get(tool_name)
@@ -70,6 +84,8 @@ class AgentToolRegistry:
             'source.search': AgentTool('source.search', 'read', frozenset({'source_build'})),
             'source.inspect': AgentTool('source.inspect', 'operate', frozenset({'source_build'})),
             'source.probe': AgentTool('source.probe', 'operate', frozenset({'source_build'})),
+            'page.inspect': AgentTool('page.inspect', 'operate', frozenset({'source_build'})),
+            'page.request': AgentTool('page.request', 'operate', frozenset({'source_build'})),
             'rule.propose': AgentTool('rule.propose', 'propose', frozenset({'source_build'})),
             'rule.validate': AgentTool('rule.validate', 'operate', frozenset({'source_build'})),
             'knowledge.propose': AgentTool(
@@ -79,6 +95,32 @@ class AgentToolRegistry:
             'review.request': AgentTool('review.request', 'propose', frozenset({'knowledge', 'source_build'})),
         })
         return tools
+
+    def _authorize(
+        self,
+        agent_kind: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        tenant_id: str | None,
+    ) -> AgentTool:
+        if not isinstance(arguments, dict):
+            raise AuthorizationException('tool arguments must be an object')
+        if not isinstance(tenant_id, str) or not tenant_id:
+            raise AuthorizationException('tenant_id is required')
+        self._assert_tenant_scope(arguments, tenant_id)
+
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            raise AuthorizationException(f'tool is not authorized: {tool_name}')
+        if agent_kind not in tool.allowed_agent_kinds:
+            raise AuthorizationException(f'agent is not authorized for tool: {tool_name}')
+        return tool
+
+    @staticmethod
+    def _is_async_handler(handler: Any) -> bool:
+        return inspect.iscoroutinefunction(handler) or inspect.iscoroutinefunction(
+            getattr(handler, '__call__', None),
+        )
 
     @staticmethod
     def _propose_knowledge(arguments: dict[str, Any]) -> ToolResult:
