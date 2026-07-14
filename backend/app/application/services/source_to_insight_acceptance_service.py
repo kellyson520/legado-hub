@@ -58,6 +58,99 @@ class SourceToInsightAcceptanceService:
             "errors": [item["error"] for item in source_builds if item.get("error")],
         })
 
+        usable_builds = [
+            item for item in source_builds
+            if item.get("status") == "passed" and item.get("decision") in {"canary", None}
+        ]
+        book_candidates = []
+        toc_candidates = []
+        chapter_candidates = []
+        complement = {}
+        insights = {"characters": [], "relations": [], "plot_events": [], "world_rules": [], "timeline": []}
+
+        if self._reading_service is not None and usable_builds:
+            search_result = await self._reading_service.search_books(
+                book_name,
+                source_ids=None,
+                limit_per_source=3,
+                author_hint=author_hint,
+                routing_mode="auto",
+                include_health=True,
+            )
+            book_candidates = search_result.get("items", [])
+            selected = book_candidates[: min(3, len(book_candidates))]
+            for book in selected:
+                toc = await self._reading_service.get_book_toc(
+                    book["source_id"],
+                    book["bookUrl"],
+                    book_name=book_name,
+                    author_hint=author_hint,
+                    routing_mode="auto",
+                )
+                toc_candidates.append(toc)
+                chapters = toc.get("chapters") or []
+                if not chapters:
+                    continue
+                chapter = _select_chapter(
+                    chapters,
+                    int(scenario.get("chapter_index", 0) or 0),
+                    str(scenario.get("chapter_title") or ""),
+                )
+                content = await self._reading_service.get_chapter_content(
+                    book["source_id"],
+                    chapter["url"],
+                    book_name=book_name,
+                    author_hint=author_hint,
+                    chapter_title=chapter.get("title"),
+                    chapter_index=chapter.get("index"),
+                    routing_mode="auto",
+                )
+                chapter_candidates.append({
+                    **content,
+                    "content_preview": _preview(content.get("content", "")),
+                    "content_length": len(content.get("content", "") or ""),
+                })
+
+        if self._complement_service is not None and chapter_candidates:
+            items = [
+                {
+                    "source_id": item["source_id"],
+                    "chapter_url": item["chapter_url"],
+                    "source_name": "",
+                    "source_url": "",
+                }
+                for item in chapter_candidates
+            ]
+            try:
+                complement = await self._complement_service.complement_chapter_candidates(
+                    book_name=book_name,
+                    chapter_title=chapter_candidates[0].get("title") or str(scenario.get("chapter_title") or ""),
+                    chapter_num=int(scenario.get("chapter_index", 0) or 0) + 1,
+                    items=items,
+                    reference_content=chapter_candidates[0].get("content", ""),
+                    merge_strategy="hybrid",
+                )
+            finally:
+                close = getattr(self._complement_service, "aclose", None)
+                if close:
+                    await close()
+
+        if self._character_service is not None:
+            character_result = await self._character_service.calibrate(
+                keyword=book_name,
+                items=[
+                    {
+                        "source_id": item.get("source_id"),
+                        "name": book_name,
+                        "author": author_hint,
+                        "excerpt": item.get("content_preview", ""),
+                    }
+                    for item in chapter_candidates
+                ],
+                actor_id=tenant_id,
+            )
+            insights["characters"] = character_result.get("items", [])
+
         status = "passed" if steps[-1]["summary"]["passed"] == len(source_urls) else "partial"
         if steps[-1]["summary"]["passed"] == 0:
             status = "failed"
@@ -74,17 +167,11 @@ class SourceToInsightAcceptanceService:
             "elapsed_ms": _elapsed_ms(started),
             "steps": steps,
             "source_builds": source_builds,
-            "book_candidates": [],
-            "toc_candidates": [],
-            "chapter_candidates": [],
-            "complement": {},
-            "insights": {
-                "characters": [],
-                "relations": [],
-                "plot_events": [],
-                "world_rules": [],
-                "timeline": [],
-            },
+            "book_candidates": book_candidates,
+            "toc_candidates": toc_candidates,
+            "chapter_candidates": chapter_candidates,
+            "complement": complement,
+            "insights": insights,
             "knowledge_proposals": [],
             "ai": {"used": False, "status": "skipped", "provider": "", "model": "", "usage": {}},
         }
@@ -136,3 +223,19 @@ class SourceToInsightAcceptanceService:
 
 def _elapsed_ms(started: float) -> int:
     return int((time.time() - started) * 1000)
+
+
+def _select_chapter(chapters: list[dict[str, Any]], chapter_index: int, chapter_title: str) -> dict[str, Any]:
+    for item in chapters:
+        if int(item.get("index", -1)) == chapter_index:
+            return item
+    if chapter_title:
+        for item in chapters:
+            if chapter_title in str(item.get("title", "")):
+                return item
+    return chapters[0]
+
+
+def _preview(text: str, limit: int = 240) -> str:
+    text = (text or "").strip()
+    return text[:limit]

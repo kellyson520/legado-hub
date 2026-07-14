@@ -124,3 +124,90 @@ async def test_acceptance_can_execute_runtime_with_job_repository():
 
     assert report["source_builds"][0]["agent_run_id"] == "run-real"
     assert runtime.seen[0].id == "job-1"
+
+
+class FakeReadingService:
+    async def search_books(self, keyword, source_ids=None, limit_per_source=3, author_hint=None, routing_mode="auto", include_health=False):
+        return {
+            "items": [{
+                "source_id": 1,
+                "name": keyword,
+                "author": author_hint,
+                "bookUrl": "https://a.test/book/1",
+                "sourceName": "Engine Source",
+                "sourceUrl": "https://a.test",
+            }],
+            "route_summary": {"selected_source_ids": [1]},
+        }
+
+    async def get_book_toc(self, source_id, book_url, book_name=None, author_hint=None, routing_mode="auto"):
+        return {
+            "source_id": source_id,
+            "resolved_source_id": source_id,
+            "book_url": book_url,
+            "chapters": [{"title": "第一章", "url": "https://a.test/book/1/1", "index": 0}],
+            "fallback_used": False,
+        }
+
+    async def get_chapter_content(self, source_id, chapter_url, book_name=None, author_hint=None, chapter_title=None, chapter_index=None, routing_mode="auto"):
+        return {
+            "source_id": source_id,
+            "resolved_source_id": source_id,
+            "chapter_url": chapter_url,
+            "title": "第一章",
+            "content": "唐三来到斗罗大陆，武魂觉醒的世界规则逐渐展开。",
+            "fallback_used": False,
+        }
+
+
+class FakeComplementService:
+    async def complement_chapter_candidates(self, **kwargs):
+        return {
+            "book_name": kwargs["book_name"],
+            "status": "success",
+            "successful_sources": 1,
+            "failed_sources": 0,
+            "final_content": "唐三来到斗罗大陆，武魂觉醒的世界规则逐渐展开。",
+            "source_results": [],
+            "merged_from": ["https://a.test"],
+        }
+
+    async def aclose(self):
+        return None
+
+
+class FakeCharacterService:
+    async def calibrate(self, keyword, items, actor_id="system"):
+        return {
+            "keyword": keyword,
+            "items": [{"characters": ["唐三", "斗罗"]}],
+            "pairwise": [],
+            "used_provider": False,
+            "provider_result": None,
+        }
+
+
+@pytest.mark.asyncio
+async def test_acceptance_reads_and_complements_after_canary_source_build():
+    from app.application.services.source_to_insight_acceptance_service import SourceToInsightAcceptanceService
+
+    service = SourceToInsightAcceptanceService(
+        source_build_service=FakeSourceBuildService(),
+        source_build_runtime=FakeBuildRuntime(),
+        reading_service=FakeReadingService(),
+        complement_service=FakeComplementService(),
+        character_service=FakeCharacterService(),
+    )
+
+    report = await service.run({
+        "source_urls": ["https://a.test"],
+        "book_name": "斗罗大陆",
+        "author_hint": "唐家三少",
+        "chapter_index": 0,
+    })
+
+    assert report["book_candidates"][0]["name"] == "斗罗大陆"
+    assert report["toc_candidates"][0]["chapters"][0]["title"] == "第一章"
+    assert report["chapter_candidates"][0]["content_preview"].startswith("唐三")
+    assert report["complement"]["status"] == "success"
+    assert report["insights"]["characters"]
