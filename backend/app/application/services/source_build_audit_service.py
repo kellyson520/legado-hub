@@ -39,6 +39,8 @@ class SourceBuildAuditService:
 
         payload = deepcopy(version.payload)
         existing_audit = dict(payload.get('source_audit') or {})
+        if existing_audit.get('test_run_pending'):
+            return self._recover_pending_test_run(version, payload, existing_audit)
         if existing_audit.get('status') == 'retry_pending':
             pending_attempt = int(existing_audit.get('repair_next_attempt', 0) or 0)
             if completed_repair_attempt != pending_attempt:
@@ -132,11 +134,11 @@ class SourceBuildAuditService:
             'history': list(audit.get('history') or [])[-4:] + [report],
         })
         payload['source_audit'] = audit
-        try:
-            self._runtime.update_version_payload(version.id, payload)
-        except Exception as error:
-            raise SourceAuditRecoveryError('source audit terminal checkpoint requires recovery') from error
         if not passed and attempt >= self.MAX_ATTEMPTS:
+            try:
+                self._runtime.update_version_payload(version.id, payload)
+            except Exception as error:
+                raise SourceAuditRecoveryError('source audit terminal checkpoint requires recovery') from error
             return self._begin_terminal_finalization(
                 version=version,
                 payload=payload,
@@ -148,14 +150,16 @@ class SourceBuildAuditService:
                 diagnostics=diagnostics,
                 source_rule=source_rule,
             )
-        self._record_test_run(version, score, grade, report, step_passes, diagnostics)
-        return {
-            'source_version_id': version.id,
-            'status': audit['status'],
-            'score': score,
-            'grade': grade,
-            'report': report,
-        }
+        return self._persist_outcome_with_test_run(
+            version=version,
+            payload=payload,
+            audit=audit,
+            report=report,
+            score=score,
+            grade=grade,
+            step_passes=step_passes,
+            diagnostics=diagnostics,
+        )
 
     def _queue_repair_after_pending(
         self,
@@ -207,18 +211,90 @@ class SourceBuildAuditService:
         if repair_job_id:
             audit['repair_job_id'] = repair_job_id
         payload['source_audit'] = audit
+        return self._persist_outcome_with_test_run(
+            version=version,
+            payload=payload,
+            audit=audit,
+            report=report,
+            score=score,
+            grade=grade,
+            step_passes=step_passes,
+            diagnostics=diagnostics,
+        )
+
+    def _persist_outcome_with_test_run(
+        self,
+        *,
+        version,
+        payload: dict,
+        audit: dict,
+        report: dict,
+        score: int,
+        grade: str,
+        step_passes: dict,
+        diagnostics: list[str],
+    ) -> dict:
+        stable_status = str(audit.get('status') or 'failed')
+        audit['test_run_pending'] = True
+        audit['test_run_status'] = stable_status
+        audit['report'] = report
+        payload['source_audit'] = audit
         try:
             self._runtime.update_version_payload(version.id, payload)
         except Exception as error:
-            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
-            raise SourceAuditRecoveryError('source audit repair handoff requires recovery') from error
+            raise SourceAuditRecoveryError('source audit test run checkpoint requires recovery') from error
 
-        self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+        attempt = int(report.get('attempt', 0) or 0)
+        if not self._has_recorded_audit_run(version.id, attempt):
+            try:
+                self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+            except Exception as error:
+                raise SourceAuditRecoveryError('source audit test run requires recovery') from error
+
+        audit.pop('test_run_pending', None)
+        audit.pop('test_run_status', None)
+        payload['source_audit'] = audit
+        try:
+            self._runtime.update_version_payload(version.id, payload)
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit test run finalization requires recovery') from error
+        return self._audit_result(version, audit)
+
+    def _recover_pending_test_run(self, version, payload: dict, audit: dict) -> dict:
+        report = dict(audit.get('report') or {})
+        attempt = int(report.get('attempt', audit.get('attempt', 0)) or 0)
+        stable_status = str(audit.get('test_run_status') or audit.get('status') or 'failed')
+        if not self._has_recorded_audit_run(version.id, attempt):
+            try:
+                self._record_test_run(
+                    version,
+                    int(report.get('score', 0) or 0),
+                    str(report.get('grade') or 'F'),
+                    report,
+                    self._step_passes_from_report(report),
+                    [str(report.get('reason'))] if report.get('reason') else [],
+                )
+            except Exception as error:
+                raise SourceAuditRecoveryError('source audit test run requires recovery') from error
+        audit['status'] = stable_status
+        audit['report'] = report
+        audit.pop('test_run_pending', None)
+        audit.pop('test_run_status', None)
+        payload['source_audit'] = audit
+        try:
+            self._runtime.update_version_payload(version.id, payload)
+        except Exception as error:
+            raise SourceAuditRecoveryError('source audit test run finalization requires recovery') from error
+        return self._audit_result(version, audit)
+
+    @staticmethod
+    def _audit_result(version, audit: dict) -> dict:
+        report = audit.get('report') or {}
         return {
             'source_version_id': version.id,
-            'status': 'retry_queued',
-            'score': score,
-            'grade': grade,
+            'status': str(audit.get('status') or 'failed'),
+            'score': int(report.get('score', 0) or 0),
+            'grade': str(report.get('grade') or 'F'),
             'report': report,
         }
 

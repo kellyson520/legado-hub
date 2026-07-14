@@ -5,6 +5,7 @@ import os
 import select
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 
 from app.infrastructure.legado.engine.js_session_models import (
@@ -36,6 +37,8 @@ class JsWorkerOutput:
 
 
 class JsWorkerClient:
+    PROCESS_TERMINATE_WAIT_SECONDS = 0.1
+
     def __init__(
         self,
         node_binary: str = "node",
@@ -114,11 +117,11 @@ class JsWorkerClient:
             if message.get("type") == "bridge_http":
                 if not isinstance(message.get('request'), dict) or not message.get('id'):
                     return self._failed_output(context, code, started_at, 'MALFORMED_RESPONSE')
-                response = (
-                    self._bridge_http_handler(message["request"])
-                    if self._bridge_http_handler
-                    else {"status": 500, "text": "bridge handler missing", "headers": {}}
-                )
+                response, bridge_error = self._bridge_response(message['request'], deadline)
+                if bridge_error == 'EXECUTION_TIMEOUT':
+                    return self._timeout_output(context, code, started_at)
+                if bridge_error:
+                    return self._failed_output(context, code, started_at, bridge_error)
                 try:
                     self._process.stdin.write(
                         (
@@ -157,6 +160,23 @@ class JsWorkerClient:
             error=message.get("error"),
             trace=trace,
         )
+
+    def _bridge_response(self, request: dict, deadline: float) -> tuple[dict | None, str | None]:
+        if self._bridge_http_handler is None:
+            return {'status': 500, 'text': 'bridge handler missing', 'headers': {}}, None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None, 'EXECUTION_TIMEOUT'
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self._bridge_http_handler, request)
+        try:
+            return future.result(timeout=remaining), None
+        except TimeoutError:
+            return None, 'EXECUTION_TIMEOUT'
+        except Exception:
+            return None, 'WORKER_IO_ERROR'
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def close(self) -> None:
         self._terminate_process()
@@ -225,10 +245,10 @@ class JsWorkerClient:
             return
         process.terminate()
         try:
-            process.wait(timeout=1)
+            process.wait(timeout=self.PROCESS_TERMINATE_WAIT_SECONDS)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=1)
+            process.wait(timeout=self.PROCESS_TERMINATE_WAIT_SECONDS)
 
     @staticmethod
     def _json_default(value):

@@ -234,3 +234,36 @@ def test_worker_client_rejects_oversized_response_before_json_parsing(tmp_path):
     assert output.success is False
     assert output.error_code == 'RESPONSE_TOO_LARGE'
     assert client._process is None
+
+
+def test_worker_client_times_out_slow_bridge_handler_within_response_deadline(tmp_path):
+    worker = tmp_path / 'bridge_worker.js'
+    worker.write_text(
+        "process.stdin.on('data', () => process.stdout.write(JSON.stringify({type:'bridge_http',id:'bridge-1',request:{url:'https://example.test'}}) + '\\n'));\n",
+        encoding='utf-8',
+    )
+
+    bridge_calls = []
+
+    def slow_bridge(_request):
+        bridge_calls.append(True)
+        time.sleep(0.6)
+        return {'status': 200, 'text': 'late', 'headers': {}}
+
+    client = JsWorkerClient(
+        worker_path=worker,
+        bridge_http_handler=slow_bridge,
+        response_timeout_seconds=0.3,
+    )
+    context = JsExecutionContext(
+        stage='search_rule_js', source={}, result={}, base_url='', cache={}, variables={}, headers={},
+    )
+    started = time.monotonic()
+
+    output = client.execute('return 1', context)
+
+    assert time.monotonic() - started < 0.45
+    assert bridge_calls == [True]
+    assert output.success is False
+    assert output.error_code == 'EXECUTION_TIMEOUT'
+    assert client._process is None
