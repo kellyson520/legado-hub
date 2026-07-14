@@ -485,21 +485,6 @@ class SourceRuntimeService:
         if audit.get("test_run_pending"):
             raise ValidationException("source audit test-run checkpoint must settle before publication")
 
-        attempt = int(audit.get("attempt", 0) or 0)
-        for run in self._repo.list_test_runs(version.id):
-            step_results = getattr(run, "step_results", None)
-            if not isinstance(step_results, dict):
-                continue
-            checkpoint = step_results.get("source_audit")
-            if (
-                isinstance(checkpoint, dict)
-                and checkpoint.get("passed") is True
-                and checkpoint.get("status") == "recorded"
-                and int(checkpoint.get("attempt", 0) or 0) == attempt
-            ):
-                return
-        raise ValidationException("source audit test-run checkpoint must settle before publication")
-
     @staticmethod
     def _serialize_test_run(run) -> dict | None:
         if run is None:

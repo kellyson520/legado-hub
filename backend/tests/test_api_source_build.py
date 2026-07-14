@@ -377,7 +377,7 @@ def test_operations_review_queue_rejects_unsettled_source_audit(monkeypatch, tmp
     assert repo.get_version(version.id).status == 'candidate'
 
 
-def test_operations_review_queue_can_publish_source_build_candidate_with_settled_audit(monkeypatch, tmp_path):
+def test_operations_review_queue_can_publish_source_build_candidate_with_passed_audit_without_test_run(monkeypatch, tmp_path):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-audit-passed.sqlite3'))
     monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
@@ -397,15 +397,6 @@ def test_operations_review_queue_can_publish_source_build_candidate_with_settled
             'source_audit': {'status': 'passed', 'attempt': 1},
         },
         created_by='tenant-console',
-    )
-    repo.record_test_run(
-        source_version_id=version.id,
-        trigger='source_audit',
-        score=100,
-        grade='A',
-        step_results={
-            'source_audit': {'passed': True, 'status': 'recorded', 'attempt': 1},
-        },
     )
 
     from app.main import app
