@@ -61,6 +61,11 @@ def build_job_service() -> JobService:
     return JobService(SQLiteJobRepository())
 
 
+def build_job_repository() -> SQLiteJobRepository:
+    bootstrap_sqlite()
+    return SQLiteJobRepository()
+
+
 def build_agent_runtime_service() -> AgentRuntimeService:
     bootstrap_sqlite()
     return AgentRuntimeService(SQLiteAgentRuntimeRepository())
@@ -134,13 +139,13 @@ def build_source_build_agent() -> SourceBuildAgent:
     return SourceBuildAgent(review_service=build_source_review_service())
 
 
-def build_source_build_runtime_service() -> SourceBuildRuntimeService:
+def build_source_build_runtime_service(*, use_ai_repair: bool = True) -> SourceBuildRuntimeService:
     return SourceBuildRuntimeService(
         runtime_repo=build_source_runtime_repository(),
         agent_runtime=build_agent_runtime_service(),
         build_agent=build_source_build_agent(),
         probe_factory=build_source_probe_service,
-        ai_repair_service=build_source_build_ai_repair_service(),
+        ai_repair_service=(build_source_build_ai_repair_service() if use_ai_repair else None),
     )
 
 
