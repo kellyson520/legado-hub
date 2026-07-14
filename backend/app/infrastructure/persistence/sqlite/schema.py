@@ -87,6 +87,14 @@ class QuotaUsageModel(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class SystemSettingModel(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class JobModel(Base):
     __tablename__ = 'jobs'
 

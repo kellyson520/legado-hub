@@ -3,7 +3,10 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.permissions import Permission
-from app.infrastructure.persistence.factory import build_provider_platform_service
+from app.infrastructure.persistence.factory import (
+    build_provider_platform_service,
+    build_system_settings_service,
+)
 from app.interfaces.http.deps import require_permission
 
 
@@ -15,6 +18,10 @@ class LLMSettingsRequest(BaseModel):
     base_url: str = Field(min_length=1, max_length=500)
     api_key: str = Field(default="", max_length=2000)
     model: str = Field(min_length=1, max_length=120)
+
+
+class SourceBuildAgentSettingsRequest(BaseModel):
+    enabled: bool
 
 
 @router.get("/providers")
@@ -64,6 +71,37 @@ async def update_llm_settings(
         "success": True,
         "code": "OK",
         "message": "llm settings saved",
+        "data": data,
+        "meta": {},
+        "trace_id": None,
+    }
+
+
+@router.get("/source-build-agent-settings")
+async def get_source_build_agent_settings(
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    data = build_system_settings_service().get_source_build_agent_settings()
+    return {
+        "success": True,
+        "code": "OK",
+        "message": "source build agent settings loaded",
+        "data": data,
+        "meta": {},
+        "trace_id": None,
+    }
+
+
+@router.put("/source-build-agent-settings")
+async def update_source_build_agent_settings(
+    payload: SourceBuildAgentSettingsRequest,
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    data = build_system_settings_service().set_source_build_agent_enabled(payload.enabled)
+    return {
+        "success": True,
+        "code": "OK",
+        "message": "source build agent settings saved",
         "data": data,
         "meta": {},
         "trace_id": None,

@@ -25,6 +25,7 @@ from app.application.services.source_probe_service import SourceProbeService
 from app.application.services.source_routing_service import SourceRoutingService
 from app.application.services.source_service import SourceAppService
 from app.application.services.source_runtime_service import SourceRuntimeService
+from app.application.services.system_settings_service import SystemSettingsService
 from app.application.services.translation_service import TranslationService
 from app.application.services.work_knowledge_service import WorkKnowledgeService
 from app.core.config import settings
@@ -45,6 +46,7 @@ from app.infrastructure.persistence.sqlite.source_repo_impl import SQLiteSourceR
 from app.infrastructure.persistence.sqlite.source_health_repo_impl import SQLiteSourceHealthRepository
 from app.infrastructure.persistence.sqlite.source_review_repo_impl import SQLiteSourceReviewRepository
 from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+from app.infrastructure.persistence.sqlite.system_settings_repo_impl import SQLiteSystemSettingsRepository
 from app.infrastructure.persistence.sqlite.translation_runtime_repo_impl import (
     SQLiteTranslationRuntimeRepository,
 )
@@ -99,6 +101,11 @@ def build_canonical_content_repository() -> SQLiteCanonicalContentRepository:
 def build_provider_repository() -> SQLiteProviderRepository:
     bootstrap_sqlite()
     return SQLiteProviderRepository()
+
+
+def build_system_settings_repository() -> SQLiteSystemSettingsRepository:
+    bootstrap_sqlite()
+    return SQLiteSystemSettingsRepository()
 
 
 def build_source_runtime_service() -> SourceRuntimeService:
@@ -252,6 +259,13 @@ def build_provider_platform_service() -> ProviderPlatformService:
         registry=build_provider_registry(),
         quota_limiter=_AllowAllProviderQuotaLimiter(),
         provider_repo=build_provider_repository(),
+    )
+
+
+def build_system_settings_service() -> SystemSettingsService:
+    return SystemSettingsService(
+        repo=build_system_settings_repository(),
+        provider_registry=build_provider_registry(),
     )
 
 
