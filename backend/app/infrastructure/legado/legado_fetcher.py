@@ -44,6 +44,11 @@ class LegadoBookSourceFetcher:
         )
         self._js_runtime = JsRuntime()
 
+    def set_execution_deadline(self, deadline: float | None) -> None:
+        setter = getattr(self._js_runtime, 'set_execution_deadline', None)
+        if callable(setter):
+            setter(deadline)
+
     def _selector_context(self, **kwargs) -> Dict[str, Any]:
         return {
             "js_runtime": self._js_runtime,

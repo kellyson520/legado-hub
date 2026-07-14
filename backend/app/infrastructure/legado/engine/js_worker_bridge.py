@@ -74,6 +74,10 @@ class JsWorkerClient:
         self._max_response_bytes = max_response_bytes
         self._process: subprocess.Popen[bytes] | None = None
         self._stdout_buffer = bytearray()
+        self._execution_deadline: float | None = None
+
+    def set_execution_deadline(self, deadline: float | None) -> None:
+        self._execution_deadline = deadline
 
     def _ensure_started(self) -> None:
         if self._process and self._process.poll() is None:
@@ -88,8 +92,12 @@ class JsWorkerClient:
         self._stdout_buffer.clear()
 
     def execute(self, code: str, context: JsExecutionContext) -> JsWorkerOutput:
-        self._ensure_started()
         started_at = time.time()
+        now = time.monotonic()
+        if self._execution_deadline is not None and self._execution_deadline <= now:
+            self._terminate_process()
+            return self._failed_output(context, code, started_at, 'EXECUTION_TIMEOUT')
+        self._ensure_started()
         payload = {
             "type": "execute",
             "code": code,
@@ -118,6 +126,8 @@ class JsWorkerClient:
             return self._failed_output(context, code, started_at, 'WORKER_IO_ERROR')
 
         deadline = time.monotonic() + self._response_timeout_seconds
+        if self._execution_deadline is not None:
+            deadline = min(deadline, self._execution_deadline)
         while True:
             raw, read_error = self._read_response_line(deadline)
             if read_error:

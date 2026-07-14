@@ -15,6 +15,11 @@ class SourceProbeService:
     def __init__(self, fetcher):
         self._fetcher = fetcher
 
+    def set_execution_deadline(self, deadline: float | None) -> None:
+        setter = getattr(self._fetcher, 'set_execution_deadline', None)
+        if callable(setter):
+            setter(deadline)
+
     async def aclose(self):
         close = getattr(self._fetcher, "close", None)
         if close is not None:

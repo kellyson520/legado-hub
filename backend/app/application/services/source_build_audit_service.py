@@ -67,8 +67,12 @@ class SourceBuildAuditService:
             probe = None
             close_timed_out = False
             deadline = time.monotonic() + (self.MAX_TOTAL_ELAPSED_MS / 1000)
+            set_execution_deadline = None
             try:
                 probe = self._probe_service_factory()
+                set_execution_deadline = getattr(probe, 'set_execution_deadline', None)
+                if callable(set_execution_deadline):
+                    set_execution_deadline(deadline)
                 evidence = await asyncio.wait_for(
                     probe.probe_source(
                         source_rule,
@@ -84,6 +88,11 @@ class SourceBuildAuditService:
             else:
                 report, passed, diagnostics, step_passes = self._evaluate(evidence)
             finally:
+                if callable(set_execution_deadline):
+                    try:
+                        set_execution_deadline(None)
+                    except Exception:
+                        pass
                 close = None
                 if probe is not None:
                     close = getattr(probe, 'aclose', None) or getattr(probe, 'close', None)
@@ -301,10 +310,11 @@ class SourceBuildAuditService:
             diagnostics=[str(report.get('reason'))] if report.get('reason') else [],
         )
         audit['status'] = stable_status
-        if stable_status == 'retry_pending':
+        if stable_status in {'retry_pending', 'retry_queued'}:
             pending_attempt = int(audit.get('repair_next_attempt', 0) or 0)
             if completed_repair_attempt == pending_attempt:
                 return None
+        if stable_status == 'retry_pending':
             return self._recover_retry_pending(version, payload, audit)
         return self._audit_result(version, audit)
 

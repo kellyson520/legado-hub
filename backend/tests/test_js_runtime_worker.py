@@ -307,3 +307,33 @@ def test_bridge_capacity_failure_resets_worker_before_next_execution(tmp_path, m
 
     assert recovered.success is True
     assert recovered.value == 'fresh'
+
+
+def test_worker_external_execution_deadline_preempts_infinite_execution():
+    client = JsWorkerClient(response_timeout_seconds=0.5)
+    client.set_execution_deadline(time.monotonic() + 0.05)
+    context = JsExecutionContext(
+        stage='search_rule_js', source={}, result={}, base_url='', cache={}, variables={}, headers={},
+    )
+    started = time.monotonic()
+
+    output = client.execute('while (true) {}', context)
+
+    assert time.monotonic() - started < 0.2
+    assert output.success is False
+    assert output.error_code == 'EXECUTION_TIMEOUT'
+    assert client._process is None
+
+
+def test_worker_expired_external_deadline_does_not_start_process():
+    client = JsWorkerClient()
+    client.set_execution_deadline(time.monotonic() - 1)
+    context = JsExecutionContext(
+        stage='search_rule_js', source={}, result={}, base_url='', cache={}, variables={}, headers={},
+    )
+
+    output = client.execute('return 1', context)
+
+    assert output.success is False
+    assert output.error_code == 'EXECUTION_TIMEOUT'
+    assert client._process is None

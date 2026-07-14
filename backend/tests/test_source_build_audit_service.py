@@ -1120,3 +1120,86 @@ async def test_retry_enqueue_failure_recovers_pending_run_before_queueing_repair
     assert len(runtime.runs) == 1
     assert len(build.repairs) == 2
     assert len(probes) == 1
+
+
+async def test_completed_repair_after_retry_queued_pending_run_starts_fresh_attempt():
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    version = SourceVersion(
+        id='candidate-1', source_definition_id=17, source_type='book',
+        source_id='https://example.test', status='candidate', created_by='tenant-1',
+        payload={
+            'keyword': 'sample', 'canonical_url': 'https://example.test',
+            'source_rule': {'bookSourceUrl': 'https://example.test'},
+            'source_audit': {'status': 'pending', 'attempt': 0, 'max_attempts': 5, 'history': []},
+        },
+    )
+    runtime = FakeRuntimeRepository(version, fail_test_runs=1)
+    build = FlakyBuildService()
+    probes = []
+
+    def probe_factory():
+        probe = ShortContentProbe()
+        probes.append(probe)
+        return probe
+
+    service = SourceBuildAuditService(
+        runtime_repo=runtime, probe_service_factory=probe_factory,
+        build_service=build, review_service=FakeReviewService(),
+    )
+
+    with pytest.raises(RuntimeError):
+        await service.audit('candidate-1')
+
+    assert version.payload['source_audit']['status'] == 'retry_queued'
+    assert version.payload['source_audit']['test_run_pending'] is True
+    assert len(probes) == 1
+    assert len(build.repairs) == 1
+
+    result = await service.audit('candidate-1', completed_repair_attempt=2)
+
+    assert result['status'] == 'retry_queued'
+    assert version.payload['source_audit']['attempt'] == 2
+    assert len(runtime.runs) == 2
+    assert len(build.repairs) == 2
+    assert build.repairs[-1]['next_attempt'] == 3
+    assert len(probes) == 2
+
+
+async def test_audit_sets_and_clears_supported_probe_execution_deadline():
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    class DeadlineProbe(PassingProbe):
+        def __init__(self):
+            super().__init__()
+            self.deadlines = []
+
+        def set_execution_deadline(self, deadline):
+            self.deadlines.append(deadline)
+
+    version = SourceVersion(
+        id='candidate-1', source_definition_id=17, source_type='book',
+        source_id='https://example.test', status='candidate',
+        payload={
+            'keyword': 'sample', 'source_rule': {'bookSourceUrl': 'https://example.test'},
+            'source_audit': {'status': 'pending', 'attempt': 0, 'max_attempts': 5, 'history': []},
+        },
+    )
+    runtime = FakeRuntimeRepository(version)
+    probes = []
+
+    def probe_factory():
+        probe = DeadlineProbe()
+        probes.append(probe)
+        return probe
+
+    service = SourceBuildAuditService(
+        runtime_repo=runtime, probe_service_factory=probe_factory,
+        build_service=FakeBuildService(), review_service=FakeReviewService(),
+    )
+
+    result = await service.audit('candidate-1')
+
+    assert result['status'] == 'passed'
+    assert isinstance(probes[0].deadlines[0], float)
+    assert probes[0].deadlines[-1] is None
