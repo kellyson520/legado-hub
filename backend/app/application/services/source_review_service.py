@@ -64,6 +64,29 @@ class SourceReviewService:
         )
         return self._repo.save_item(item)
 
+    def enqueue_audit_failure(
+        self,
+        *,
+        source_version_id: str,
+        source_url: str,
+        audit_report: dict,
+        created_by: str = 'system',
+    ) -> SourceReviewItem:
+        item = SourceReviewItem(
+            id=uuid4().hex,
+            review_type='source_audit_failed',
+            source_version_id=source_version_id,
+            source_url=source_url,
+            summary='Source audit retry limit reached',
+            payload={
+                'candidate_url': source_url,
+                'audit_report': dict(audit_report),
+            },
+            status='candidate',
+            created_by=created_by,
+        )
+        return self._repo.save_item(item)
+
     def list_review_queue(self) -> list[SourceReviewItem]:
         return self._repo.list_items(status='candidate')
 

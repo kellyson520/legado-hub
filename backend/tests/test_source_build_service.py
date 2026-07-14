@@ -133,3 +133,76 @@ def test_catalog_discovery_submission_creates_system_candidate_with_catalog_meta
     assert catalog_version.payload['discovery']['catalog_source_name'] == 'Catalog 7'
     assert jobs[0].payload['trigger'] == 'configured_catalog'
     assert jobs[0].payload['catalog_source_group'] == 'seed'
+
+
+def test_submission_initializes_pending_source_audit_unless_explicitly_overridden(tmp_path, monkeypatch):
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-build-audit-pending.sqlite3'))
+
+    from app.application.services.job_service import JobService
+    from app.application.services.source_build_service import SourceBuildService
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+
+    bootstrap_sqlite()
+    runtime = SQLiteSourceRuntimeRepository()
+    service = SourceBuildService(JobService(SQLiteJobRepository()), runtime)
+    default = service.submit(tenant_id='tenant-1', url='https://example.test/default')
+    overridden = service.submit(
+        tenant_id='tenant-1',
+        url='https://example.test/overridden',
+        extra_payload={'source_audit': {'status': 'deferred', 'attempt': 3}},
+    )
+
+    default_version = runtime.get_version(default.source_version_id)
+    overridden_version = runtime.get_version(overridden.source_version_id)
+
+    assert default_version.payload['source_audit'] == {
+        'status': 'pending',
+        'attempt': 0,
+        'max_attempts': 5,
+        'history': [],
+    }
+    assert overridden_version.payload['source_audit'] == {'status': 'deferred', 'attempt': 3}
+
+
+def test_audit_repair_enqueue_reuses_candidate_version_with_next_attempt_idempotency(tmp_path, monkeypatch):
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-build-audit-repair.sqlite3'))
+
+    from app.application.services.job_service import JobService
+    from app.application.services.source_build_service import SourceBuildService
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+
+    bootstrap_sqlite()
+    jobs = JobService(SQLiteJobRepository())
+    service = SourceBuildService(jobs, SQLiteSourceRuntimeRepository())
+
+    first = service.submit_audit_repair(
+        tenant_id='tenant-1',
+        source_version_id='candidate-1',
+        url='https://example.test/books',
+        keyword='sample',
+        next_attempt=2,
+    )
+    second = service.submit_audit_repair(
+        tenant_id='tenant-1',
+        source_version_id='candidate-1',
+        url='https://example.test/books',
+        keyword='sample',
+        next_attempt=2,
+    )
+    queued = jobs.list_jobs()
+
+    assert first.id == second.id
+    assert len(queued) == 1
+    assert queued[0].kind == 'source.build'
+    assert queued[0].payload == {
+        'url': 'https://example.test/books',
+        'keyword': 'sample',
+        'source_version_id': 'candidate-1',
+        'trigger': 'source_audit_repair',
+        'source_audit_attempt': 2,
+    }
+    assert queued[0].idempotency_key == 'source.audit.repair:candidate-1:attempt-2'
