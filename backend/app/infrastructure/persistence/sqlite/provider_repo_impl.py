@@ -2,10 +2,10 @@ import json
 from uuid import uuid4
 
 from app.database import SessionLocal
-from app.domain.entities.provider import ProviderAccount, ProviderModel, QuotaPolicy
+from app.domain.entities.provider import ProviderAccount, ProviderModel, ProviderRoute, QuotaPolicy
 from app.domain.repositories.provider_repo import ProviderRepository
 
-from .schema import ProviderAccountModel, ProviderModelModel, QuotaPolicyModel
+from .schema import ProviderAccountModel, ProviderModelModel, ProviderRouteModel, QuotaPolicyModel
 
 
 class SQLiteProviderRepository(ProviderRepository):
@@ -53,9 +53,33 @@ class SQLiteProviderRepository(ProviderRepository):
         api_key: str,
         default_model: str,
     ) -> ProviderAccount:
+        existing = self.get_provider_by_name(name)
+        return self.save_provider(
+            id=existing.id if existing is not None else None,
+            name=name,
+            base_url=base_url,
+            api_key=api_key,
+            default_model=default_model,
+            enabled=True,
+        )
+
+    def save_provider(
+        self,
+        *,
+        name: str,
+        base_url: str,
+        api_key: str,
+        default_model: str,
+        enabled: bool,
+        id: str | None = None,
+    ) -> ProviderAccount:
         db = self._db()
         try:
-            model = db.query(ProviderAccountModel).filter(ProviderAccountModel.name == name).first()
+            model = (
+                db.query(ProviderAccountModel).filter(ProviderAccountModel.id == id).first()
+                if id is not None
+                else None
+            )
             if model is None:
                 model = ProviderAccountModel(
                     id=uuid4().hex,
@@ -77,6 +101,87 @@ class SQLiteProviderRepository(ProviderRepository):
             db.commit()
             db.refresh(model)
             return self._to_provider_account(model)
+        finally:
+            self._close(db)
+
+    def get_provider_by_name(self, name: str) -> ProviderAccount | None:
+        db = self._db()
+        try:
+            row = db.query(ProviderAccountModel).filter(ProviderAccountModel.name == name).first()
+            return self._to_provider_account(row) if row is not None else None
+        finally:
+            self._close(db)
+
+    def get_provider(self, provider_id: str) -> ProviderAccount | None:
+        db = self._db()
+        try:
+            row = db.query(ProviderAccountModel).filter(ProviderAccountModel.id == provider_id).first()
+            return self._to_provider_account(row) if row is not None else None
+        finally:
+            self._close(db)
+
+    def list_configured_openai_providers(self) -> list[ProviderAccount]:
+        db = self._db()
+        try:
+            rows = (
+                db.query(ProviderAccountModel)
+                .filter(
+                    ProviderAccountModel.provider_type == "openai_compatible",
+                    ProviderAccountModel.enabled.is_(True),
+                    ProviderAccountModel.base_url != "",
+                    ProviderAccountModel.api_key != "",
+                )
+                .order_by(ProviderAccountModel.created_at.asc(), ProviderAccountModel.id.asc())
+                .all()
+            )
+            return [self._to_provider_account(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def has_routes(self) -> bool:
+        db = self._db()
+        try:
+            return db.query(ProviderRouteModel.id).first() is not None
+        finally:
+            self._close(db)
+
+    def list_routes(self, provider_group: str) -> list[ProviderRoute]:
+        db = self._db()
+        try:
+            rows = (
+                db.query(ProviderRouteModel)
+                .filter(ProviderRouteModel.provider_group == provider_group)
+                .order_by(ProviderRouteModel.priority.asc(), ProviderRouteModel.id.asc())
+                .all()
+            )
+            return [self._to_provider_route(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def replace_routes(self, provider_group: str, entries: list[dict]) -> list[ProviderRoute]:
+        db = self._db()
+        try:
+            db.query(ProviderRouteModel).filter(ProviderRouteModel.provider_group == provider_group).delete()
+            db.flush()
+            for priority, entry in enumerate(entries):
+                db.add(
+                    ProviderRouteModel(
+                        id=uuid4().hex,
+                        provider_group=provider_group,
+                        provider_account_id=str(entry["provider_account_id"]),
+                        model=str(entry["model"]),
+                        priority=priority,
+                        enabled=bool(entry.get("enabled", True)),
+                    )
+                )
+            db.commit()
+            rows = (
+                db.query(ProviderRouteModel)
+                .filter(ProviderRouteModel.provider_group == provider_group)
+                .order_by(ProviderRouteModel.priority.asc(), ProviderRouteModel.id.asc())
+                .all()
+            )
+            return [self._to_provider_route(row) for row in rows]
         finally:
             self._close(db)
 
@@ -176,4 +281,15 @@ class SQLiteProviderRepository(ProviderRepository):
             default_model=row.default_model or "",
             enabled=row.enabled,
             created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _to_provider_route(row: ProviderRouteModel) -> ProviderRoute:
+        return ProviderRoute(
+            id=row.id,
+            provider_group=row.provider_group,
+            provider_account_id=row.provider_account_id,
+            model=row.model,
+            priority=row.priority,
+            enabled=row.enabled,
         )

@@ -386,6 +386,20 @@ class ProviderAccountModel(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class ProviderRouteModel(Base):
+    __tablename__ = "provider_routes"
+    __table_args__ = (
+        UniqueConstraint("provider_group", "priority", name="ux_provider_routes_group_priority"),
+    )
+
+    id = Column(String, primary_key=True)
+    provider_group = Column(String, nullable=False, index=True)
+    provider_account_id = Column(String, ForeignKey("provider_accounts.id"), nullable=False, index=True)
+    model = Column(String, nullable=False)
+    priority = Column(Integer, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+
+
 class ProviderModelModel(Base):
     __tablename__ = "provider_models"
 

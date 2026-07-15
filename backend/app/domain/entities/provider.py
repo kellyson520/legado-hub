@@ -19,6 +19,16 @@ class ProviderAccount:
 
 
 @dataclass
+class ProviderRoute:
+    id: str = ""
+    provider_group: str = ""
+    provider_account_id: str = ""
+    model: str = ""
+    priority: int = 0
+    enabled: bool = True
+
+
+@dataclass
 class ProviderModel:
     id: str = ""
     provider_account_id: str = ""
