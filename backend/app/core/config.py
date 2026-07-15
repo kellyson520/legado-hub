@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     SOURCE_BUILD_WORKER_ENABLED: bool = True
     SOURCE_BUILD_POLL_SECONDS: float = 5.0
     SOURCE_BUILD_BATCH_SIZE: int = 1
+    INTERACTIVE_BROWSER_PROFILE_ROOT: str = "/tmp/legado-hub-browser-sessions"
+    INTERACTIVE_BROWSER_CHROMIUM_PATH: str = "chromium-browser"
+    INTERACTIVE_BROWSER_XVFB_PATH: str = "Xvfb"
+    INTERACTIVE_BROWSER_X11VNC_PATH: str = "x11vnc"
+    INTERACTIVE_BROWSER_WEBSOCKIFY_PATH: str = "websockify"
 
     @field_validator("ENV")
     @classmethod

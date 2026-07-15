@@ -21,6 +21,30 @@ class InteractiveBrowserRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def find_active_for_source(
+        self,
+        source_version_id: str,
+        owner_id: str,
+    ) -> InteractiveBrowserSession | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_state(
+        self,
+        session_id: str,
+        *,
+        state,
+        automatic_attempted: bool | None = None,
+        terminal_reason: str | None = None,
+        closed_at: datetime | None = None,
+    ) -> InteractiveBrowserSession:
+        raise NotImplementedError
+
+    @abstractmethod
+    def count_active(self) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
     def issue_relay_token(
         self,
         *,

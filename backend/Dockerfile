@@ -4,8 +4,12 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    chromium \
     libxml2-dev \
     libxslt1-dev \
+    websockify \
+    x11vnc \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

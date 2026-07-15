@@ -102,6 +102,68 @@ class SQLiteInteractiveBrowserRepository(InteractiveBrowserRepository):
         finally:
             self._close(db)
 
+    def find_active_for_source(self, source_version_id: str, owner_id: str) -> InteractiveBrowserSession | None:
+        db = self._db()
+        try:
+            states = (
+                InteractiveBrowserState.PENDING.value,
+                InteractiveBrowserState.AUTOMATIC_RUNNING.value,
+                InteractiveBrowserState.AWAITING_MANUAL.value,
+                InteractiveBrowserState.VALIDATING.value,
+            )
+            model = db.query(InteractiveBrowserSessionModel).filter(
+                InteractiveBrowserSessionModel.source_version_id == source_version_id,
+                InteractiveBrowserSessionModel.owner_id == owner_id,
+                InteractiveBrowserSessionModel.state.in_(states),
+            ).order_by(InteractiveBrowserSessionModel.created_at.desc()).first()
+            return self._session_entity(model) if model is not None else None
+        finally:
+            self._close(db)
+
+    def update_state(
+        self,
+        session_id: str,
+        *,
+        state: InteractiveBrowserState,
+        automatic_attempted: bool | None = None,
+        terminal_reason: str | None = None,
+        closed_at: datetime | None = None,
+    ) -> InteractiveBrowserSession:
+        db = self._db()
+        try:
+            model = db.query(InteractiveBrowserSessionModel).filter(
+                InteractiveBrowserSessionModel.id == session_id,
+            ).first()
+            if model is None:
+                raise KeyError(session_id)
+            model.state = state.value
+            if automatic_attempted is not None:
+                model.automatic_attempted = automatic_attempted
+            if terminal_reason is not None:
+                model.terminal_reason = terminal_reason
+            if closed_at is not None:
+                model.closed_at = closed_at.replace(tzinfo=None) if closed_at.tzinfo else closed_at
+            db.commit()
+            db.refresh(model)
+            return self._session_entity(model)
+        finally:
+            self._close(db)
+
+    def count_active(self) -> int:
+        db = self._db()
+        try:
+            states = (
+                InteractiveBrowserState.PENDING.value,
+                InteractiveBrowserState.AUTOMATIC_RUNNING.value,
+                InteractiveBrowserState.AWAITING_MANUAL.value,
+                InteractiveBrowserState.VALIDATING.value,
+            )
+            return int(db.query(InteractiveBrowserSessionModel).filter(
+                InteractiveBrowserSessionModel.state.in_(states),
+            ).count())
+        finally:
+            self._close(db)
+
     def issue_relay_token(
         self,
         *,
