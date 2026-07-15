@@ -112,11 +112,44 @@ async def test_repair_loop_inspects_proposes_validates_and_requests_review():
     assert 'no prose' in payload['messages'][0]['content'].lower()
     schemas = {item['function']['name']: item['function']['parameters'] for item in payload['tools']}
     assert set(schemas) == {
-        'source.inspect', 'page.inspect', 'page.request', 'source.probe',
-        'rule.propose', 'rule.validate', 'review.request',
+        'source_inspect', 'page_inspect', 'page_request', 'source_probe',
+        'rule_propose', 'rule_validate', 'review_request',
     }
     assert all(schema['additionalProperties'] is False for schema in schemas.values())
-    assert set(schemas['page.request']['properties']) == {'url', 'method', 'form'}
+    assert set(schemas['page_request']['properties']) == {'url', 'method', 'form'}
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_maps_provider_safe_tool_aliases_to_canonical_tools():
+    from app.application.services.agent_tool_registry import AgentToolRegistry
+    from app.application.services.source_build_ai_repair_service import SourceBuildAIRepairService
+    from app.domain.entities.agent_runtime import ToolResult
+
+    runtime = RecordingAgentRuntime()
+    repair_service = SourceBuildAIRepairService(
+        ai_service=ImmediateAIService(),
+        platform=ScriptedPlatform([
+            _response(_tool_call('source_inspect', {})),
+            _response(None),
+        ]),
+        agent_runtime=runtime,
+    )
+
+    result = await repair_service.repair(
+        tenant_id='tenant-1', run_id='run-1', source_version_id='source-1',
+        url='https://books.test/', model='scripted-model',
+        registry=AgentToolRegistry(source_build_handlers={
+            'source.inspect': lambda _arguments: ToolResult(status='accepted', data={'source_rule': {}}),
+        }),
+    )
+
+    wire_names = {item['function']['name'] for item in repair_service._tool_schemas()}
+    assert wire_names == {
+        'source_inspect', 'page_inspect', 'page_request', 'source_probe',
+        'rule_propose', 'rule_validate', 'review_request',
+    }
+    assert result['repair']['tool_count'] == 1
+    assert runtime.invocations[0]['tool_name'] == 'source.inspect'
 
 
 @pytest.mark.asyncio
