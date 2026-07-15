@@ -39,7 +39,7 @@ from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLit
 from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
 from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
 from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
-from app.infrastructure.providers.registry import ProviderRegistry
+from app.infrastructure.providers.registry import ProviderRegistry, ProviderSelection
 from app.infrastructure.persistence.sqlite.auth_repo_impl import SQLiteAuthRepository
 from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
 from app.infrastructure.persistence.sqlite.canonical_content_repo_impl import SQLiteCanonicalContentRepository
@@ -233,32 +233,55 @@ class _AllowAllProviderQuotaLimiter:
 
 
 def build_provider_registry() -> ProviderRegistry:
-    groups: dict[str, list[OpenAICompatibleProvider]] = {}
+    provider_groups = ("default", "ai", "source_build", "translation", "novel")
+    groups: dict[str, list[ProviderSelection]] = {}
     if settings.LLM_API_URL and settings.LLM_API_KEY:
         provider = OpenAICompatibleProvider(
             name=settings.LLM_PROVIDER_NAME,
             endpoint_url=settings.LLM_API_URL,
             api_key=settings.LLM_API_KEY,
         )
-        groups = {key: [provider] for key in ("default", "ai", "translation", "novel")}
+        groups = {
+            key: [ProviderSelection(provider=provider, model=settings.LLM_MODEL)]
+            for key in provider_groups
+        }
 
     try:
         repo = build_provider_repository()
-        for account in repo.list_provider_accounts():
-            if (
-                not account.enabled
-                or account.provider_type != "openai_compatible"
-                or not account.base_url
-                or not account.api_key
-            ):
-                continue
-            provider = OpenAICompatibleProvider(
-                name=account.name,
-                endpoint_url=account.base_url,
-                api_key=account.api_key,
-            )
-            for group in ("default", "ai", "translation", "novel"):
-                groups.setdefault(group, []).append(provider)
+        accounts = {account.id: account for account in repo.list_configured_openai_providers()}
+        if repo.has_routes():
+            for group in provider_groups:
+                routes = repo.list_routes(group)
+                if not routes:
+                    groups[group] = []
+                    continue
+                selections: list[ProviderSelection] = []
+                for route in routes:
+                    account = accounts.get(route.provider_account_id)
+                    if account is None or not route.enabled or not route.model:
+                        continue
+                    selections.append(
+                        ProviderSelection(
+                            provider=OpenAICompatibleProvider(
+                                name=account.name,
+                                endpoint_url=account.base_url,
+                                api_key=account.api_key,
+                            ),
+                            model=route.model,
+                        )
+                    )
+                groups[group] = selections
+        else:
+            for account in accounts.values():
+                provider = OpenAICompatibleProvider(
+                    name=account.name,
+                    endpoint_url=account.base_url,
+                    api_key=account.api_key,
+                )
+                for group in provider_groups:
+                    groups.setdefault(group, []).append(
+                        ProviderSelection(provider=provider, model=account.default_model)
+                    )
     except Exception:
         if not groups:
             return ProviderRegistry({})

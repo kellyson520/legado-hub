@@ -1,4 +1,7 @@
+import re
 from typing import Any, Protocol
+
+import httpx
 
 from app.infrastructure.providers.base import ProviderAdapter
 from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
@@ -13,6 +16,13 @@ class ProviderQuotaLimiter(Protocol):
         raise NotImplementedError
 
 
+class ProviderInvocationError(RuntimeError):
+    def __init__(self, provider_group: str, failures: list[str]):
+        super().__init__(f"all providers failed for group '{provider_group}': {'; '.join(failures)}")
+        self.provider_group = provider_group
+        self.failures = failures
+
+
 class ProviderPlatformService:
     def __init__(self, registry: ProviderRegistry, quota_limiter: ProviderQuotaLimiter, provider_repo=None):
         self._registry = registry
@@ -22,30 +32,37 @@ class ProviderPlatformService:
     async def invoke_chat(
         self,
         provider_group: str,
-        model: str,
+        model: str | None,
         payload: dict[str, Any],
         quota_scope: tuple[str, str],
     ) -> dict[str, Any]:
         self._quota_limiter.assert_allowed(quota_scope)
-        providers = self._registry.resolve_group(provider_group)
-        last_error: Exception | None = None
+        selections = self._registry.resolve_group(provider_group)
+        failures: list[str] = []
+        requested_model = (model or "").strip()
+        use_route_model = not requested_model
 
-        for attempt_count, provider in enumerate(providers, start=1):
+        for attempt_count, selection in enumerate(selections, start=1):
+            candidate_model = selection.model if use_route_model else requested_model
+            if not candidate_model:
+                raise LookupError(f"no model configured for provider route group '{provider_group}'")
             try:
-                result = await provider.invoke_chat(model=model, payload=payload)
+                result = await selection.provider.invoke_chat(model=candidate_model, payload=payload)
                 return self._normalize_result(
                     result=result,
-                    provider=provider,
+                    provider=selection.provider,
                     provider_group=provider_group,
-                    model=model,
+                    model=candidate_model,
                     attempt_count=attempt_count,
                 )
             except Exception as exc:
-                last_error = exc
+                if self._is_non_retryable_request_error(exc):
+                    raise
+                failures.append(self._sanitize_provider_failure(selection.provider.name, exc))
+                if requested_model and self._is_model_not_found_error(exc):
+                    use_route_model = True
 
-        if last_error is not None:
-            raise last_error
-        raise LookupError(f"no providers registered for group '{provider_group}'")
+        raise ProviderInvocationError(provider_group, failures)
 
     def list_provider_accounts(self) -> list[dict]:
         data = [
@@ -273,6 +290,30 @@ class ProviderPlatformService:
         if not api_key:
             return ""
         return f"••••{api_key[-4:]}" if len(api_key) > 4 else "••••"
+
+    @staticmethod
+    def _is_non_retryable_request_error(exc: Exception) -> bool:
+        return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {400, 422}
+
+    @staticmethod
+    def _is_model_not_found_error(exc: Exception) -> bool:
+        return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
+
+    @staticmethod
+    def _sanitize_provider_failure(provider_name: str, exc: Exception) -> str:
+        message = str(exc)
+        message = re.sub(
+            r"(?i)(authorization\s*:\s*bearer)\s+[^\s,;]+",
+            r"\1 [redacted]",
+            message,
+        )
+        message = re.sub(r"(?i)(bearer)\s+[^\s,;]+", r"\1 [redacted]", message)
+        message = re.sub(
+            r"(?i)(api[_ -]?key)\s*[:=]\s*[^\s,;]+",
+            r"\1 [redacted]",
+            message,
+        )
+        return f"{provider_name}: {message[:240]}"
 
     @staticmethod
     def _normalize_result(
