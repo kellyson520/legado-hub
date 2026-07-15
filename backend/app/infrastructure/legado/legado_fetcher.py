@@ -35,8 +35,9 @@ class LegadoBookSourceFetcher:
         max_retries: int = 2,
         verify_ssl: bool = False,
         max_concurrent: int = 10,
+        http_client=None,
     ):
-        self._http = LegadoHttpClient(
+        self._http = http_client or LegadoHttpClient(
             timeout=timeout,
             max_retries=max_retries,
             verify_ssl=verify_ssl,
