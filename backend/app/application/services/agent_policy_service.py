@@ -29,6 +29,7 @@ class AgentPolicyService:
         evidence: dict,
         *,
         budget_remaining: int = 600,
+        allow_high_risk_llm: bool = False,
     ) -> SourceRepairDecision:
         matched = profile.matches(evidence)
         base_tags = list(self._profiles.build_outcome_tags(profile, matched=matched))
@@ -45,7 +46,7 @@ class AgentPolicyService:
                 outcome_tags=tuple([*base_tags, 'strategy:deterministic_patch']),
             )
 
-        if budget_remaining > 0 and profile.risk_level != 'high':
+        if budget_remaining > 0 and (profile.risk_level != 'high' or allow_high_risk_llm):
             bounded_budget = min(max(budget_remaining, 0), 600)
             return SourceRepairDecision(
                 strategy='llm_repair',

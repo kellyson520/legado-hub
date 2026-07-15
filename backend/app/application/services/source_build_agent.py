@@ -33,6 +33,7 @@ class SourceBuildAgent:
         budget_remaining: int = 600,
         fixture_validation_passed: bool,
         sample_validation_passed: bool,
+        allow_high_risk_llm: bool = False,
         source_version_id: str | None = None,
         actor_id: str = 'system',
     ) -> SourceBuildAgentResult:
@@ -40,6 +41,7 @@ class SourceBuildAgent:
             profile,
             evidence,
             budget_remaining=budget_remaining,
+            allow_high_risk_llm=allow_high_risk_llm,
         )
 
         if (

@@ -156,6 +156,7 @@ class SourceBuildRuntimeService:
             live_validation.get('sample_validation_passed', False),
         )
 
+        agent_settings = self._get_agent_settings()
         result = self._build_agent.attempt_repair(
             candidate_url=candidate_url,
             profile=profile,
@@ -163,6 +164,9 @@ class SourceBuildRuntimeService:
             budget_remaining=int(job.payload.get('budget_remaining', 600) or 0),
             fixture_validation_passed=fixture_validation_passed,
             sample_validation_passed=sample_validation_passed,
+            allow_high_risk_llm=(
+                agent_settings['enabled'] and agent_settings['provider_configured']
+            ),
             source_version_id=source_version_id,
             actor_id=tenant_id,
         )
@@ -171,7 +175,6 @@ class SourceBuildRuntimeService:
         agent_state = self._agent_not_requested_state(result.strategy)
         agent_source_rule = None
         if result.strategy == 'llm_repair':
-            agent_settings = self._get_agent_settings()
             if not agent_settings['enabled']:
                 agent_state = self._agent_skipped_state('disabled')
             elif not agent_settings['provider_configured']:

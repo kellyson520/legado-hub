@@ -275,3 +275,47 @@ def test_system_provider_management_discovers_models_without_leaking_key(monkeyp
         json={"entries": [{"provider_account_id": provider_id, "model": "gpt-b", "enabled": False}]},
     )
     assert disabled_route.status_code == 422
+
+
+def test_system_provider_management_reports_rejected_provider_credentials(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "provider-management-auth.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    import httpx
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
+    from app.main import app
+
+    async def rejected_list_models(self):
+        raise httpx.HTTPStatusError(
+            "unauthorized",
+            request=httpx.Request("GET", "https://provider.example/v1/models"),
+            response=httpx.Response(401),
+        )
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "list_models", rejected_list_models, raising=False)
+    bootstrap_sqlite()
+    client = TestClient(app)
+    token = create_access_token(
+        {"sub": "1", "permissions": ["system.settings.manage"], "sid": "provider-management-auth"}
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    saved = client.post(
+        "/api/system/providers",
+        headers=headers,
+        json={
+            "name": "rejected",
+            "base_url": "https://provider.example/v1",
+            "api_key": "invalid-key",
+            "default_model": "",
+            "enabled": True,
+        },
+    )
+
+    response = client.post(f"/api/system/providers/{saved.json()['data']['id']}/models", headers=headers)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Provider authentication failed; update the API key"

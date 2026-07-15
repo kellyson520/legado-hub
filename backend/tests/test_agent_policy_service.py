@@ -87,3 +87,15 @@ def test_policy_requires_manual_review_when_budget_is_exhausted_for_high_risk_ch
     assert decision.strategy == 'manual_review'
     assert decision.model_budget == 0
     assert decision.outcome_tags[-1] == 'budget:blocked'
+
+
+def test_policy_allows_high_risk_repair_only_with_explicit_operator_authorization():
+    decision = AgentPolicyService().plan_source_repair(
+        SiteProfile(site_id='unknown.test', risk_level='high'),
+        evidence={'dom_signature': 'unknown-signature'},
+        budget_remaining=600,
+        allow_high_risk_llm=True,
+    )
+
+    assert decision.strategy == 'llm_repair'
+    assert decision.model_budget == 600

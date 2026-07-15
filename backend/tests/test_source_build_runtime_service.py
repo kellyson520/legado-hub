@@ -188,6 +188,59 @@ def test_source_build_runtime_skips_llm_repair_without_configured_provider(tmp_p
     }
 
 
+def test_source_build_runtime_authorizes_high_risk_llm_repair_for_enabled_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-build-high-risk-agent.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.application.services.job_service import JobService
+    from app.application.services.source_build_agent import SourceBuildAgentResult
+    from app.application.services.source_build_runtime_service import SourceBuildRuntimeService
+    from app.infrastructure.persistence.factory import build_agent_runtime_service
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+
+    class RecordingBuildAgent:
+        def __init__(self):
+            self.allow_high_risk_llm = False
+
+        def attempt_repair(self, **kwargs):
+            self.allow_high_risk_llm = kwargs.get('allow_high_risk_llm', False)
+            return SourceBuildAgentResult(
+                decision='defer', strategy='llm_repair', review_required=False, attempt_count=1,
+            )
+
+    class EnabledSettings:
+        def get_source_build_agent_settings(self):
+            return {'enabled': True, 'provider_configured': True}
+
+    bootstrap_sqlite()
+    runtime_repo = SQLiteSourceRuntimeRepository()
+    version = runtime_repo.create_candidate_version(
+        source_type='book', source_id='https://unknown.test/',
+        payload={'canonical_url': 'https://unknown.test/'}, created_by='system',
+    )
+    job = JobService(SQLiteJobRepository()).enqueue(
+        kind='source.build', tenant_id='system',
+        payload={
+            'url': 'https://unknown.test/', 'source_version_id': version.id,
+            'site_profile': {'site_id': 'unknown.test', 'risk_level': 'high'},
+            'evidence': {'dom_signature': 'unknown-signature'},
+        },
+    )
+    build_agent = RecordingBuildAgent()
+
+    SourceBuildRuntimeService(
+        runtime_repo=runtime_repo,
+        agent_runtime=build_agent_runtime_service(),
+        build_agent=build_agent,
+        system_settings_service=EnabledSettings(),
+    ).handle_job(job)
+
+    assert build_agent.allow_high_risk_llm is True
+
+
 def test_source_build_runtime_persists_validated_agent_patch_for_review_only(tmp_path, monkeypatch):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-build-agent-review.sqlite3'))
