@@ -9,6 +9,17 @@ from app.domain.entities.agent_runtime import ToolResult
 
 PROMPT_VERSION = 'source-build-agent/v1'
 
+_WIRE_TOOL_NAMES = {
+    'source.inspect': 'source_inspect',
+    'page.inspect': 'page_inspect',
+    'page.request': 'page_request',
+    'source.probe': 'source_probe',
+    'rule.propose': 'rule_propose',
+    'rule.validate': 'rule_validate',
+    'review.request': 'review_request',
+}
+_CANONICAL_TOOL_NAMES = {wire_name: canonical_name for canonical_name, wire_name in _WIRE_TOOL_NAMES.items()}
+
 SYSTEM_PROMPT = f"""You are the candidate-only source-build repair agent ({PROMPT_VERSION}).
 Work evidence-first: inspect the known source evidence before proposing any rule. Use page tools
 only to understand a public, same-origin HTML or search flow. Propose only standard Legado patch
@@ -124,7 +135,7 @@ class SourceBuildAIRepairService:
         registry: AgentToolRegistry,
     ) -> tuple[str, dict[str, Any], dict[str, Any], ToolResult]:
         function = call.get('function') or {}
-        name = str(function.get('name') or '')
+        name = self._canonical_tool_name(str(function.get('name') or ''))
         arguments, argument_error = self._tool_arguments(function.get('arguments'))
         tool = registry.get(name)
         invocation = self._agent_runtime.record_tool_invocation(
@@ -172,6 +183,10 @@ class SourceBuildAIRepairService:
     def _tool_calls(output: dict[str, Any], message: dict[str, Any]) -> list[dict[str, Any]]:
         calls = output.get('tool_calls') or message.get('tool_calls') or []
         return [call for call in calls if isinstance(call, dict)] if isinstance(calls, list) else []
+
+    @staticmethod
+    def _canonical_tool_name(name: str) -> str:
+        return _CANONICAL_TOOL_NAMES.get(name, name)
 
     @classmethod
     def _tool_arguments(cls, raw_arguments: Any) -> tuple[dict[str, Any], str | None]:
@@ -264,23 +279,23 @@ class SourceBuildAIRepairService:
             }
 
         return [
-            schema('source.inspect', 'Read the known candidate source rule and bounded evidence.', {}),
-            schema('page.inspect', 'Inspect one public same-origin page with GET.', {
+            schema(_WIRE_TOOL_NAMES['source.inspect'], 'Read the known candidate source rule and bounded evidence.', {}),
+            schema(_WIRE_TOOL_NAMES['page.inspect'], 'Inspect one public same-origin page with GET.', {
                 'url': {'type': 'string', 'minLength': 1},
             }, ['url']),
-            schema('page.request', 'Request one public same-origin GET or form POST.', {
+            schema(_WIRE_TOOL_NAMES['page.request'], 'Request one public same-origin GET or form POST.', {
                 'url': {'type': 'string', 'minLength': 1},
                 'method': {'type': 'string', 'enum': ['GET', 'POST']},
                 'form': string_values,
             }, ['url', 'method']),
-            schema('source.probe', 'Read the most recent bounded full-chain probe summary.', {}),
-            schema('rule.propose', 'Store a candidate-only patch restricted to Legado rule fields.', {
+            schema(_WIRE_TOOL_NAMES['source.probe'], 'Read the most recent bounded full-chain probe summary.', {}),
+            schema(_WIRE_TOOL_NAMES['rule.propose'], 'Store a candidate-only patch restricted to Legado rule fields.', {
                 'patch': patch,
             }, ['patch']),
-            schema('rule.validate', 'Validate the proposed patch against search, toc, and content.', {
+            schema(_WIRE_TOOL_NAMES['rule.validate'], 'Validate the proposed patch against search, toc, and content.', {
                 'patch': patch,
             }),
-            schema('review.request', 'Request candidate review after full validation succeeds.', {
+            schema(_WIRE_TOOL_NAMES['review.request'], 'Request candidate review after full validation succeeds.', {
                 'reason': {'type': 'string', 'maxLength': 500},
             }),
         ]

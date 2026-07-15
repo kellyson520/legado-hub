@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 
@@ -197,3 +199,56 @@ async def test_workspace_rejects_unknown_tool(tmp_path, monkeypatch):
 
     with pytest.raises(ValidationException, match="Unsupported AI tool"):
         await service.send_message(conversation["id"], "7", "chat", "x", [{"name": "shell", "arguments": {}}])
+
+
+@pytest.mark.asyncio
+async def test_workspace_model_can_call_a_read_only_system_tool(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-model-tools.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    tool_call = {
+        "id": "call-visible-sources",
+        "type": "function",
+        "function": {"name": "list_visible_sources", "arguments": "{}"},
+    }
+
+    class ToolCallingPlatform:
+        def __init__(self):
+            self.calls = []
+            self.responses = [
+                {
+                    "output": {
+                        "message": {"role": "assistant", "content": "", "tool_calls": [tool_call]},
+                        "tool_calls": [tool_call],
+                    },
+                },
+                {"output": {"text": "已读取可见书源。"}},
+            ]
+
+        async def invoke_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.responses.pop(0)
+
+    bootstrap_sqlite()
+    platform = ToolCallingPlatform()
+    service = AIWorkspaceService(
+        platform,
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+    )
+    conversation = await service.create_conversation("7")
+
+    reply = await service.send_message(conversation["id"], "7", "chat", "列出我能看到的书源")
+
+    assert reply["content"] == "已读取可见书源。"
+    assert reply["tool_calls"][0]["name"] == "list_visible_sources"
+    assert [item["id"] for item in reply["tool_calls"][0]["result"]] == ["owned-candidate", "published-source"]
+    assert {item["function"]["name"] for item in platform.calls[0]["payload"]["tools"]} == {
+        "list_visible_sources", "get_source_rule_summary", "list_ai_analysis_results",
+    }
+    assert platform.calls[1]["payload"]["messages"][-1]["role"] == "tool"

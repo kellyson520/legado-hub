@@ -1,3 +1,4 @@
+import json
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
@@ -9,6 +10,7 @@ from app.domain.entities.auth import AuditEvent
 
 
 _SENSITIVE_KEY_PARTS = ("cookie", "token", "authorization", "provider", "internal", "api_key", "apikey")
+_MAX_MODEL_TOOL_TURNS = 3
 MODE_PROMPTS = {
     "chat": "使用中文回答阅读、书源和小说相关问题。",
     "character": "使用中文分析人物动机、关系、性格和证据。",
@@ -88,25 +90,22 @@ class AIWorkspaceService:
             )
         )
         tool_calls = await self._execute_tools(actor_id, tool_requests or [])
-        payload = {
-            "task": "ai_workspace",
-            "mode": mode,
-            "source_version_id": source_version_id,
-            "tool_results": tool_calls,
-            "messages": [
-                {"role": "system", "content": MODE_PROMPTS[mode]},
-                {"role": "user", "content": user_message.content},
-            ],
-        }
+        messages = [
+            {"role": "system", "content": self._system_prompt(mode)},
+            {"role": "user", "content": user_message.content},
+        ]
+        if tool_calls:
+            messages.append({
+                "role": "user",
+                "content": "已执行的只读工具结果如下，请据此回答：\n" + json.dumps(
+                    tool_calls, ensure_ascii=False, separators=(",", ":"),
+                ),
+            })
         try:
-            invocation = await self._platform.invoke_chat(
-                provider_group="ai",
-                model=None,
-                payload=payload,
-                quota_scope=("user", str(actor_id)),
+            assistant_content, model_tool_calls = await self._run_model_tool_loop(
+                actor_id=str(actor_id), messages=messages,
             )
-            output = invocation.get("output")
-            assistant_content = output.get("text", "") if isinstance(output, dict) else str(output or "")
+            tool_calls.extend(model_tool_calls)
             assistant = self._conversations.append_message(
                 AIConversationMessage(
                     id=uuid4().hex,
@@ -132,6 +131,38 @@ class AIWorkspaceService:
         await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
         return self._serialize_message(assistant)
 
+    async def _run_model_tool_loop(self, *, actor_id: str, messages: list[dict]) -> tuple[str, list[dict]]:
+        executed_calls: list[dict] = []
+        for _turn in range(_MAX_MODEL_TOOL_TURNS):
+            invocation = await self._platform.invoke_chat(
+                provider_group="ai",
+                model=None,
+                payload={
+                    "messages": messages,
+                    "tools": self._tool_schemas(),
+                    "tool_choice": "auto",
+                    "temperature": 0,
+                },
+                quota_scope=("user", actor_id),
+            )
+            output = invocation.get("output") if isinstance(invocation, dict) else {}
+            assistant_message = self._assistant_message(output)
+            model_calls = self._model_tool_calls(output, assistant_message)
+            if not model_calls:
+                return str(assistant_message.get("content") or ""), executed_calls
+
+            messages.append(assistant_message)
+            for model_call in model_calls:
+                executed = await self._execute_model_tool_call(actor_id, model_call)
+                executed_calls.append(executed)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": str(model_call.get("id") or ""),
+                    "content": json.dumps(executed["result"], ensure_ascii=False, separators=(",", ":")),
+                })
+
+        return "已达到工具调用上限，请基于已获取的信息继续提问。", executed_calls
+
     async def _execute_tools(self, actor_id: str, tool_requests: list[dict]) -> list[dict]:
         calls: list[dict] = []
         for raw_request in tool_requests:
@@ -151,6 +182,70 @@ class AIWorkspaceService:
             calls.append({"name": request.name, "arguments": request.arguments, "result": sanitized})
             await self._audit_event(actor_id, "ai.tool.invoke", request.name)
         return calls
+
+    async def _execute_model_tool_call(self, actor_id: str, model_call: dict) -> dict:
+        function = model_call.get("function") if isinstance(model_call, dict) else None
+        name = str(function.get("name") or "") if isinstance(function, dict) else ""
+        raw_arguments = function.get("arguments") if isinstance(function, dict) else None
+        try:
+            arguments = self._model_tool_arguments(raw_arguments)
+            return (await self._execute_tools(actor_id, [{"name": name, "arguments": arguments}]))[0]
+        except (NotFoundException, ValidationException, ValueError, json.JSONDecodeError) as exc:
+            return {
+                "name": name or "unknown_tool",
+                "arguments": {},
+                "result": {"error": str(exc) or "Tool request rejected"},
+            }
+
+    @staticmethod
+    def _model_tool_arguments(raw_arguments) -> dict:
+        if isinstance(raw_arguments, dict):
+            return raw_arguments
+        if not isinstance(raw_arguments, str) or len(raw_arguments) > 16_384:
+            raise ValidationException("Invalid AI tool arguments")
+        arguments = json.loads(raw_arguments or "{}")
+        if not isinstance(arguments, dict):
+            raise ValidationException("Invalid AI tool arguments")
+        return arguments
+
+    @staticmethod
+    def _assistant_message(output) -> dict:
+        if isinstance(output, dict):
+            message = output.get("message")
+            if isinstance(message, dict):
+                return {"role": "assistant", **message}
+            return {"role": "assistant", "content": str(output.get("text") or "")}
+        return {"role": "assistant", "content": str(output or "")}
+
+    @staticmethod
+    def _model_tool_calls(output, message: dict) -> list[dict]:
+        calls = output.get("tool_calls") if isinstance(output, dict) else None
+        calls = calls or message.get("tool_calls") or []
+        return [call for call in calls if isinstance(call, dict)] if isinstance(calls, list) else []
+
+    @staticmethod
+    def _tool_schemas() -> list[dict]:
+        def schema(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
+            parameters = {"type": "object", "properties": properties, "additionalProperties": False}
+            if required:
+                parameters["required"] = required
+            return {"type": "function", "function": {"name": name, "description": description, "parameters": parameters}}
+
+        return [
+            schema("list_visible_sources", "List sources visible to the current user.", {}),
+            schema("get_source_rule_summary", "Read the safe rule summary of one visible source version.", {
+                "source_version_id": {"type": "string", "minLength": 1},
+            }, ["source_version_id"]),
+            schema("list_ai_analysis_results", "List the current user's prior AI analysis results.", {}),
+        ]
+
+    @staticmethod
+    def _system_prompt(mode: str) -> str:
+        return (
+            MODE_PROMPTS[mode]
+            + " You may use only the listed read-only tools when evidence is needed."
+            + " Never request secrets, publish sources, write data, browse arbitrary URLs, or run code."
+        )
 
     def _list_visible_sources(self, actor_id: str) -> list[dict]:
         rows = self._sources.list_recent_versions(limit=50)
