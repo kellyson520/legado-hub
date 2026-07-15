@@ -202,3 +202,48 @@ git add backend frontend
 git commit -m "fix: surface runtime sources in health inventory"
 git push origin main
 ```
+
+### Task 5: Make source inventory and health pagination visible in the console
+
+**Files:**
+- Modify: `frontend/src/api/modules/sources.ts`
+- Modify: `frontend/src/features/sources/SourceListPage.tsx`
+- Modify: `frontend/src/features/sources/SourceListPage.test.tsx`
+- Modify: `frontend/src/features/sources/SourceHealthPage.tsx`
+- Modify: `frontend/src/features/sources/SourceHealthPage.test.tsx`
+
+- [ ] **Step 1: Write failing API-contract and pagination tests**
+
+```tsx
+test('source inventory renders the legacy book-source response fields', async () => {
+  // Mock bookSourceName/bookSourceUrl/sourceStatus and assert name + status render.
+})
+
+test('health console requests and navigates inventory pages using API meta', async () => {
+  // First response has meta { page: 1, page_size: 20, total: 21 }.
+  // Click Next and assert listSourceHealth receives page: 2, page_size: 20.
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npm test -- --run src/features/sources/SourceListPage.test.tsx src/features/sources/SourceHealthPage.test.tsx`
+
+Expected: FAIL because source cards read the incompatible runtime-shaped fields and health page is permanently hard-coded to page one.
+
+- [ ] **Step 3: Implement contract mapping and bounded page navigation**
+
+Map `/sources/book_sources` legacy records (`bookSourceName`, `bookSourceUrl`, `sourceStatus`) to the display model without claiming unavailable runtime version/grade values. In the health page, retain response meta, show inventory total from `meta.total`, request the selected page, and add disabled Previous/Next buttons with an accessible page indicator. Do not fetch all pages or change backend APIs.
+
+- [ ] **Step 4: Run frontend tests and build**
+
+Run: `npm test -- --run src/features/sources/SourceListPage.test.tsx src/features/sources/SourceHealthPage.test.tsx && npm run build`
+
+Expected: PASS and production build exit code 0.
+
+- [ ] **Step 5: Commit the console correction**
+
+```bash
+git add frontend/src/api/modules/sources.ts frontend/src/features/sources/SourceListPage.tsx frontend/src/features/sources/SourceListPage.test.tsx frontend/src/features/sources/SourceHealthPage.tsx frontend/src/features/sources/SourceHealthPage.test.tsx
+git commit -m "fix: page source health inventory in console"
+```
