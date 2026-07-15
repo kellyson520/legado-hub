@@ -126,6 +126,25 @@ class SourceBuildAuditService:
             'score': score,
             'grade': grade,
         })
+        if report.get('reason') == 'verification_required':
+            audit.update({
+                'status': 'awaiting_manual_verification',
+                'attempt': attempt,
+                'max_attempts': self.MAX_ATTEMPTS,
+                'report': report,
+                'history': list(audit.get('history') or [])[-4:] + [report],
+            })
+            payload['source_audit'] = audit
+            return self._persist_outcome_with_test_run(
+                version=version,
+                payload=payload,
+                audit=audit,
+                report=report,
+                score=score,
+                grade=grade,
+                step_passes=step_passes,
+                diagnostics=diagnostics,
+            )
         if not passed and attempt < self.MAX_ATTEMPTS:
             return self._queue_repair_after_pending(
                 version=version,
@@ -593,6 +612,15 @@ class SourceBuildAuditService:
         search = evidence.search
         toc = evidence.toc
         content = evidence.content
+        content_stage = {
+            'status': content.status,
+            'elapsed_ms': content.elapsed_ms,
+            'content_length': int(content.detail.get('content_length', 0) or 0),
+            'title': content.sample_title,
+        }
+        block_reason = content.detail.get('block_reason')
+        if isinstance(block_reason, str) and block_reason:
+            content_stage['block_reason'] = block_reason
         stages = {
             'search': {
                 'status': search.status,
@@ -606,12 +634,7 @@ class SourceBuildAuditService:
                 'hit_count': toc.hit_count,
                 'title': toc.sample_title,
             },
-            'content': {
-                'status': content.status,
-                'elapsed_ms': content.elapsed_ms,
-                'content_length': int(content.detail.get('content_length', 0) or 0),
-                'title': content.sample_title,
-            },
+            'content': content_stage,
         }
         total_elapsed_ms = sum(stage['elapsed_ms'] for stage in stages.values())
         step_passes = {
@@ -630,6 +653,8 @@ class SourceBuildAuditService:
             reason = 'toc_failed'
         elif content.status == 'ok' and stages['content']['content_length'] < 80:
             reason = 'content_too_short'
+        elif block_reason == 'verification_wall':
+            reason = 'verification_required'
         elif not step_passes['content']:
             reason = 'content_failed'
         elif not stage_within_budget:

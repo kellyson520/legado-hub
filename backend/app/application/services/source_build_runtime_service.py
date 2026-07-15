@@ -1056,6 +1056,7 @@ class SourceBuildRuntimeService:
             'response_kind': detail.get('response_kind'),
             'response_preview': detail.get('response_preview'),
             'parse_status': detail.get('parse_status'),
+            'block_reason': detail.get('block_reason'),
         }
 
     @staticmethod

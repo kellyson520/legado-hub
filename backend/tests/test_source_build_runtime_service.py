@@ -3,6 +3,32 @@ import asyncio
 import pytest
 
 
+def test_probe_summary_preserves_verification_wall_for_operations_ui():
+    from app.application.services.source_build_runtime_service import SourceBuildRuntimeService
+    from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+
+    summary = SourceBuildRuntimeService._build_probe_summary(
+        SourceProbeEvidence(
+            source_id=17,
+            source_name='blocked source',
+            source_url='https://blocked.example.test',
+            probe_mode='full_chain',
+            keyword='sample',
+            search=StageProbeResult(stage='search', status='ok', hit_count=1, sample_title='Sample'),
+            toc=StageProbeResult(stage='toc', status='ok', hit_count=1, sample_title='Chapter 1'),
+            content=StageProbeResult(
+                stage='content',
+                status='failed',
+                detail={'content_length': 0, 'block_reason': 'verification_wall'},
+            ),
+        ),
+        compatibility_site=None,
+        compatibility_score={},
+    )
+
+    assert summary['content']['block_reason'] == 'verification_wall'
+
+
 def test_source_build_runtime_deterministic_success_never_starts_agent(tmp_path, monkeypatch):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-build-agent-deterministic.sqlite3'))

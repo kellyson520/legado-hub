@@ -92,6 +92,19 @@ class ShortContentProbe(PassingProbe):
         return evidence
 
 
+class VerificationWallProbe(PassingProbe):
+    async def probe_source(self, source, keyword_samples, probe_mode):
+        evidence = await super().probe_source(source, keyword_samples, probe_mode)
+        evidence.content.status = 'failed'
+        evidence.content.detail = {
+            'content_length': 0,
+            'block_reason': 'verification_wall',
+            'http_status': 302,
+            'response_kind': 'html',
+        }
+        return evidence
+
+
 class CrashingProbe(PassingProbe):
     async def probe_source(self, source, keyword_samples, probe_mode):
         raise RuntimeError('upstream page body must never be persisted')
@@ -340,6 +353,47 @@ async def test_failed_audit_queues_same_version_repair_through_attempt_four():
     assert runtime.runs[0]['step_results']['search']['passed'] is True
     assert runtime.runs[0]['step_results']['toc']['passed'] is True
     assert runtime.runs[0]['step_results']['content']['passed'] is False
+
+
+async def test_verification_wall_audit_parks_candidate_without_repair_or_terminal_failure():
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    version = SourceVersion(
+        id='candidate-verification-wall',
+        source_definition_id=17,
+        source_type='book',
+        source_id='https://blocked.example.test',
+        status='candidate',
+        created_by='tenant-1',
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://blocked.example.test',
+            'source_rule': {'bookSourceUrl': 'https://blocked.example.test'},
+            'source_audit': {'status': 'pending', 'attempt': 0, 'max_attempts': 5, 'history': []},
+        },
+    )
+    runtime = FakeRuntimeRepository(version)
+    build = FakeBuildService()
+    review = FakeReviewService()
+    probe = VerificationWallProbe()
+    service = SourceBuildAuditService(
+        runtime_repo=runtime,
+        probe_service_factory=lambda: probe,
+        build_service=build,
+        review_service=review,
+    )
+
+    result = await service.audit(version.id)
+
+    assert result['status'] == 'awaiting_manual_verification'
+    assert version.status == 'candidate'
+    assert probe.closed is True
+    assert version.payload['source_audit']['status'] == 'awaiting_manual_verification'
+    assert version.payload['source_audit']['report']['reason'] == 'verification_required'
+    assert version.payload['source_audit']['report']['stages']['content']['block_reason'] == 'verification_wall'
+    assert build.repairs == []
+    assert review.failures == []
+    assert runtime.runs[0]['diagnostics'] == ['verification_required']
 
 
 async def test_fifth_failed_audit_marks_candidate_failed_and_enqueues_one_review():
