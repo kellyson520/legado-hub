@@ -48,6 +48,25 @@ def test_source_build_agent_uses_ai_when_template_fails_full_chain_validation():
     assert result.decision == 'defer'
 
 
+def test_source_build_agent_uses_ai_for_an_authorized_high_risk_probe_failure():
+    from app.application.services.agent_policy_service import AgentPolicyService
+    from app.application.services.site_profile_service import SiteProfile
+    from app.application.services.source_build_agent import SourceBuildAgent
+
+    result = SourceBuildAgent(policy=AgentPolicyService()).attempt_repair(
+        candidate_url='https://unknown.test/',
+        profile=SiteProfile(site_id='unknown.test', risk_level='high'),
+        evidence={'dom_signature': 'unknown-signature'},
+        budget_remaining=600,
+        fixture_validation_passed=False,
+        sample_validation_passed=False,
+        allow_high_risk_llm=True,
+    )
+
+    assert result.strategy == 'llm_repair'
+    assert result.decision == 'defer'
+
+
 def test_source_build_agent_escalates_to_review_when_policy_blocks_automation():
     from app.application.services.agent_policy_service import AgentPolicyService
     from app.application.services.site_profile_service import SiteProfile

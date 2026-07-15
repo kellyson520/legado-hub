@@ -156,3 +156,25 @@ test('a new channel can be saved before a model is selected for discovery', asyn
     })
   })
 })
+
+test('keeps saved provider controls available when route loading fails', async () => {
+  mocks.getProviderRoute.mockRejectedValue(new Error('route API unavailable'))
+  render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
+
+  expect(await screen.findByRole('button', { name: 'Get models for Primary' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Edit Primary' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Add fallback for AI analysis' })).toBeDisabled()
+  expect(await screen.findByText(/Provider routes are temporarily unavailable/)).toBeInTheDocument()
+})
+
+test('shows the provider credential error when model discovery is rejected', async () => {
+  mocks.discoverProviderModels.mockRejectedValue({
+    isAxiosError: true,
+    response: { data: { detail: 'Provider authentication failed; update the API key' } },
+  })
+  render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Get models for Primary' }))
+
+  expect(await screen.findByText('Provider authentication failed; update the API key')).toBeInTheDocument()
+})

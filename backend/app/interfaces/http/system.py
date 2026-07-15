@@ -1,3 +1,4 @@
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -108,6 +109,16 @@ async def discover_provider_models(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {401, 403}:
+            detail = "Provider authentication failed; update the API key"
+            status_code = 422
+        else:
+            detail = f"Provider model discovery failed (HTTP {exc.response.status_code})"
+            status_code = 502
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="Provider model discovery is unavailable") from exc
     return _system_response("provider models listed", data)
 
 

@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { isAxiosError } from 'axios'
 import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw } from 'lucide-react'
 
 import {
@@ -80,9 +81,16 @@ function normalizeRouteEntries(entries: ProviderRouteEntry[]) {
   }))
 }
 
+function getRequestErrorMessage(error: unknown, fallback: string) {
+  if (!isAxiosError(error)) return fallback
+  const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail
+  return typeof detail === 'string' && detail.trim() ? detail : fallback
+}
+
 export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: () => Promise<void> | void }) {
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [routes, setRoutes] = useState<Record<string, ProviderRouteEntry[]>>({})
+  const [routeAvailability, setRouteAvailability] = useState<Record<string, boolean>>({})
   const [drafts, setDrafts] = useState<Record<string, RouteDraft>>({})
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({})
   const [form, setForm] = useState<ProviderForm>(emptyProviderForm)
@@ -96,22 +104,36 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
   const refresh = useCallback(async () => {
     const requestVersion = ++refreshVersion.current
     try {
-      const [providerResponse, routeResponses] = await Promise.all([
-        listProviders(),
-        Promise.all(ROUTE_GROUPS.map((group) => getProviderRoute(group.id))),
-      ])
+      const providerResponse = await listProviders()
       if (requestVersion !== refreshVersion.current) return
       setProviders(providerResponse.data.filter((provider) => !provider.id.startsWith('runtime:')))
-      setRoutes(
-        Object.fromEntries(
-          routeResponses.map((response) => [
-            response.data.group,
-            normalizeRouteEntries(response.data.entries),
-          ]),
-        ),
-      )
     } catch {
       if (requestVersion === refreshVersion.current) setError('Failed to refresh Provider configuration')
+      return
+    }
+
+    const routeResults = await Promise.allSettled(
+      ROUTE_GROUPS.map((group) => getProviderRoute(group.id)),
+    )
+    if (requestVersion !== refreshVersion.current) return
+
+    const nextRoutes: Record<string, ProviderRouteEntry[]> = {}
+    const nextRouteAvailability: Record<string, boolean> = {}
+    routeResults.forEach((result, index) => {
+      const group = ROUTE_GROUPS[index]
+      if (result.status === 'fulfilled') {
+        nextRoutes[result.value.data.group] = normalizeRouteEntries(result.value.data.entries)
+        nextRouteAvailability[group.id] = true
+      } else {
+        nextRouteAvailability[group.id] = false
+      }
+    })
+    setRoutes(nextRoutes)
+    setRouteAvailability(nextRouteAvailability)
+    if (routeResults.some((result) => result.status === 'rejected')) {
+      setError('Provider routes are temporarily unavailable; channel editing and model discovery remain available.')
+    } else {
+      setError(null)
     }
   }, [])
 
@@ -156,8 +178,8 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
       setModelsByProvider((current) => ({ ...current, [provider.id]: response.data }))
       setForm(toForm(provider))
       setMessage(`Models loaded for ${provider.name}`)
-    } catch {
-      setError(`Failed to load models for ${provider.name}`)
+    } catch (error) {
+      setError(getRequestErrorMessage(error, `Failed to load models for ${provider.name}`))
     } finally {
       setLoadingModels(null)
     }
@@ -304,19 +326,21 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
           {ROUTE_GROUPS.map((group) => {
             const entries = routes[group.id] ?? []
             const draft = drafts[group.id] ?? { providerAccountId: '', model: '' }
+            const routeAvailable = routeAvailability[group.id] === true
             return (
               <div key={group.id} className="border-t border-border pt-4 first:border-t-0 first:pt-0">
                 <h4 className="text-sm font-semibold text-foreground">{group.label}</h4>
                 <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                  <select aria-label={`Provider for ${group.label}`} className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draft.providerAccountId} onChange={(event) => updateDraft(group.id, { providerAccountId: event.target.value })}>
+                  <select aria-label={`Provider for ${group.label}`} className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={draft.providerAccountId} disabled={!routeAvailable} onChange={(event) => updateDraft(group.id, { providerAccountId: event.target.value })}>
                     <option value="">Select provider</option>
                     {providers.filter((provider) => provider.enabled !== false && isApiKeyConfigured(provider)).map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
                   </select>
-                  <Input aria-label={`Model for ${group.label}`} placeholder="Model" value={draft.model} onChange={(event) => updateDraft(group.id, { model: event.target.value })} />
-                  <Button type="button" variant="outline" size="sm" aria-label={`Add fallback for ${group.label}`} disabled={savingRoute === group.id || !draft.providerAccountId || !draft.model.trim()} onClick={() => addRouteEntry(group.id)}>
+                  <Input aria-label={`Model for ${group.label}`} placeholder="Model" value={draft.model} disabled={!routeAvailable} onChange={(event) => updateDraft(group.id, { model: event.target.value })} />
+                  <Button type="button" variant="outline" size="sm" aria-label={`Add fallback for ${group.label}`} disabled={!routeAvailable || savingRoute === group.id || !draft.providerAccountId || !draft.model.trim()} onClick={() => addRouteEntry(group.id)}>
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
+                {!routeAvailable ? <p className="mt-2 text-xs text-muted-foreground">Route configuration is unavailable until the backend is updated.</p> : null}
                 <div className="mt-3 grid gap-2">
                   {entries.map((entry, index) => {
                     const providerName = getRouteProviderName(entry, providers)
@@ -324,9 +348,9 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
                       <div key={`${getRouteProviderId(entry)}-${entry.model}-${index}`} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border border-border bg-muted/30 px-3 py-2 text-sm">
                         <span className="truncate text-foreground">{index + 1}. {providerName} · {entry.model}</span>
                         <div className="flex gap-1">
-                          <Button type="button" variant="ghost" size="icon" aria-label={`Move ${providerName} up`} disabled={index === 0 || savingRoute === group.id} onClick={() => moveRouteEntry(group.id, index, -1)}><ArrowUp className="h-4 w-4" /></Button>
-                          <Button type="button" variant="ghost" size="icon" aria-label={`Move ${providerName} down`} disabled={index === entries.length - 1 || savingRoute === group.id} onClick={() => moveRouteEntry(group.id, index, 1)}><ArrowDown className="h-4 w-4" /></Button>
-                          <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${providerName}`} disabled={entries.length === 1 || savingRoute === group.id} onClick={() => removeRouteEntry(group.id, index)}>Remove</Button>
+                          <Button type="button" variant="ghost" size="icon" aria-label={`Move ${providerName} up`} disabled={!routeAvailable || index === 0 || savingRoute === group.id} onClick={() => moveRouteEntry(group.id, index, -1)}><ArrowUp className="h-4 w-4" /></Button>
+                          <Button type="button" variant="ghost" size="icon" aria-label={`Move ${providerName} down`} disabled={!routeAvailable || index === entries.length - 1 || savingRoute === group.id} onClick={() => moveRouteEntry(group.id, index, 1)}><ArrowDown className="h-4 w-4" /></Button>
+                          <Button type="button" variant="ghost" size="sm" aria-label={`Remove ${providerName}`} disabled={!routeAvailable || entries.length === 1 || savingRoute === group.id} onClick={() => removeRouteEntry(group.id, index)}>Remove</Button>
                         </div>
                       </div>
                     )
