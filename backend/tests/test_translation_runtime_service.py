@@ -4,6 +4,7 @@ import pytest
 class FlakyTranslationPlatform:
     def __init__(self):
         self.calls = 0
+        self.models: list[str | None] = []
 
     async def invoke_chat(
         self,
@@ -13,6 +14,7 @@ class FlakyTranslationPlatform:
         quota_scope: tuple[str, str],
     ) -> dict:
         self.calls += 1
+        self.models.append(model)
         if self.calls == 1:
             raise RuntimeError("temporary provider error")
         text = payload["text"]
@@ -49,6 +51,7 @@ async def test_translation_service_splits_large_text_and_retries_failed_chunks(t
     assert all(chunk["status"] == "succeeded" for chunk in job["chunks"])
     assert job["chunks"][0]["attempt_count"] == 2
     assert platform.calls > job["chunk_count"]
+    assert platform.models[0] is None
 
     rows = await service.list_jobs()
     assert rows[0]["id"] == job["id"]

@@ -2,7 +2,11 @@ import pytest
 
 
 class RecordingPlatform:
-    async def invoke_chat(self, **_kwargs):
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def invoke_chat(self, **kwargs):
+        self.calls.append(kwargs)
         return {
             "provider_name": "test-provider",
             "model": "test-model",
@@ -152,8 +156,9 @@ async def test_workspace_message_persists_reply_and_sanitizes_tool_result(tmp_pa
 
     bootstrap_sqlite()
     audit = AuditRepository()
+    platform = RecordingPlatform()
     service = AIWorkspaceService(
-        platform=RecordingPlatform(),
+        platform=platform,
         conversations=SQLiteAIConversationRepository(),
         sources=SourceRepository(),
         ai_tasks=TaskRepository(),
@@ -173,6 +178,8 @@ async def test_workspace_message_persists_reply_and_sanitizes_tool_result(tmp_pa
     assert "secret" not in str(reply)
     assert len(service.get_conversation(conversation["id"], "7")["messages"]) == 2
     assert [event.action for event in audit.events] == ["ai.conversation.create", "ai.tool.invoke", "ai.conversation.message"]
+    assert platform.calls[0]["provider_group"] == "ai"
+    assert platform.calls[0]["model"] is None
 
 
 @pytest.mark.asyncio

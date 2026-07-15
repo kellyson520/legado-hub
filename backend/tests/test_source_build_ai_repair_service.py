@@ -106,6 +106,7 @@ async def test_repair_loop_inspects_proposes_validates_and_requests_review():
     assert [item['status'] for item in runtime.results] == ['accepted'] * 4
 
     payload = platform.calls[0]['payload']
+    assert platform.calls[0]['provider_group'] == 'source_build'
     assert 'evidence-first' in payload['messages'][0]['content'].lower()
     assert 'never publish' in payload['messages'][0]['content'].lower()
     assert 'no prose' in payload['messages'][0]['content'].lower()

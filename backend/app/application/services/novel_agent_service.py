@@ -17,7 +17,7 @@ class NovelAgentService:
             raise NotFoundException("novel ingestion not found")
         invocation = await self._platform.invoke_chat(
             provider_group="novel",
-            model="gpt-4.1-mini",
+            model=None,
             payload=self._build_payload(ingestion),
             quota_scope=("user", actor_id),
         )

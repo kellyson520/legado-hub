@@ -189,7 +189,7 @@ class SourceBuildRuntimeService:
                     run_id=run.id,
                     source_version_id=source_version_id,
                     candidate_url=candidate_url,
-                    model=str(job.payload.get('model') or 'gpt-4.1-mini'),
+                    model=(str(job.payload['model']) if job.payload.get('model') else None),
                     source_rule=base_source_rule,
                     inspect_data=(live_probe_context.get('inspect_result', {}) if live_probe_context else {}),
                     keyword_samples=self._build_keyword_samples(

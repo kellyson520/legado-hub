@@ -2,6 +2,9 @@ import pytest
 
 
 class NovelAnalysisPlatform:
+    def __init__(self):
+        self.calls: list[dict] = []
+
     async def invoke_chat(
         self,
         provider_group: str,
@@ -9,6 +12,7 @@ class NovelAnalysisPlatform:
         payload: dict,
         quota_scope: tuple[str, str],
     ) -> dict:
+        self.calls.append({"provider_group": provider_group, "model": model})
         return {
             "provider_name": "primary-openai",
             "model": model,
@@ -42,10 +46,12 @@ async def test_novel_analysis_pipeline_records_ingestion_task_and_structured_res
             pipeline="analysis",
         )
     )
-    service = NovelAgentService(platform=NovelAnalysisPlatform(), repo=repo)
+    platform = NovelAnalysisPlatform()
+    service = NovelAgentService(platform=platform, repo=repo)
 
     task = await service.start_analysis("novel-1", actor_id="admin")
 
     assert task["status"] == "succeeded"
     assert task["provider"] == "primary-openai"
     assert "entities" in task["result"]
+    assert platform.calls == [{"provider_group": "novel", "model": None}]

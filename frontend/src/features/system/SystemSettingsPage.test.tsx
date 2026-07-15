@@ -3,6 +3,11 @@ import { beforeEach, vi } from 'vitest'
 
 const systemMocks = vi.hoisted(() => ({
   getSourceBuildAgentSettings: vi.fn(),
+  createProvider: vi.fn(),
+  updateProvider: vi.fn(),
+  discoverProviderModels: vi.fn(),
+  getProviderRoute: vi.fn(),
+  updateProviderRoute: vi.fn(),
   updateLLMSettings: vi.fn().mockResolvedValue({
     success: true,
     code: 'OK',
@@ -56,6 +61,11 @@ vi.mock('@/api/modules/system', () => ({
     trace_id: null,
   }),
   getSourceBuildAgentSettings: systemMocks.getSourceBuildAgentSettings,
+  createProvider: systemMocks.createProvider,
+  updateProvider: systemMocks.updateProvider,
+  discoverProviderModels: systemMocks.discoverProviderModels,
+  getProviderRoute: systemMocks.getProviderRoute,
+  updateProviderRoute: systemMocks.updateProviderRoute,
   updateLLMSettings: systemMocks.updateLLMSettings,
   updateSourceBuildAgentSettings: systemMocks.updateSourceBuildAgentSettings,
 }))
@@ -97,6 +107,14 @@ const sourceBuildAgentSettings = {
 
 beforeEach(() => {
   systemMocks.getSourceBuildAgentSettings.mockReset().mockResolvedValue(sourceBuildAgentSettings)
+  systemMocks.createProvider.mockReset()
+  systemMocks.updateProvider.mockReset()
+  systemMocks.discoverProviderModels.mockReset()
+  systemMocks.getProviderRoute.mockReset().mockImplementation((group: string) => Promise.resolve({
+    ...sourceBuildAgentSettings,
+    data: { group, entries: [] },
+  }))
+  systemMocks.updateProviderRoute.mockReset()
   systemMocks.updateSourceBuildAgentSettings.mockReset().mockResolvedValue({
     ...sourceBuildAgentSettings,
     data: {
@@ -114,6 +132,12 @@ test('system settings page shows provider health and quota panels', async () => 
 })
 
 test('system settings page saves llm api configuration', async () => {
+  systemMocks.getSourceBuildAgentSettings
+    .mockResolvedValueOnce(sourceBuildAgentSettings)
+    .mockResolvedValueOnce({
+      ...sourceBuildAgentSettings,
+      data: { enabled: false, provider_configured: true },
+    })
   render(<SystemSettingsPage />)
 
   expect(await screen.findByText('LLM API configuration')).toBeInTheDocument()
@@ -140,6 +164,7 @@ test('system settings page saves llm api configuration', async () => {
     })
   })
   expect(await screen.findByText('LLM settings saved')).toBeInTheDocument()
+  expect(await screen.findByText('LLM provider 已配置 / Provider configured')).toBeInTheDocument()
 })
 
 test('system settings page defaults source build Agent off and persists an enabled setting', async () => {

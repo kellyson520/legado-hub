@@ -18,7 +18,7 @@ class AIService:
     async def run_character_analysis(self, payload: dict, actor_id: str = "system") -> dict:
         invocation = await self._platform.invoke_chat(
             provider_group=payload.get("provider_group", "ai"),
-            model=payload.get("model", "gpt-4.1-mini"),
+            model=payload.get("model") or None,
             payload=self._build_character_payload(payload),
             quota_scope=("user", actor_id),
         )
@@ -50,8 +50,8 @@ class AIService:
                 runner()
                 if runner is not None
                 else self._platform.invoke_chat(
-                    provider_group=payload.get("provider_group", "ai"),
-                    model=payload.get("model", "gpt-4.1-mini"),
+                    provider_group=payload.get("provider_group", "source_build"),
+                    model=payload.get("model") or None,
                     payload=payload,
                     quota_scope=("tenant", actor_id),
                 )

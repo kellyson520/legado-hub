@@ -64,6 +64,25 @@ async def test_ai_service_records_provider_model_usage_and_result(tmp_path, monk
 
 
 @pytest.mark.asyncio
+async def test_ai_service_uses_route_model_when_request_omits_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "ai-runtime-route.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.ai_service import AIService
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    platform = RecordingPlatform()
+    service = AIService(platform=platform)
+
+    await service.run_character_analysis({"title": "Demo", "content": "Story"}, actor_id="admin")
+
+    assert platform.calls[0]["provider_group"] == "ai"
+    assert platform.calls[0]["model"] is None
+
+
+@pytest.mark.asyncio
 async def test_source_build_failure_is_persisted_without_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "ai-runtime.sqlite3"))

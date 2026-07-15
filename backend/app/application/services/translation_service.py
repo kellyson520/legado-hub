@@ -45,7 +45,7 @@ class TranslationService:
             if variant is None:
                 raise NotFoundException("Content variant not found")
             text = variant.content
-        model = payload.get("model", "gpt-4.1-mini")
+        model = payload.get("model") or None
         provider_group = payload.get("provider_group", "translation")
         chunks = self._split_text(text, payload.get("chunk_size", self._max_chunk_chars))
 
@@ -71,7 +71,7 @@ class TranslationService:
             target_language=payload.get("target_language", ""),
             status="succeeded",
             provider=provider,
-            model=model,
+            model=translated_chunks[0].model if translated_chunks else (model or ""),
             source_text=text,
             result_text=result_text,
             content_variant_id=content_variant_id,
@@ -91,7 +91,7 @@ class TranslationService:
         payload: dict,
         actor_id: str,
         provider_group: str,
-        model: str,
+        model: str | None,
     ) -> TranslationChunk:
         last_error: Exception | None = None
         for attempt in range(1, self._max_chunk_attempts + 1):

@@ -15,6 +15,7 @@ import {
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ProviderRoutingSettings } from './ProviderRoutingSettings'
 
 function getProviderName(settings: LLMSettings | null) {
   return settings?.providerName ?? settings?.provider_name ?? 'local-llm'
@@ -48,6 +49,18 @@ export function SystemSettingsPage() {
   const [sourceBuildAgentMessage, setSourceBuildAgentMessage] = useState<string | null>(null)
   const [sourceBuildAgentError, setSourceBuildAgentError] = useState<string | null>(null)
 
+  async function refreshSourceBuildAgentSettings() {
+    try {
+      const response = await getSourceBuildAgentSettings()
+      setSourceBuildAgentSettings(response.data)
+      setSourceBuildAgentError(null)
+    } catch {
+      setSourceBuildAgentError('Failed to load source build Agent settings')
+    } finally {
+      setSourceBuildAgentLoaded(true)
+    }
+  }
+
   useEffect(() => {
     let mounted = true
 
@@ -66,21 +79,8 @@ export function SystemSettingsPage() {
       setModel(llmResponse.data.model || 'gpt-4.1-mini')
     }
 
-    async function loadSourceBuildAgentSettings() {
-      try {
-        const response = await getSourceBuildAgentSettings()
-        if (!mounted) return
-        setSourceBuildAgentSettings(response.data)
-      } catch {
-        if (!mounted) return
-        setSourceBuildAgentError('Failed to load source build Agent settings')
-      } finally {
-        if (mounted) setSourceBuildAgentLoaded(true)
-      }
-    }
-
     void load()
-    void loadSourceBuildAgentSettings()
+    void refreshSourceBuildAgentSettings()
     return () => {
       mounted = false
     }
@@ -102,6 +102,7 @@ export function SystemSettingsPage() {
       setBaseUrl(getBaseUrl(response.data))
       setModel(response.data.model || model)
       setApiKey('')
+      await refreshSourceBuildAgentSettings()
       setMessage('LLM settings saved')
     } catch {
       setMessage('Failed to save LLM settings')
@@ -267,6 +268,7 @@ export function SystemSettingsPage() {
           </section>
         </div>
       </div>
+      <ProviderRoutingSettings onProviderSaved={refreshSourceBuildAgentSettings} />
     </ConsoleLayout>
   )
 }

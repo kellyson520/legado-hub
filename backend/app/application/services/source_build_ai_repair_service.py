@@ -40,7 +40,7 @@ class SourceBuildAIRepairService:
         run_id: str,
         source_version_id: str,
         url: str,
-        model: str,
+        model: str | None,
         registry: AgentToolRegistry,
     ) -> dict:
         async def runner():
@@ -60,8 +60,8 @@ class SourceBuildAIRepairService:
 
             for _turn in range(self._MAX_MODEL_TURNS):
                 last = await self._platform.invoke_chat(
-                    provider_group='ai',
-                    model=model,
+                    provider_group='source_build',
+                    model=model or None,
                     payload={
                         'messages': messages,
                         'tools': self._tool_schemas(),
