@@ -126,3 +126,33 @@ test('an edited channel can be disabled without rewriting its stored key', async
     })
   })
 })
+
+test('a new channel can be saved before a model is selected for discovery', async () => {
+  mocks.createProvider.mockResolvedValueOnce(envelope({
+    id: 'new-provider',
+    name: 'Discovery first',
+    baseUrl: 'https://discovery.example/v1',
+    defaultModel: '',
+    enabled: true,
+    apiKeyConfigured: true,
+    apiKeyMasked: '••••9999',
+    status: 'enabled',
+  }))
+  render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Add channel' }))
+  fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'Discovery first' } })
+  fireEvent.change(screen.getByLabelText('Channel Base URL'), { target: { value: 'https://discovery.example/v1' } })
+  fireEvent.change(screen.getByLabelText('Channel API Key'), { target: { value: 'sk-discovery' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save channel' }))
+
+  await waitFor(() => {
+    expect(mocks.createProvider).toHaveBeenCalledWith({
+      name: 'Discovery first',
+      baseUrl: 'https://discovery.example/v1',
+      apiKey: 'sk-discovery',
+      defaultModel: '',
+      enabled: true,
+    })
+  })
+})

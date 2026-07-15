@@ -48,6 +48,7 @@ export function SystemSettingsPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [sourceBuildAgentMessage, setSourceBuildAgentMessage] = useState<string | null>(null)
   const [sourceBuildAgentError, setSourceBuildAgentError] = useState<string | null>(null)
+  const [settingsRefreshVersion, setSettingsRefreshVersion] = useState(0)
 
   async function refreshSourceBuildAgentSettings() {
     try {
@@ -84,7 +85,7 @@ export function SystemSettingsPage() {
     return () => {
       mounted = false
     }
-  }, [])
+  }, [settingsRefreshVersion])
 
   async function handleSaveLLM(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -103,6 +104,7 @@ export function SystemSettingsPage() {
       setModel(response.data.model || model)
       setApiKey('')
       await refreshSourceBuildAgentSettings()
+      setSettingsRefreshVersion((current) => current + 1)
       setMessage('LLM settings saved')
     } catch {
       setMessage('Failed to save LLM settings')
@@ -125,6 +127,11 @@ export function SystemSettingsPage() {
     } finally {
       setSavingSourceBuildAgent(false)
     }
+  }
+
+  async function handleProviderSaved() {
+    await refreshSourceBuildAgentSettings()
+    setSettingsRefreshVersion((current) => current + 1)
   }
 
   return (
@@ -268,7 +275,7 @@ export function SystemSettingsPage() {
           </section>
         </div>
       </div>
-      <ProviderRoutingSettings onProviderSaved={refreshSourceBuildAgentSettings} />
+      <ProviderRoutingSettings onProviderSaved={handleProviderSaved} />
     </ConsoleLayout>
   )
 }

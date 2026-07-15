@@ -138,6 +138,10 @@ test('system settings page saves llm api configuration', async () => {
       ...sourceBuildAgentSettings,
       data: { enabled: false, provider_configured: true },
     })
+    .mockResolvedValueOnce({
+      ...sourceBuildAgentSettings,
+      data: { enabled: false, provider_configured: true },
+    })
   render(<SystemSettingsPage />)
 
   expect(await screen.findByText('LLM API configuration')).toBeInTheDocument()

@@ -1508,6 +1508,8 @@ WWW-Authenticate: Bearer
 
 `group` 仅支持 `default`、`ai`、`source_build`、`translation` 与 `novel`。运行时按顺序尝试该路由中的渠道；超时、连接失败、429、5xx、认证失败和模型不可用会切换到备用项，400/422 请求错误不会重复调用。
 
+创建渠道时 `default_model` 可以留空：先保存接口与密钥，使用模型发现接口获取列表后，再选择模型并更新渠道或功能路由。
+
 ---
 
 ## 限流说明

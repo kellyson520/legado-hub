@@ -253,7 +253,6 @@ def build_provider_registry() -> ProviderRegistry:
             for group in provider_groups:
                 routes = repo.list_routes(group)
                 if not routes:
-                    groups[group] = []
                     continue
                 selections: list[ProviderSelection] = []
                 for route in routes:

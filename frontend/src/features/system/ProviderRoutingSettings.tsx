@@ -246,7 +246,7 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
             </label>
             <label className="grid gap-2 text-sm font-medium text-foreground" htmlFor="provider-channel-model">
               Channel default model
-              <Input id="provider-channel-model" list="provider-model-options" value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))} required />
+              <Input id="provider-channel-model" list="provider-model-options" placeholder="Save, then use Models to discover" value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))} />
             </label>
           </div>
           <label className="grid gap-2 text-sm font-medium text-foreground" htmlFor="provider-channel-base-url">

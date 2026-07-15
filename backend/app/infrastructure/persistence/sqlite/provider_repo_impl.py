@@ -88,14 +88,15 @@ class SQLiteProviderRepository(ProviderRepository):
                     base_url=base_url,
                     api_key=api_key,
                     default_model=default_model,
-                    enabled=True,
+                    enabled=enabled,
                 )
                 db.add(model)
             else:
+                model.name = name
                 model.provider_type = "openai_compatible"
                 model.base_url = base_url
                 model.default_model = default_model
-                model.enabled = True
+                model.enabled = enabled
                 if api_key:
                     model.api_key = api_key
             db.commit()

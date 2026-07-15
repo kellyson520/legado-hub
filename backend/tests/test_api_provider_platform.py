@@ -204,6 +204,21 @@ def test_system_provider_api_persists_llm_settings_and_registry_uses_them(monkey
     snapshot = build_provider_registry().snapshot()
     assert snapshot["default"][0].name == "Primary OpenAI"
 
+    renamed = client.put(
+        "/api/system/llm-settings",
+        headers=headers,
+        json={
+            "provider_name": "Renamed OpenAI",
+            "base_url": "https://api.renamed.test/v1",
+            "api_key": "sk-renamed",
+            "model": "gpt-4.1",
+        },
+    )
+    assert renamed.status_code == 200
+    updated_snapshot = build_provider_registry().snapshot()
+    assert updated_snapshot["default"][0].name == "Renamed OpenAI"
+    assert updated_snapshot["default"][0].model == "gpt-4.1"
+
 
 def test_system_provider_management_discovers_models_without_leaking_key(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
@@ -235,7 +250,7 @@ def test_system_provider_management_discovers_models_without_leaking_key(monkeyp
             "name": "primary",
             "base_url": "https://api.example/v1",
             "api_key": "sk-secret",
-            "default_model": "gpt-a",
+            "default_model": "",
             "enabled": True,
         },
     )
@@ -253,3 +268,10 @@ def test_system_provider_management_discovers_models_without_leaking_key(monkeyp
     assert models.json()["data"] == ["gpt-a", "gpt-b"]
     assert "sk-secret" not in str(listed.json())
     assert route.json()["data"]["entries"][0]["model"] == "gpt-b"
+
+    disabled_route = client.put(
+        "/api/system/provider-routes/translation",
+        headers=headers,
+        json={"entries": [{"provider_account_id": provider_id, "model": "gpt-b", "enabled": False}]},
+    )
+    assert disabled_route.status_code == 422

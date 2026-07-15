@@ -51,3 +51,21 @@ def test_source_build_agent_setting_rejects_missing_permission(monkeypatch, tmp_
 
     assert get_response.status_code == 403
     assert put_response.status_code == 403
+
+
+def test_source_build_agent_availability_uses_source_build_route():
+    from app.application.services.system_settings_service import SystemSettingsService
+
+    class SettingsRepo:
+        def get_bool(self, _key, default):
+            return default
+
+    class Registry:
+        def resolve_group(self, group):
+            if group == "source_build":
+                raise LookupError("source build route missing")
+            return [object()]
+
+    settings = SystemSettingsService(SettingsRepo(), Registry()).get_source_build_agent_settings()
+
+    assert settings["provider_configured"] is False

@@ -136,3 +136,32 @@ def test_build_provider_registry_registers_llm_provider_from_env(monkeypatch, tm
     providers = registry.resolve_group("ai")
 
     assert providers[0].name == "local-llm"
+
+
+def test_build_provider_registry_keeps_env_fallback_for_groups_without_persisted_route(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "provider-route-fallback.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+    monkeypatch.setenv("LLM_API_URL", "https://env.example/v1/chat/completions")
+    monkeypatch.setenv("LLM_API_KEY", "env-secret")
+    monkeypatch.setenv("LLM_MODEL", "env-model")
+
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
+    from app.infrastructure.persistence.factory import build_provider_registry
+
+    bootstrap_sqlite()
+    repo = SQLiteProviderRepository()
+    persisted = repo.save_provider(
+        name="persisted-ai",
+        base_url="https://persisted.example/v1",
+        api_key="persisted-secret",
+        default_model="persisted-model",
+        enabled=True,
+    )
+    repo.replace_routes("ai", [{"provider_account_id": persisted.id, "model": "persisted-model"}])
+
+    registry = build_provider_registry()
+
+    assert registry.resolve_group("ai")[0].name == "persisted-ai"
+    assert registry.resolve_group("source_build")[0].name == "local-llm"

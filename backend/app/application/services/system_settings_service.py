@@ -22,6 +22,6 @@ class SystemSettingsService:
 
     def _provider_available(self) -> bool:
         try:
-            return bool(self._provider_registry.resolve_group("ai"))
+            return bool(self._provider_registry.resolve_group("source_build"))
         except LookupError:
             return False

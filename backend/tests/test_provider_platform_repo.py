@@ -47,11 +47,11 @@ def test_provider_repository_preserves_blank_edit_key_and_orders_routes(tmp_path
 
     edited = repo.save_provider(
         id=primary.id,
-        name="primary",
+        name="primary-renamed",
         base_url="https://a2.example/v1",
         api_key="",
         default_model="a-model-2",
-        enabled=True,
+        enabled=False,
     )
     routes = repo.replace_routes(
         "source_build",
@@ -62,6 +62,8 @@ def test_provider_repository_preserves_blank_edit_key_and_orders_routes(tmp_path
     )
 
     assert edited.api_key == "sk-primary"
+    assert edited.name == "primary-renamed"
+    assert edited.enabled is False
     assert [(item.provider_account_id, item.priority) for item in routes] == [
         (backup.id, 0),
         (primary.id, 1),

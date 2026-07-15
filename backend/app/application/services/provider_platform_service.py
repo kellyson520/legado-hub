@@ -165,11 +165,13 @@ class ProviderPlatformService:
                     "enabled": bool(entry.get("enabled", True)),
                 }
             )
+        if not any(entry["enabled"] for entry in normalized_entries):
+            raise ValueError("at least one provider route entry must be enabled")
         routes = self._provider_repo.replace_routes(provider_group, normalized_entries)
         return {"group": provider_group, "entries": [self._serialize_route(route) for route in routes]}
 
     def get_llm_settings(self, default_provider_name: str, default_model: str) -> dict:
-        account = self._provider_repo.get_llm_provider() if self._provider_repo is not None else None
+        account = self._legacy_llm_account()
         if account is None:
             return {
                 "provider_name": default_provider_name,
@@ -193,13 +195,17 @@ class ProviderPlatformService:
     ) -> dict:
         if self._provider_repo is None:
             raise RuntimeError("provider repository is not configured")
-        account = self._provider_repo.upsert_llm_provider(
+        existing = self._legacy_llm_account()
+        account = self._provider_repo.save_provider(
+            id=existing.id if existing is not None else None,
             name=provider_name,
             base_url=base_url,
             api_key=api_key,
             default_model=model,
+            enabled=True,
         )
         self._ensure_initial_routes()
+        self._sync_legacy_route_models(account.id, model)
         return self._serialize_llm_settings(account, default_model=model)
 
     def list_quota_policies(self) -> list[dict]:
@@ -279,6 +285,35 @@ class ProviderPlatformService:
             return
         for provider_group in PROVIDER_ROUTE_GROUPS:
             self._provider_repo.replace_routes(provider_group, entries)
+
+    def _legacy_llm_account(self):
+        if self._provider_repo is None:
+            return None
+        default_routes = self._provider_repo.list_routes("default")
+        if default_routes:
+            account = self._provider_repo.get_provider(default_routes[0].provider_account_id)
+            if account is not None:
+                return account
+        return self._provider_repo.get_llm_provider()
+
+    def _sync_legacy_route_models(self, provider_id: str, model: str) -> None:
+        if self._provider_repo is None:
+            return
+        for provider_group in PROVIDER_ROUTE_GROUPS:
+            routes = self._provider_repo.list_routes(provider_group)
+            if not any(route.provider_account_id == provider_id for route in routes):
+                continue
+            self._provider_repo.replace_routes(
+                provider_group,
+                [
+                    {
+                        "provider_account_id": route.provider_account_id,
+                        "model": model if route.provider_account_id == provider_id else route.model,
+                        "enabled": route.enabled,
+                    }
+                    for route in routes
+                ],
+            )
 
     @staticmethod
     def _validate_provider_group(provider_group: str) -> None:

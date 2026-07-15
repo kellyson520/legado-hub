@@ -28,7 +28,7 @@ class ProviderRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     base_url: str = Field(min_length=1, max_length=500)
     api_key: str = Field(default="", max_length=2000)
-    default_model: str = Field(min_length=1, max_length=120)
+    default_model: str = Field(default="", max_length=120)
     enabled: bool = True
 
 

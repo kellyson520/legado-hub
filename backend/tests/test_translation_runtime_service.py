@@ -1,4 +1,5 @@
 import pytest
+import httpx
 
 
 class FlakyTranslationPlatform:
@@ -55,3 +56,28 @@ async def test_translation_service_splits_large_text_and_retries_failed_chunks(t
 
     rows = await service.list_jobs()
     assert rows[0]["id"] == job["id"]
+
+
+@pytest.mark.asyncio
+async def test_translation_service_does_not_retry_a_422_request_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "translation-invalid.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    class InvalidRequestPlatform:
+        def __init__(self):
+            self.calls = 0
+
+        async def invoke_chat(self, **_kwargs):
+            self.calls += 1
+            raise httpx.HTTPStatusError("invalid", request=httpx.Request("POST", "https://example.test"), response=httpx.Response(422))
+
+    from app.application.services.translation_service import TranslationService
+
+    platform = InvalidRequestPlatform()
+    service = TranslationService(platform=platform, max_chunk_attempts=2)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await service.create_job({"text": "bad", "source_language": "zh", "target_language": "en"})
+
+    assert platform.calls == 1

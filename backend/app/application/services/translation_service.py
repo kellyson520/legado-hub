@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+import httpx
+
 from app.core.exceptions import NotFoundException
 from app.domain.entities.translation_runtime import TranslationChunk, TranslationJob
 
@@ -116,6 +118,8 @@ class TranslationService:
                     attempt_count=attempt,
                 )
             except Exception as exc:
+                if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {400, 422}:
+                    raise
                 last_error = exc
         assert last_error is not None
         raise last_error
