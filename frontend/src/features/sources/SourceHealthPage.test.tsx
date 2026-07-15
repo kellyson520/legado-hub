@@ -1,60 +1,101 @@
 import { MemoryRouter } from 'react-router-dom'
-import { render, screen } from '@testing-library/react'
-import { vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, vi } from 'vitest'
 
 vi.mock('@/api/modules/sourceHealth', () => ({
-  listSourceHealth: vi.fn().mockResolvedValue({
-    success: true,
-    code: 'OK',
-    message: 'ok',
-    data: [
-      {
-        source_id: 7,
-        source_name: '七猫小说',
-        source_url: 'https://www.qimao.com',
-        health_status: 'healthy',
-        search_status: 'ok',
-        toc_status: 'ok',
-        content_status: 'ok',
-        failure_reason: '',
-        route_policy: 'allow',
-      },
-      {
-        source_id: 4,
-        source_name: '起点读书限免+本章说',
-        source_url: 'https://www.qidian.com',
-        health_status: 'blocked',
-        search_status: 'failed',
-        toc_status: 'skipped',
-        content_status: 'skipped',
-        failure_reason: 'token_missing',
-        route_policy: 'skip',
-      },
-    ],
-    meta: { page: 1, page_size: 20, total: 2 },
-    trace_id: null,
-  }),
-  probeSourceHealth: vi.fn().mockResolvedValue({
-    success: true,
-    code: 'OK',
-    message: 'ok',
-    data: {},
-    meta: {},
-    trace_id: null,
-  }),
-  recoverSourceHealth: vi.fn().mockResolvedValue({
-    success: true,
-    code: 'OK',
-    message: 'ok',
-    data: {},
-    meta: {},
-    trace_id: null,
-  }),
+  listSourceHealth: vi.fn(),
+  probeSourceHealth: vi.fn(),
+  recoverSourceHealth: vi.fn(),
 }))
 
+import { listSourceHealth, probeSourceHealth, recoverSourceHealth } from '@/api/modules/sourceHealth'
 import { SourceHealthPage } from './SourceHealthPage'
 
-test('source health page shows stage statuses and failure reasons', async () => {
+const pageOneRows = [
+  {
+    source_id: 7,
+    source_name: '七猫小说',
+    source_url: 'https://www.qimao.com',
+    health_status: 'healthy',
+    search_status: 'ok',
+    toc_status: 'ok',
+    content_status: 'ok',
+    failure_reason: '',
+    route_policy: 'allow',
+  },
+  {
+    source_id: 4,
+    source_name: '起点读书限免+本章说',
+    source_url: 'https://www.qidian.com',
+    health_status: 'blocked',
+    search_status: 'failed',
+    toc_status: 'skipped',
+    content_status: 'skipped',
+    failure_reason: 'token_missing',
+    route_policy: 'skip',
+  },
+]
+
+const pageTwoRows = [{
+  source_id: 22,
+  source_name: '第二页书源',
+  source_url: 'https://page-two.example.test',
+  health_status: 'dead',
+  search_status: 'failed',
+  toc_status: 'skipped',
+  content_status: 'skipped',
+  failure_reason: 'unreachable',
+  route_policy: 'skip',
+}]
+
+function healthResponse(page: number, data = page === 2 ? pageTwoRows : pageOneRows) {
+  return {
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data,
+    meta: { page, page_size: 20, total: 21 },
+    trace_id: null,
+  }
+}
+
+function mutationResponse() {
+  return {
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {},
+    meta: {},
+    trace_id: null,
+  }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+beforeEach(() => {
+  vi.mocked(listSourceHealth).mockReset()
+  vi.mocked(listSourceHealth).mockImplementation((params: { page?: number } = {}) => (
+    Promise.resolve(healthResponse(params.page ?? 1))
+  ))
+  vi.mocked(probeSourceHealth).mockReset()
+  vi.mocked(probeSourceHealth).mockResolvedValue(mutationResponse())
+  vi.mocked(recoverSourceHealth).mockReset()
+  vi.mocked(recoverSourceHealth).mockResolvedValue(mutationResponse())
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+test('source health page shows stage statuses, page-scoped summaries, and unique source actions', async () => {
   render(
     <MemoryRouter>
       <SourceHealthPage />
@@ -63,10 +104,230 @@ test('source health page shows stage statuses and failure reasons', async () => 
 
   expect(await screen.findByText('Source health control plane')).toBeInTheDocument()
   expect(await screen.findByText('token_missing')).toBeInTheDocument()
-  expect(await screen.findByText('Probe now')).toBeInTheDocument()
+  expect(screen.getByText('Total: 21')).toBeInTheDocument()
+  expect(screen.getByText('本页 Healthy: 1')).toBeInTheDocument()
+  expect(screen.getByText('本页 Blocked: 1')).toBeInTheDocument()
+  expect(screen.getByText('本页 Dead: 0')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Probe source 七猫小说' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Recover source 七猫小说' })).toBeEnabled()
   expect(
     (await screen.findAllByRole('link', { name: 'View source details' })).find(
       (link) => link.getAttribute('href') === '/sources/health/7'
     )
   ).toBeDefined()
+})
+
+test('source health page uses API metadata to navigate the inventory one page at a time', async () => {
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('Total: 21')).toBeInTheDocument()
+  expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+
+  await waitFor(() => {
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20 })
+  })
+  expect(await screen.findByText('第二页书源')).toBeInTheDocument()
+  expect(screen.getByText('Page 2 of 2')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled()
+})
+
+test('source health page stops loading and offers a retry when its request fails', async () => {
+  vi.mocked(listSourceHealth).mockRejectedValueOnce(new Error('network unavailable'))
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load source health. Please try again.')
+  expect(screen.queryByText('Loading')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+
+  await waitFor(() => {
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 1, page_size: 20 })
+  })
+  expect(await screen.findByText('七猫小说')).toBeInTheDocument()
+})
+
+test('a failed page request keeps the displayed page as the next navigation and action target', async () => {
+  let pageTwoAttempts = 0
+  vi.mocked(listSourceHealth).mockImplementation((params: { page?: number } = {}) => {
+    if ((params.page ?? 1) === 2) {
+      pageTwoAttempts += 1
+      return pageTwoAttempts === 1
+        ? Promise.reject(new Error('page two unavailable'))
+        : Promise.resolve(healthResponse(2))
+    }
+    return Promise.resolve(healthResponse(1))
+  })
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('七猫小说')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load source health. Please try again.')
+  expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await waitFor(() => {
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 1, page_size: 20 })
+  })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Probe source 七猫小说' }))
+  await waitFor(() => {
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 1, page_size: 20 })
+  })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  await waitFor(() => {
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20 })
+  })
+  expect(await screen.findByText('第二页书源')).toBeInTheDocument()
+})
+
+test.each(['probe', 'recover'] as const)('%s completion preserves the latest in-flight navigation', async (verb) => {
+  const mutation = deferred<ReturnType<typeof mutationResponse>>()
+  const firstPageTwo = deferred<ReturnType<typeof healthResponse>>()
+  const latestPageTwo = deferred<ReturnType<typeof healthResponse>>()
+  let pageTwoRequests = 0
+  if (verb === 'probe') vi.mocked(probeSourceHealth).mockReturnValueOnce(mutation.promise)
+  else vi.mocked(recoverSourceHealth).mockReturnValueOnce(mutation.promise)
+  vi.mocked(listSourceHealth).mockImplementation((params: { page?: number } = {}) => {
+    if ((params.page ?? 1) === 1) return Promise.resolve(healthResponse(1))
+    pageTwoRequests += 1
+    return pageTwoRequests === 1 ? firstPageTwo.promise : latestPageTwo.promise
+  })
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('七猫小说')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: verb === 'probe' ? 'Probe source 七猫小说' : 'Recover source 七猫小说' }))
+  expect(screen.getByRole('button', { name: verb === 'probe' ? 'Probe source 七猫小说' : 'Recover source 七猫小说' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: verb === 'probe' ? 'Recover source 七猫小说' : 'Probe source 七猫小说' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Probe source 起点读书限免+本章说' })).toBeEnabled()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  await waitFor(() => {
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20 })
+  })
+
+  mutation.resolve(mutationResponse())
+  await waitFor(() => expect(pageTwoRequests).toBe(2))
+  latestPageTwo.resolve(healthResponse(2, [{ ...pageTwoRows[0], source_name: `最新第二页书源-${verb}` }]))
+  expect(await screen.findByText(`最新第二页书源-${verb}`)).toBeInTheDocument()
+
+  firstPageTwo.resolve(healthResponse(2, [{ ...pageTwoRows[0], source_name: '过期第二页书源' }]))
+  await Promise.resolve()
+  expect(screen.getByText(`最新第二页书源-${verb}`)).toBeInTheDocument()
+  expect(screen.queryByText('过期第二页书源')).not.toBeInTheDocument()
+  expect(screen.getByText('Page 2 of 2')).toBeInTheDocument()
+})
+
+test('a rejected probe keeps the current page visible and re-enables its actions', async () => {
+  vi.mocked(probeSourceHealth).mockRejectedValueOnce(new Error('probe failed'))
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('七猫小说')).toBeInTheDocument()
+  const probeButton = screen.getByRole('button', { name: 'Probe source 七猫小说' })
+  fireEvent.click(probeButton)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to probe 七猫小说. Please try again.')
+  expect(screen.getByText('七猫小说')).toBeInTheDocument()
+  expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+  expect(probeButton).toBeEnabled()
+})
+
+test('a rejected recovery keeps the current page visible and re-enables its actions', async () => {
+  vi.mocked(recoverSourceHealth).mockRejectedValueOnce(new Error('recovery failed'))
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('七猫小说')).toBeInTheDocument()
+  const recoverButton = screen.getByRole('button', { name: 'Recover source 七猫小说' })
+  fireEvent.click(recoverButton)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to recover 七猫小说. Please try again.')
+  expect(screen.getByText('七猫小说')).toBeInTheDocument()
+  expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+  expect(recoverButton).toBeEnabled()
+})
+
+test('unmounting during a list request ignores its deferred response', async () => {
+  const pendingList = deferred<ReturnType<typeof healthResponse>>()
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  vi.mocked(listSourceHealth).mockReturnValueOnce(pendingList.promise)
+  const { unmount } = render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  await waitFor(() => expect(listSourceHealth).toHaveBeenCalledTimes(1))
+  unmount()
+  pendingList.resolve(healthResponse(1))
+  await Promise.resolve()
+  await Promise.resolve()
+
+  expect(listSourceHealth).toHaveBeenCalledTimes(1)
+  expect(consoleError).not.toHaveBeenCalled()
+})
+
+test('unmounting during a probe prevents its deferred success from reloading', async () => {
+  const pendingProbe = deferred<ReturnType<typeof mutationResponse>>()
+  vi.mocked(probeSourceHealth).mockReturnValueOnce(pendingProbe.promise)
+  const { unmount } = render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('七猫小说')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Probe source 七猫小说' }))
+  unmount()
+  pendingProbe.resolve(mutationResponse())
+  await Promise.resolve()
+  await Promise.resolve()
+
+  expect(listSourceHealth).toHaveBeenCalledTimes(1)
+})
+
+test('unmounting during a rejected recovery does not update the removed page', async () => {
+  const pendingRecovery = deferred<ReturnType<typeof mutationResponse>>()
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  vi.mocked(recoverSourceHealth).mockReturnValueOnce(pendingRecovery.promise)
+  const { unmount } = render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('七猫小说')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Recover source 七猫小说' }))
+  unmount()
+  pendingRecovery.reject(new Error('recovery failed'))
+  await Promise.resolve()
+  await Promise.resolve()
+
+  expect(listSourceHealth).toHaveBeenCalledTimes(1)
+  expect(consoleError).not.toHaveBeenCalled()
 })

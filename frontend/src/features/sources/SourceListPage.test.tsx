@@ -32,11 +32,16 @@ vi.mock('@/api/modules/sources', () => ({
     message: 'ok',
     data: [
       {
-        id: 'source-1',
-        name: 'Published',
-        status: 'published',
-        publishedVersion: 'v3',
-        latestGrade: 'A',
+        id: 1,
+        bookSourceName: '运行书源',
+        bookSourceUrl: 'https://source.example.test',
+        bookSourceGroup: '测试',
+        enabled: true,
+        sourceStatus: 'enabled',
+        sourceOrigin: 'imported',
+        lastCheckTime: '2026-07-15T10:00:00Z',
+        errorMsg: '',
+        payload: {},
       },
     ],
     meta: { page: 1, total: 1 },
@@ -78,11 +83,14 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-test('source list renders current status, published version, and latest run grade', async () => {
+test('source list renders legacy runtime name, URL, and source status', async () => {
   render(<MemoryRouter><SourceListPage /></MemoryRouter>)
 
-  expect(await screen.findByText('Published')).toBeInTheDocument()
-  expect(await screen.findByText('最近评分')).toBeInTheDocument()
+  expect(await screen.findByText('运行书源')).toBeInTheDocument()
+  expect(screen.getByText('https://source.example.test')).toBeInTheDocument()
+  expect(screen.getByText('enabled')).toBeInTheDocument()
+  expect(screen.queryByText('已发布版本')).not.toBeInTheDocument()
+  expect(screen.queryByText('最近评分')).not.toBeInTheDocument()
   expect(screen.getByRole('heading', { name: '书源运行库存' })).toBeVisible()
   expect(screen.getByRole('link', { name: '打开书源健康控制台' })).toHaveClass('inline-flex')
 })

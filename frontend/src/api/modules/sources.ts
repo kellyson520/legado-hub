@@ -2,11 +2,16 @@ import { apiClient } from '@/api/client'
 import type { ApiEnvelope } from '@/api/types'
 
 export interface SourceRow {
-  id: string
-  name: string
-  status: string
-  publishedVersion: string
-  latestGrade: string
+  id: number | string
+  bookSourceName: string
+  bookSourceUrl: string
+  bookSourceGroup: string
+  enabled: boolean
+  sourceStatus: string
+  sourceOrigin: string | null
+  lastCheckTime: string | null
+  errorMsg: string | null
+  payload?: Record<string, unknown>
 }
 
 export interface SourceListParams {
