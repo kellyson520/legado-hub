@@ -505,6 +505,178 @@ async def test_verification_wall_uses_validated_standard_browser_full_chain_with
     assert version.payload['source_audit']['browser_session_id'] == 'browser-session-1'
 
 
+def test_manual_browser_acceptance_marks_awaiting_candidate_passed_and_records_final_run():
+    from app.application.services.interactive_browser_service import BrowserValidationResult
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    version = SourceVersion(
+        id='candidate-manual-browser-success',
+        source_definition_id=17,
+        source_type='book',
+        source_id='https://blocked.example.test',
+        status='candidate',
+        payload={
+            'keyword': 'sample',
+            'source_rule': {'bookSourceUrl': 'https://blocked.example.test'},
+            'source_audit': {
+                'status': 'awaiting_manual_verification',
+                'attempt': 1,
+                'max_attempts': 5,
+                'browser_session_id': 'browser-session-1',
+                'history': [{
+                    'status': 'failed',
+                    'reason': 'verification_required',
+                    'score': 0,
+                    'grade': 'F',
+                }],
+            },
+        },
+    )
+    runtime = FakeRuntimeRepository(version)
+    runtime.runs.append({
+        'source_version_id': version.id,
+        'step_results': {'source_audit': {'attempt': 1, 'run_kind': 'normal'}},
+    })
+    service = SourceBuildAuditService(
+        runtime_repo=runtime,
+        probe_service_factory=lambda: pytest.fail('manual acceptance must not probe again'),
+        build_service=FakeBuildService(),
+        review_service=FakeReviewService(),
+    )
+
+    result = service.accept_manual_browser_validation(
+        version.id,
+        browser_session_id='browser-session-1',
+        validation=BrowserValidationResult.passed({
+            'search': {'status': 'ok', 'hit_count': 1},
+            'toc': {'status': 'ok', 'hit_count': 1},
+            'content': {'status': 'ok', 'content_length': 120},
+        }),
+    )
+
+    assert result['status'] == 'passed'
+    assert result['score'] == 100
+    assert result['grade'] == 'A'
+    assert version.status == 'candidate'
+    assert version.payload['source_audit']['status'] == 'passed'
+    assert version.payload['source_audit']['browser_session_id'] == 'browser-session-1'
+    assert version.payload['source_audit']['report']['browser_validation'] is True
+    assert len(runtime.runs) == 2
+    assert runtime.runs[-1]['score'] == 100
+    assert runtime.runs[-1]['grade'] == 'A'
+    assert runtime.runs[-1]['step_results']['source_audit']['run_kind'] == 'manual_browser'
+
+
+def test_manual_browser_acceptance_restores_awaiting_audit_when_final_run_persistence_fails():
+    from app.application.services.interactive_browser_service import BrowserValidationResult
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    version = SourceVersion(
+        id='candidate-manual-browser-failure',
+        source_definition_id=17,
+        source_type='book',
+        source_id='https://blocked.example.test',
+        status='candidate',
+        payload={
+            'source_audit': {
+                'status': 'awaiting_manual_verification',
+                'attempt': 1,
+                'max_attempts': 5,
+                'browser_session_id': 'browser-session-1',
+                'history': [],
+            },
+        },
+    )
+    runtime = FakeRuntimeRepository(version, fail_test_runs=1)
+    service = SourceBuildAuditService(
+        runtime_repo=runtime,
+        probe_service_factory=lambda: pytest.fail('manual acceptance must not probe again'),
+        build_service=FakeBuildService(),
+        review_service=FakeReviewService(),
+    )
+
+    with pytest.raises(RuntimeError, match='test run persistence unavailable'):
+        service.accept_manual_browser_validation(
+            version.id,
+            browser_session_id='browser-session-1',
+            validation=BrowserValidationResult.passed({
+                'search': {'status': 'ok', 'hit_count': 1},
+                'toc': {'status': 'ok', 'hit_count': 1},
+                'content': {'status': 'ok', 'content_length': 120},
+            }),
+        )
+
+    assert version.payload['source_audit']['status'] == 'awaiting_manual_verification'
+    assert version.payload['source_audit']['browser_session_id'] == 'browser-session-1'
+
+
+@pytest.mark.asyncio
+async def test_manual_browser_acceptance_keeps_persisted_checkpoint_when_rollback_fails_and_scheduler_settles_it():
+    from app.application.services.interactive_browser_service import BrowserValidationResult
+    from app.application.services.source_build_audit_service import (
+        ManualBrowserValidationRecoveryPending,
+        SourceBuildAuditService,
+    )
+    from app.application.services.source_runtime_service import SourceRuntimeService
+    from app.core.exceptions import ValidationException
+
+    version = SourceVersion(
+        id='candidate-manual-browser-recovery-pending',
+        source_definition_id=17,
+        source_type='book',
+        source_id='https://blocked.example.test',
+        status='candidate',
+        payload={
+            'source_audit': {
+                'status': 'awaiting_manual_verification',
+                'attempt': 1,
+                'max_attempts': 5,
+                'browser_session_id': 'browser-session-1',
+                'history': [],
+            },
+        },
+    )
+    runtime = FakeRuntimeRepository(version, fail_payload_updates={2}, fail_test_runs=1)
+    audit = SourceBuildAuditService(
+        runtime_repo=runtime,
+        probe_service_factory=lambda: pytest.fail('manual acceptance must not probe again'),
+        build_service=FakeBuildService(),
+        review_service=FakeReviewService(),
+    )
+
+    with pytest.raises(ManualBrowserValidationRecoveryPending) as raised:
+        audit.accept_manual_browser_validation(
+            version.id,
+            browser_session_id='browser-session-1',
+            validation=BrowserValidationResult.passed({
+                'search': {'status': 'ok', 'hit_count': 1},
+                'toc': {'status': 'ok', 'hit_count': 1},
+                'content': {'status': 'ok', 'content_length': 120},
+            }),
+        )
+
+    checkpoint = version.payload['source_audit']
+    assert checkpoint['status'] == 'passed'
+    assert checkpoint['test_run_pending'] is True
+    assert raised.value.audit_result == {
+        'source_version_id': version.id,
+        'status': 'passed',
+        'score': 100,
+        'grade': 'A',
+        'report': checkpoint['report'],
+        'recovery_pending': True,
+    }
+    with pytest.raises(ValidationException, match='checkpoint must settle'):
+        SourceRuntimeService(repo=None)._assert_source_audit_publishable(version)
+
+    recovered = await audit.audit(version.id)
+
+    assert recovered['status'] == 'passed'
+    assert 'test_run_pending' not in version.payload['source_audit']
+    assert len(runtime.runs) == 1
+    SourceRuntimeService(repo=None)._assert_source_audit_publishable(version)
+
+
 async def test_fifth_failed_audit_marks_candidate_failed_and_enqueues_one_review():
     from app.application.services.source_build_audit_service import SourceBuildAuditService
     from app.application.services.source_review_service import SourceReviewService

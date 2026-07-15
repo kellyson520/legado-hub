@@ -1,8 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { beforeEach, vi } from 'vitest'
 
 const systemMocks = vi.hoisted(() => ({
   getSourceBuildAgentSettings: vi.fn(),
+  getInteractiveBrowserSettings: vi.fn(),
   createProvider: vi.fn(),
   updateProvider: vi.fn(),
   discoverProviderModels: vi.fn(),
@@ -25,6 +27,7 @@ const systemMocks = vi.hoisted(() => ({
     trace_id: null,
   }),
   updateSourceBuildAgentSettings: vi.fn(),
+  updateInteractiveBrowserSettings: vi.fn(),
 }))
 
 vi.mock('@/api/modules/system', () => ({
@@ -61,6 +64,7 @@ vi.mock('@/api/modules/system', () => ({
     trace_id: null,
   }),
   getSourceBuildAgentSettings: systemMocks.getSourceBuildAgentSettings,
+  getInteractiveBrowserSettings: systemMocks.getInteractiveBrowserSettings,
   createProvider: systemMocks.createProvider,
   updateProvider: systemMocks.updateProvider,
   discoverProviderModels: systemMocks.discoverProviderModels,
@@ -68,6 +72,7 @@ vi.mock('@/api/modules/system', () => ({
   updateProviderRoute: systemMocks.updateProviderRoute,
   updateLLMSettings: systemMocks.updateLLMSettings,
   updateSourceBuildAgentSettings: systemMocks.updateSourceBuildAgentSettings,
+  updateInteractiveBrowserSettings: systemMocks.updateInteractiveBrowserSettings,
 }))
 
 vi.mock('@/api/modules/ai', () => ({
@@ -105,6 +110,28 @@ const sourceBuildAgentSettings = {
   trace_id: null,
 }
 
+const interactiveBrowserSettings = {
+  success: true,
+  code: 'OK',
+  message: 'ok',
+  data: {
+    enabled: false,
+    automaticEnabled: true,
+    maxSessions: 1,
+    sessionTimeoutSeconds: 300,
+  },
+  meta: {},
+  trace_id: null,
+}
+
+function deferred<T>() {
+  let resolve: (value: T) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve: resolve! }
+}
+
 beforeEach(() => {
   systemMocks.getSourceBuildAgentSettings.mockReset().mockResolvedValue(sourceBuildAgentSettings)
   systemMocks.createProvider.mockReset()
@@ -120,6 +147,16 @@ beforeEach(() => {
     data: {
       enabled: true,
       provider_configured: false,
+    },
+  })
+  systemMocks.getInteractiveBrowserSettings.mockReset().mockResolvedValue(interactiveBrowserSettings)
+  systemMocks.updateInteractiveBrowserSettings.mockReset().mockResolvedValue({
+    ...interactiveBrowserSettings,
+    data: {
+      enabled: true,
+      automaticEnabled: true,
+      maxSessions: 3,
+      sessionTimeoutSeconds: 60,
     },
   })
 })
@@ -265,6 +302,167 @@ test('system settings page announces Agent settings save failures as errors', as
   fireEvent.click(sourceBuildAgentSwitch)
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save source build Agent settings')
+})
+
+test('system settings page saves interactive browser verification settings with bounded values', async () => {
+  render(<SystemSettingsPage />)
+
+  const browserSwitch = await screen.findByRole('switch', { name: 'Interactive browser verification' })
+  const automaticSwitch = screen.getByRole('switch', { name: 'Automatically attempt verification' })
+  expect(browserSwitch).not.toBeChecked()
+  expect(automaticSwitch).toBeDisabled()
+
+  fireEvent.click(browserSwitch)
+  expect(automaticSwitch).not.toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Maximum sessions'), { target: { value: '5' } })
+  fireEvent.change(screen.getByLabelText('Session timeout (seconds)'), { target: { value: '30' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save interactive browser settings' }))
+
+  await waitFor(() => {
+    expect(systemMocks.updateInteractiveBrowserSettings).toHaveBeenCalledWith({
+      enabled: true,
+      automaticEnabled: true,
+      maxSessions: 3,
+      sessionTimeoutSeconds: 60,
+    })
+  })
+  expect(await screen.findByRole('status')).toHaveTextContent('Interactive browser settings saved')
+})
+
+test('system settings page truncates fractional interactive browser limits before saving', async () => {
+  render(<SystemSettingsPage />)
+
+  await screen.findByRole('switch', { name: 'Interactive browser verification' })
+  fireEvent.change(screen.getByLabelText('Maximum sessions'), { target: { value: '1.5' } })
+  fireEvent.change(screen.getByLabelText('Session timeout (seconds)'), { target: { value: '300.9' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save interactive browser settings' }))
+
+  await waitFor(() => {
+    expect(systemMocks.updateInteractiveBrowserSettings).toHaveBeenCalledWith({
+      enabled: false,
+      automaticEnabled: true,
+      maxSessions: 1,
+      sessionTimeoutSeconds: 300,
+    })
+  })
+})
+
+test('system settings page announces interactive browser settings save failures as errors', async () => {
+  systemMocks.updateInteractiveBrowserSettings.mockRejectedValueOnce(new Error('save unavailable'))
+  render(<SystemSettingsPage />)
+
+  fireEvent.click(await screen.findByRole('switch', { name: 'Interactive browser verification' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save interactive browser settings' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save interactive browser settings')
+})
+
+test('system settings page keeps browser edits available after a save failure', async () => {
+  systemMocks.updateInteractiveBrowserSettings.mockRejectedValueOnce(new Error('save unavailable'))
+  render(<SystemSettingsPage />)
+
+  fireEvent.click(await screen.findByRole('switch', { name: 'Interactive browser verification' }))
+  fireEvent.change(screen.getByLabelText('Maximum sessions'), { target: { value: '2' } })
+  fireEvent.change(screen.getByLabelText('Session timeout (seconds)'), { target: { value: '180' } })
+  const saveButton = screen.getByRole('button', { name: 'Save interactive browser settings' })
+  fireEvent.click(saveButton)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save interactive browser settings')
+  expect(screen.queryByRole('button', { name: 'Retry interactive browser settings' })).not.toBeInTheDocument()
+  expect(saveButton).not.toBeDisabled()
+
+  fireEvent.click(saveButton)
+  await waitFor(() => {
+    expect(systemMocks.updateInteractiveBrowserSettings).toHaveBeenLastCalledWith({
+      enabled: true,
+      automaticEnabled: true,
+      maxSessions: 2,
+      sessionTimeoutSeconds: 180,
+    })
+  })
+})
+
+test('system settings page preserves unsaved browser edits when saving LLM settings', async () => {
+  render(<SystemSettingsPage />)
+
+  await screen.findByRole('switch', { name: 'Interactive browser verification' })
+  const maximumSessions = screen.getByLabelText('Maximum sessions')
+  fireEvent.change(maximumSessions, { target: { value: '2' } })
+  expect(maximumSessions).toHaveValue(2)
+  expect(systemMocks.getInteractiveBrowserSettings).toHaveBeenCalledTimes(1)
+
+  fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.example.test/v1' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save LLM settings' }))
+
+  expect(await screen.findByText('LLM settings saved')).toBeInTheDocument()
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+
+  expect(systemMocks.getInteractiveBrowserSettings).toHaveBeenCalledTimes(1)
+  expect(maximumSessions).toHaveValue(2)
+})
+
+test('system settings page disables interactive browser controls after load failure and retries', async () => {
+  systemMocks.getInteractiveBrowserSettings
+    .mockRejectedValueOnce(new Error('settings unavailable'))
+    .mockResolvedValueOnce({
+      ...interactiveBrowserSettings,
+      data: {
+        enabled: true,
+        automaticEnabled: true,
+        maxSessions: 2,
+        sessionTimeoutSeconds: 240,
+      },
+    })
+  render(<SystemSettingsPage />)
+
+  const browserSwitch = await screen.findByRole('switch', { name: 'Interactive browser verification' })
+  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load interactive browser settings')
+  expect(browserSwitch).toBeDisabled()
+  expect(screen.getByRole('switch', { name: 'Automatically attempt verification' })).toBeDisabled()
+  expect(screen.getByLabelText('Maximum sessions')).toBeDisabled()
+  expect(screen.getByLabelText('Session timeout (seconds)')).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Save interactive browser settings' })).toBeDisabled()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Retry interactive browser settings' }))
+
+  await waitFor(() => expect(systemMocks.getInteractiveBrowserSettings).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(browserSwitch).not.toBeDisabled())
+  expect(browserSwitch).toBeChecked()
+})
+
+test('system settings page ignores stale interactive browser settings after effect cleanup', async () => {
+  const initialLoad = deferred<typeof interactiveBrowserSettings>()
+  const refreshedSettings = {
+    ...interactiveBrowserSettings,
+    data: {
+      enabled: true,
+      automaticEnabled: false,
+      maxSessions: 2,
+      sessionTimeoutSeconds: 240,
+    },
+  }
+  systemMocks.getInteractiveBrowserSettings
+    .mockImplementationOnce(() => initialLoad.promise)
+    .mockResolvedValueOnce(refreshedSettings)
+  render(
+    <StrictMode>
+      <SystemSettingsPage />
+    </StrictMode>,
+  )
+
+  const browserSwitch = await screen.findByRole('switch', { name: 'Interactive browser verification' })
+  await waitFor(() => expect(systemMocks.getInteractiveBrowserSettings).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(browserSwitch).toBeChecked())
+
+  await act(async () => {
+    initialLoad.resolve(interactiveBrowserSettings)
+    await initialLoad.promise
+  })
+
+  expect(browserSwitch).toBeChecked()
+  expect(screen.getByLabelText('Maximum sessions')).toHaveValue(2)
 })
 
 test('ai tasks page shows provider and model for each task', async () => {

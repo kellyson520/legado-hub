@@ -11,6 +11,18 @@ class SourceAuditRecoveryError(RuntimeError):
     pass
 
 
+class ManualBrowserValidationAcceptanceError(ValueError):
+    pass
+
+
+class ManualBrowserValidationRecoveryPending(RuntimeError):
+    """The manual validation checkpoint is durable, but its final run needs recovery."""
+
+    def __init__(self, audit_result: dict):
+        super().__init__('manual_browser_validation_recovery_pending')
+        self.audit_result = deepcopy(audit_result)
+
+
 class SourceBuildAuditService:
     MAX_ATTEMPTS = 5
     MAX_STAGE_ELAPSED_MS = 10_000
@@ -271,6 +283,77 @@ class SourceBuildAuditService:
         with ThreadPoolExecutor(max_workers=1) as executor:
             return executor.submit(asyncio.run, coroutine).result()
 
+    def accept_manual_browser_validation(
+        self,
+        source_version_id: str,
+        *,
+        browser_session_id: str,
+        validation,
+    ) -> dict:
+        """Accept a completed manual browser full-chain validation without re-probing."""
+        version = self._runtime.get_version(source_version_id)
+        if version is None:
+            raise ManualBrowserValidationAcceptanceError('source_version_missing')
+        if version.status != 'candidate':
+            raise ManualBrowserValidationAcceptanceError('source_version_not_candidate')
+        if not bool(getattr(validation, 'passed', False)):
+            raise ManualBrowserValidationAcceptanceError('browser_validation_not_passed')
+
+        payload = deepcopy(version.payload)
+        original_payload = deepcopy(payload)
+        audit = dict(payload.get('source_audit') or {})
+        if audit.get('status') != 'awaiting_manual_verification':
+            raise ManualBrowserValidationAcceptanceError('source_audit_not_awaiting_manual_verification')
+        if str(audit.get('browser_session_id') or '') != browser_session_id:
+            raise ManualBrowserValidationAcceptanceError('browser_session_mismatch')
+
+        attempt = int(audit.get('attempt', 0) or 0)
+        report = self._browser_validation_report(getattr(validation, 'stages', None) or {})
+        report.update({
+            'attempt': attempt,
+            'max_attempts': self.MAX_ATTEMPTS,
+            'score': 100,
+            'grade': 'A',
+        })
+        audit.update({
+            'status': 'passed',
+            'attempt': attempt,
+            'max_attempts': self.MAX_ATTEMPTS,
+            'report': report,
+            'history': list(audit.get('history') or [])[-4:] + [report],
+        })
+        payload['source_audit'] = audit
+        try:
+            return self._persist_outcome_with_test_run(
+                version=version,
+                payload=payload,
+                audit=audit,
+                report=report,
+                score=100,
+                grade='A',
+                step_passes={'search': True, 'toc': True, 'content': True},
+                diagnostics=[],
+                test_run_kind='manual_browser',
+            )
+        except Exception:
+            persisted_version = self._runtime.get_version(version.id)
+            persisted_payload = getattr(persisted_version, 'payload', {}) if persisted_version is not None else {}
+            persisted_audit = dict(persisted_payload.get('source_audit') or {}) if isinstance(persisted_payload, dict) else {}
+            persisted_checkpoint = (
+                persisted_audit.get('status') == 'passed'
+                and persisted_audit.get('test_run_pending') is True
+                and str(persisted_audit.get('browser_session_id') or '') == browser_session_id
+            )
+            try:
+                self._runtime.update_version_payload(version.id, original_payload)
+            except Exception as rollback_error:
+                if persisted_checkpoint:
+                    audit_result = self._audit_result(persisted_version, persisted_audit)
+                    audit_result['recovery_pending'] = True
+                    raise ManualBrowserValidationRecoveryPending(audit_result) from rollback_error
+                raise SourceAuditRecoveryError('source audit manual acceptance rollback requires recovery') from rollback_error
+            raise
+
     def _queue_repair_after_pending(
         self,
         *,
@@ -358,11 +441,13 @@ class SourceBuildAuditService:
         grade: str,
         step_passes: dict,
         diagnostics: list[str],
+        test_run_kind: str = 'normal',
     ) -> dict:
         stable_status = str(audit.get('status') or 'failed')
         audit['test_run_pending'] = True
         audit['test_run_attempt'] = int(report.get('attempt', 0) or 0)
         audit['test_run_status'] = stable_status
+        audit['test_run_kind'] = test_run_kind
         audit['report'] = report
         payload['source_audit'] = audit
         try:
@@ -424,12 +509,14 @@ class SourceBuildAuditService:
         diagnostics: list[str],
     ) -> None:
         attempt = int(audit.get('test_run_attempt', report.get('attempt', 0)) or 0)
-        if not self._has_recorded_audit_run(version.id, attempt):
-            self._record_test_run(version, score, grade, report, step_passes, diagnostics)
+        test_run_kind = str(audit.get('test_run_kind') or 'normal')
+        if not self._has_recorded_audit_run(version.id, attempt, test_run_kind):
+            self._record_test_run(version, score, grade, report, step_passes, diagnostics, test_run_kind)
         audit['report'] = report
         audit.pop('test_run_pending', None)
         audit.pop('test_run_attempt', None)
         audit.pop('test_run_status', None)
+        audit.pop('test_run_kind', None)
         payload['source_audit'] = audit
         self._runtime.update_version_payload(version.id, payload)
 
@@ -627,18 +714,30 @@ class SourceBuildAuditService:
     def _remaining_seconds(deadline: float) -> float:
         return max(0.0, deadline - time.monotonic())
 
-    def _has_recorded_audit_run(self, source_version_id: str, attempt: int) -> bool:
+    def _has_recorded_audit_run(self, source_version_id: str, attempt: int, test_run_kind: str = 'normal') -> bool:
         list_runs = getattr(self._runtime, 'list_test_runs', None)
         if not callable(list_runs):
             return False
         for run in list_runs(source_version_id):
             step_results = run.get('step_results', {}) if isinstance(run, dict) else getattr(run, 'step_results', {})
             metadata = step_results.get('source_audit', {}) if isinstance(step_results, dict) else {}
-            if int(metadata.get('attempt', -1) or -1) == attempt:
+            if (
+                int(metadata.get('attempt', -1) or -1) == attempt
+                and str(metadata.get('run_kind') or 'normal') == test_run_kind
+            ):
                 return True
         return False
 
-    def _record_test_run(self, version, score: int, grade: str, report: dict, step_passes: dict, diagnostics: list[str]):
+    def _record_test_run(
+        self,
+        version,
+        score: int,
+        grade: str,
+        report: dict,
+        step_passes: dict,
+        diagnostics: list[str],
+        test_run_kind: str = 'normal',
+    ):
         audit_attempt = int(report.get('attempt', 0) or 0)
         step_results = {
             name: {
@@ -648,12 +747,15 @@ class SourceBuildAuditService:
             }
             for name, stage in report['stages'].items()
         }
-        step_results['source_audit'] = {
+        source_audit_result = {
             'passed': True,
             'status': 'recorded',
             'elapsed_ms': 0,
             'attempt': audit_attempt,
         }
+        if test_run_kind != 'normal':
+            source_audit_result['run_kind'] = test_run_kind
+        step_results['source_audit'] = source_audit_result
         self._runtime.record_test_run(
             source_version_id=version.id,
             trigger='source_audit',

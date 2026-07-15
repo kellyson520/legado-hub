@@ -29,6 +29,10 @@ class InteractiveBrowserRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_active(self) -> list[InteractiveBrowserSession]:
+        raise NotImplementedError
+
+    @abstractmethod
     def update_state(
         self,
         session_id: str,
@@ -38,6 +42,19 @@ class InteractiveBrowserRepository(ABC):
         terminal_reason: str | None = None,
         closed_at: datetime | None = None,
     ) -> InteractiveBrowserSession:
+        raise NotImplementedError
+
+    @abstractmethod
+    def transition_state(
+        self,
+        session_id: str,
+        *,
+        expected_states,
+        state,
+        automatic_attempted: bool | None = None,
+        terminal_reason: str | None = None,
+        closed_at: datetime | None = None,
+    ) -> InteractiveBrowserSession | None:
         raise NotImplementedError
 
     @abstractmethod

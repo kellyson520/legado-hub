@@ -2,11 +2,15 @@ import asyncio
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 
+from app.application.services.interactive_browser_service import InteractiveBrowserUnavailableError
+from app.application.services.source_build_audit_service import ManualBrowserValidationRecoveryPending
 from app.core.config import settings
 from app.core.permissions import Permission
 from app.infrastructure.persistence.factory import (
     build_interactive_browser_service,
+    build_source_build_audit_service,
     build_source_runtime_repository,
 )
 from app.interfaces.http.deps import RequestIdentity, get_current_identity, require_permission
@@ -44,7 +48,7 @@ async def get_interactive_browser_session(
     identity: RequestIdentity = Depends(get_current_identity),
     _=Depends(require_permission(Permission.ENGINE_TEST)),
 ):
-    session = build_interactive_browser_service().get_for_owner(session_id, owner_id=str(identity.user_id))
+    session = await build_interactive_browser_service().get_for_owner(session_id, owner_id=str(identity.user_id))
     if session is None:
         raise HTTPException(status_code=404, detail='Interactive browser session not found')
     return _response('interactive browser session loaded', _serialize(session))
@@ -61,6 +65,10 @@ async def cancel_interactive_browser_session(
         session = await service.cancel(session_id, owner_id=str(identity.user_id))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail='Interactive browser session not found') from exc
+    except InteractiveBrowserUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _response('interactive browser session cancelled', _serialize(session))
 
 
@@ -72,7 +80,7 @@ async def continue_interactive_browser_validation(
 ):
     service = build_interactive_browser_service()
     owner_id = str(identity.user_id)
-    session = service.get_for_owner(session_id, owner_id=owner_id)
+    session = await service.get_for_owner(session_id, owner_id=owner_id)
     if session is None:
         raise HTTPException(status_code=404, detail='Interactive browser session not found')
     version = build_source_runtime_repository().get_version(session.source_version_id)
@@ -81,23 +89,55 @@ async def continue_interactive_browser_validation(
     source_rule = version.payload.get('source_rule') if isinstance(version.payload, dict) else None
     if not isinstance(source_rule, dict):
         raise HTTPException(status_code=422, detail='Source version has no candidate rule')
-    validation = await service.continue_validation(
-        session_id,
-        owner_id=owner_id,
-        source_rule=source_rule,
-        keyword=str(version.payload.get('keyword') or 'sample'),
-    )
-    return _response(
-        'interactive browser validation completed',
+    audit_result = {}
+
+    def accept_manual_browser_validation(validation):
+        try:
+            audit_result['value'] = build_source_build_audit_service().accept_manual_browser_validation(
+                version.id,
+                browser_session_id=session_id,
+                validation=validation,
+            )
+        except ManualBrowserValidationRecoveryPending as outcome:
+            audit_result['value'] = outcome.audit_result
+            audit_result['recovery_pending'] = True
+
+    try:
+        validation = await service.continue_validation(
+            session_id,
+            owner_id=owner_id,
+            source_rule=source_rule,
+            keyword=str(version.payload.get('keyword') or 'sample'),
+            on_success=accept_manual_browser_validation,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='Interactive browser session not found') from exc
+    except InteractiveBrowserUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    recovery_pending = bool(audit_result.get('recovery_pending'))
+    response = _response(
+        (
+            'interactive browser validation checkpoint requires recovery'
+            if recovery_pending
+            else 'interactive browser validation completed'
+        ),
         {
-            'session': _serialize(service.get_for_owner(session_id, owner_id=owner_id) or session),
+            'session': _serialize(await service.get_for_owner(session_id, owner_id=owner_id) or session),
             'validation': {
                 'passed': validation.passed,
                 'reason': validation.reason,
                 'stages': validation.stages or {},
             },
+            'audit': audit_result.get('value'),
+            'recovery_pending': recovery_pending,
         },
     )
+    if recovery_pending:
+        return JSONResponse(status_code=202, content=response)
+    return response
 
 
 @router.post('/sessions/{session_id}/relay-ticket')
@@ -108,9 +148,11 @@ async def create_interactive_browser_relay_ticket(
 ):
     service = build_interactive_browser_service()
     try:
-        ticket = service.issue_relay_ticket(session_id, owner_id=str(identity.user_id))
+        ticket = await service.issue_relay_ticket(session_id, owner_id=str(identity.user_id))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail='Interactive browser session not found') from exc
+    except InteractiveBrowserUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     relay_path = f'/api/interactive-browser/sessions/{ticket.session_id}/relay?{urlencode({"token": ticket.token, "owner_id": identity.user_id})}'
@@ -127,7 +169,7 @@ async def relay_interactive_browser_session(websocket: WebSocket, session_id: st
         return
     service = build_interactive_browser_service()
     try:
-        ticket = service.consume_relay_ticket(token, owner_id=owner_id)
+        ticket = await service.consume_relay_ticket(token, owner_id=owner_id)
     except Exception:
         await websocket.close(code=1008)
         return

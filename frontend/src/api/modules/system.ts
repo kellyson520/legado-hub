@@ -40,6 +40,27 @@ export interface SourceBuildAgentSettings {
   provider_configured?: boolean
 }
 
+export interface InteractiveBrowserSettings {
+  enabled: boolean
+  automaticEnabled: boolean
+  maxSessions: number
+  sessionTimeoutSeconds: number
+}
+
+export interface InteractiveBrowserSettingsInput {
+  enabled: boolean
+  automaticEnabled: boolean
+  maxSessions: number
+  sessionTimeoutSeconds: number
+}
+
+interface InteractiveBrowserSettingsResponse {
+  enabled: boolean
+  automatic_enabled: boolean
+  max_sessions: number
+  session_timeout_seconds: number
+}
+
 export interface ProviderConfigurationInput {
   name: string
   baseUrl: string
@@ -139,4 +160,36 @@ export function updateSourceBuildAgentSettings(payload: {
   enabled: boolean
 }): Promise<ApiEnvelope<SourceBuildAgentSettings>> {
   return apiClient.put<SourceBuildAgentSettings>('/system/source-build-agent-settings', payload)
+}
+
+function mapInteractiveBrowserSettings(settings: InteractiveBrowserSettingsResponse): InteractiveBrowserSettings {
+  return {
+    enabled: settings.enabled,
+    automaticEnabled: settings.automatic_enabled,
+    maxSessions: settings.max_sessions,
+    sessionTimeoutSeconds: settings.session_timeout_seconds,
+  }
+}
+
+export async function getInteractiveBrowserSettings(): Promise<ApiEnvelope<InteractiveBrowserSettings>> {
+  const response = await apiClient.get<InteractiveBrowserSettingsResponse>('/system/interactive-browser-settings')
+  return {
+    ...response,
+    data: mapInteractiveBrowserSettings(response.data),
+  }
+}
+
+export async function updateInteractiveBrowserSettings(
+  payload: InteractiveBrowserSettingsInput,
+): Promise<ApiEnvelope<InteractiveBrowserSettings>> {
+  const response = await apiClient.put<InteractiveBrowserSettingsResponse>('/system/interactive-browser-settings', {
+    enabled: payload.enabled,
+    automatic_enabled: payload.automaticEnabled,
+    max_sessions: payload.maxSessions,
+    session_timeout_seconds: payload.sessionTimeoutSeconds,
+  })
+  return {
+    ...response,
+    data: mapInteractiveBrowserSettings(response.data),
+  }
 }

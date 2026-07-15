@@ -1,12 +1,15 @@
 import { FormEvent, useEffect, useState } from 'react'
 
 import {
+  getInteractiveBrowserSettings,
   getSourceBuildAgentSettings,
   getLLMSettings,
   listProviders,
   listQuotaPolicies,
+  updateInteractiveBrowserSettings,
   updateSourceBuildAgentSettings,
   updateLLMSettings,
+  type InteractiveBrowserSettings,
   type LLMSettings,
   type ProviderRow,
   type QuotaPolicyRow,
@@ -39,16 +42,24 @@ export function SystemSettingsPage() {
   const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null)
   const [sourceBuildAgentSettings, setSourceBuildAgentSettings] = useState<SourceBuildAgentSettings | null>(null)
   const [sourceBuildAgentLoaded, setSourceBuildAgentLoaded] = useState(false)
+  const [interactiveBrowserSettings, setInteractiveBrowserSettings] = useState<InteractiveBrowserSettings | null>(null)
+  const [interactiveBrowserSettingsLoaded, setInteractiveBrowserSettingsLoaded] = useState(false)
   const [providerName, setProviderName] = useState('local-llm')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('gpt-4.1-mini')
   const [saving, setSaving] = useState(false)
   const [savingSourceBuildAgent, setSavingSourceBuildAgent] = useState(false)
+  const [savingInteractiveBrowser, setSavingInteractiveBrowser] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [sourceBuildAgentMessage, setSourceBuildAgentMessage] = useState<string | null>(null)
   const [sourceBuildAgentError, setSourceBuildAgentError] = useState<string | null>(null)
+  const [interactiveBrowserMessage, setInteractiveBrowserMessage] = useState<string | null>(null)
+  const [interactiveBrowserLoadError, setInteractiveBrowserLoadError] = useState<string | null>(null)
+  const [interactiveBrowserSaveError, setInteractiveBrowserSaveError] = useState<string | null>(null)
   const [settingsRefreshVersion, setSettingsRefreshVersion] = useState(0)
+  const [interactiveBrowserRefreshVersion, setInteractiveBrowserRefreshVersion] = useState(0)
+  const interactiveBrowserSettingsEditable = interactiveBrowserSettingsLoaded && interactiveBrowserSettings !== null
 
   async function refreshSourceBuildAgentSettings() {
     try {
@@ -86,6 +97,32 @@ export function SystemSettingsPage() {
       mounted = false
     }
   }, [settingsRefreshVersion])
+
+  useEffect(() => {
+    let active = true
+    setInteractiveBrowserSettingsLoaded(false)
+
+    async function loadInteractiveBrowserSettings() {
+      try {
+        const response = await getInteractiveBrowserSettings()
+        if (!active) return
+        setInteractiveBrowserSettings(response.data)
+        setInteractiveBrowserLoadError(null)
+      } catch {
+        if (!active) return
+        setInteractiveBrowserLoadError('Failed to load interactive browser settings')
+      } finally {
+        if (active) {
+          setInteractiveBrowserSettingsLoaded(true)
+        }
+      }
+    }
+
+    void loadInteractiveBrowserSettings()
+    return () => {
+      active = false
+    }
+  }, [interactiveBrowserRefreshVersion])
 
   async function handleSaveLLM(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -127,6 +164,34 @@ export function SystemSettingsPage() {
     } finally {
       setSavingSourceBuildAgent(false)
     }
+  }
+
+  async function handleSaveInteractiveBrowserSettings() {
+    if (!interactiveBrowserSettings) return
+
+    setSavingInteractiveBrowser(true)
+    setInteractiveBrowserMessage(null)
+    setInteractiveBrowserSaveError(null)
+    try {
+      const response = await updateInteractiveBrowserSettings({
+        enabled: interactiveBrowserSettings.enabled,
+        automaticEnabled: interactiveBrowserSettings.automaticEnabled,
+        maxSessions: Math.min(3, Math.max(1, Math.trunc(interactiveBrowserSettings.maxSessions))),
+        sessionTimeoutSeconds: Math.min(600, Math.max(60, Math.trunc(interactiveBrowserSettings.sessionTimeoutSeconds))),
+      })
+      setInteractiveBrowserSettings(response.data)
+      setInteractiveBrowserMessage('Interactive browser settings saved')
+    } catch {
+      setInteractiveBrowserSaveError('Failed to save interactive browser settings')
+    } finally {
+      setSavingInteractiveBrowser(false)
+    }
+  }
+
+  function handleRetryInteractiveBrowserSettings() {
+    setInteractiveBrowserLoadError(null)
+    setInteractiveBrowserSettingsLoaded(false)
+    setInteractiveBrowserRefreshVersion((current) => current + 1)
   }
 
   async function handleProviderSaved() {
@@ -249,6 +314,137 @@ export function SystemSettingsPage() {
                 {sourceBuildAgentError}
               </p>
             ) : null}
+          </div>
+
+          <div className="mt-5 border-t border-border pt-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium text-foreground">Interactive browser verification</h4>
+                <p className="text-sm text-muted-foreground">
+                  在普通浏览器访问仍需人工验证时，提供受限的交互式验证会话。
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                role="switch"
+                aria-checked={Boolean(interactiveBrowserSettings?.enabled)}
+                aria-label="Interactive browser verification"
+                disabled={savingInteractiveBrowser || !interactiveBrowserSettingsEditable}
+                onClick={() =>
+                  setInteractiveBrowserSettings((current) =>
+                    current ? { ...current, enabled: !current.enabled } : current,
+                  )
+                }
+              >
+                {!interactiveBrowserSettingsLoaded
+                  ? 'Loading…'
+                  : interactiveBrowserSettings?.enabled
+                    ? 'Enabled'
+                    : 'Disabled'}
+              </Button>
+            </div>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 p-3">
+                <span className="text-sm font-medium text-foreground">Automatically attempt verification</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  role="switch"
+                  aria-checked={Boolean(interactiveBrowserSettings?.automaticEnabled)}
+                  aria-label="Automatically attempt verification"
+                  disabled={
+                    savingInteractiveBrowser ||
+                    !interactiveBrowserSettingsEditable ||
+                    !interactiveBrowserSettings?.enabled
+                  }
+                  onClick={() =>
+                    setInteractiveBrowserSettings((current) =>
+                      current ? { ...current, automaticEnabled: !current.automaticEnabled } : current,
+                    )
+                  }
+                >
+                  {interactiveBrowserSettings?.automaticEnabled ? 'Enabled' : 'Disabled'}
+                </Button>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground" htmlFor="interactive-browser-max-sessions">
+                  Maximum sessions
+                </label>
+                <Input
+                  id="interactive-browser-max-sessions"
+                  type="number"
+                  min={1}
+                  max={3}
+                  step={1}
+                  value={interactiveBrowserSettings?.maxSessions ?? ''}
+                  disabled={savingInteractiveBrowser || !interactiveBrowserSettingsEditable}
+                  onChange={(event) =>
+                    setInteractiveBrowserSettings((current) =>
+                      current ? { ...current, maxSessions: Number(event.target.value) } : current,
+                    )
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground" htmlFor="interactive-browser-session-timeout">
+                  Session timeout (seconds)
+                </label>
+                <Input
+                  id="interactive-browser-session-timeout"
+                  type="number"
+                  min={60}
+                  max={600}
+                  step={1}
+                  value={interactiveBrowserSettings?.sessionTimeoutSeconds ?? ''}
+                  disabled={savingInteractiveBrowser || !interactiveBrowserSettingsEditable}
+                  onChange={(event) =>
+                    setInteractiveBrowserSettings((current) =>
+                      current ? { ...current, sessionTimeoutSeconds: Number(event.target.value) } : current,
+                    )
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                disabled={savingInteractiveBrowser || !interactiveBrowserSettingsEditable}
+                onClick={handleSaveInteractiveBrowserSettings}
+              >
+                {savingInteractiveBrowser ? 'Saving…' : 'Save interactive browser settings'}
+              </Button>
+              {interactiveBrowserMessage ? (
+                <p role="status" className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                  {interactiveBrowserMessage}
+                </p>
+              ) : null}
+              {interactiveBrowserSaveError ? (
+                <p role="alert" className="text-sm font-medium text-destructive">
+                  {interactiveBrowserSaveError}
+                </p>
+              ) : null}
+              {interactiveBrowserLoadError ? (
+                <p role="alert" className="text-sm font-medium text-destructive">
+                  {interactiveBrowserLoadError}
+                </p>
+              ) : null}
+              {interactiveBrowserLoadError && interactiveBrowserSettings === null ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={savingInteractiveBrowser}
+                  onClick={handleRetryInteractiveBrowserSettings}
+                >
+                  Retry interactive browser settings
+                </Button>
+              ) : null}
+            </div>
           </div>
         </section>
 

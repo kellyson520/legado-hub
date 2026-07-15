@@ -27,3 +27,36 @@ def test_app_lifespan_starts_source_build_worker_when_enabled(monkeypatch, tmp_p
 
     assert calls
     assert calls[0] == 2
+
+
+def test_app_lifespan_closes_interactive_browser_supervisor_on_shutdown(monkeypatch, tmp_path):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'interactive-browser-lifespan.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.main import app
+    import app.main as app_main
+
+    calls = []
+    to_thread_calls = []
+
+    def close_interactive_browser_supervisor():
+        calls.append('closed')
+
+    async def run_close_off_loop(func):
+        to_thread_calls.append(func)
+        func()
+
+    monkeypatch.setattr(
+        app_main,
+        'close_interactive_browser_supervisor',
+        close_interactive_browser_supervisor,
+        raising=False,
+    )
+    monkeypatch.setattr(app_main.asyncio, 'to_thread', run_close_off_loop)
+
+    with TestClient(app) as client:
+        assert client.get('/api/status').status_code == 200
+
+    assert calls == ['closed']
+    assert to_thread_calls == [close_interactive_browser_supervisor]

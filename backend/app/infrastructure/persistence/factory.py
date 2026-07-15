@@ -1,3 +1,5 @@
+from threading import Lock
+
 from app.application.services.ai_service import AIService
 from app.application.services.ai_workspace_service import AIWorkspaceService
 from app.application.services.agent_runtime_service import AgentRuntimeService
@@ -9,6 +11,7 @@ from app.application.services.event_delivery_service import EventDeliveryService
 from app.application.services.engine_service import EngineService
 from app.application.services.job_service import JobService
 from app.application.services.interactive_browser_service import InteractiveBrowserService
+from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
 from app.application.services.novel_agent_service import NovelAgentService
 from app.application.services.novel_app_service import NovelAppService
 from app.application.services.provider_platform_service import ProviderPlatformService
@@ -55,6 +58,10 @@ from app.infrastructure.persistence.sqlite.translation_runtime_repo_impl import 
     SQLiteTranslationRuntimeRepository,
 )
 from app.infrastructure.persistence.sqlite.work_knowledge_repo_impl import SQLiteWorkKnowledgeRepository
+
+
+_interactive_browser_service_singleton: InteractiveBrowserSupervisor | None = None
+_interactive_browser_service_lock = Lock()
 
 
 def build_auth_repository() -> SQLiteAuthRepository:
@@ -312,18 +319,39 @@ def build_system_settings_service() -> SystemSettingsService:
     )
 
 
-def build_interactive_browser_service() -> InteractiveBrowserService:
-    return InteractiveBrowserService(
-        repo=build_interactive_browser_repository(),
-        driver=PlaywrightBrowserDriver(
-            chromium_path=settings.INTERACTIVE_BROWSER_CHROMIUM_PATH,
-            xvfb_path=settings.INTERACTIVE_BROWSER_XVFB_PATH,
-            x11vnc_path=settings.INTERACTIVE_BROWSER_X11VNC_PATH,
-            websockify_path=settings.INTERACTIVE_BROWSER_WEBSOCKIFY_PATH,
-        ),
-        settings=build_system_settings_service(),
-        profile_root=settings.INTERACTIVE_BROWSER_PROFILE_ROOT,
-    )
+def build_interactive_browser_service() -> InteractiveBrowserSupervisor:
+    global _interactive_browser_service_singleton
+    if _interactive_browser_service_singleton is None:
+        with _interactive_browser_service_lock:
+            if _interactive_browser_service_singleton is None:
+                _interactive_browser_service_singleton = InteractiveBrowserSupervisor(
+                    lambda: InteractiveBrowserService(
+                        repo=build_interactive_browser_repository(),
+                        driver=PlaywrightBrowserDriver(
+                            chromium_path=settings.INTERACTIVE_BROWSER_CHROMIUM_PATH,
+                            xvfb_path=settings.INTERACTIVE_BROWSER_XVFB_PATH,
+                            x11vnc_path=settings.INTERACTIVE_BROWSER_X11VNC_PATH,
+                            websockify_path=settings.INTERACTIVE_BROWSER_WEBSOCKIFY_PATH,
+                        ),
+                        settings=build_system_settings_service(),
+                        profile_root=settings.INTERACTIVE_BROWSER_PROFILE_ROOT,
+                    )
+                )
+    return _interactive_browser_service_singleton
+
+
+def close_interactive_browser_supervisor() -> None:
+    """Close the cached browser owner loop without creating a new supervisor."""
+    global _interactive_browser_service_singleton
+    with _interactive_browser_service_lock:
+        supervisor = _interactive_browser_service_singleton
+        if supervisor is None:
+            return
+        try:
+            supervisor.close()
+        finally:
+            if _interactive_browser_service_singleton is supervisor:
+                _interactive_browser_service_singleton = None
 
 
 def build_ai_runtime_repository() -> SQLiteAIRuntimeRepository:

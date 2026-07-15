@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
+from app.infrastructure.persistence.factory import close_interactive_browser_supervisor
 from app.interfaces.http.router import api_router
 from app.tasks.scheduler import run_event_delivery_job, run_source_build_job
 
@@ -59,6 +60,7 @@ async def lifespan(app: FastAPI):
             await worker_task
         if source_build_worker_task is not None:
             await source_build_worker_task
+        await asyncio.to_thread(close_interactive_browser_supervisor)
 
 
 app = FastAPI(
