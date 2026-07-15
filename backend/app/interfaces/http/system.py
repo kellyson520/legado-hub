@@ -25,6 +25,13 @@ class SourceBuildAgentSettingsRequest(BaseModel):
     enabled: bool
 
 
+class InteractiveBrowserSettingsRequest(BaseModel):
+    enabled: bool
+    automatic_enabled: bool = True
+    max_sessions: int = Field(default=1, ge=1, le=3)
+    session_timeout_seconds: int = Field(default=300, ge=60, le=600)
+
+
 class ProviderRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     base_url: str = Field(min_length=1, max_length=500)
@@ -220,6 +227,27 @@ async def update_source_build_agent_settings(
         "meta": {},
         "trace_id": None,
     }
+
+
+@router.get('/interactive-browser-settings')
+async def get_interactive_browser_settings(
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    return _system_response(
+        'interactive browser settings loaded',
+        build_system_settings_service().get_interactive_browser_settings(),
+    )
+
+
+@router.put('/interactive-browser-settings')
+async def update_interactive_browser_settings(
+    payload: InteractiveBrowserSettingsRequest,
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    return _system_response(
+        'interactive browser settings saved',
+        build_system_settings_service().set_interactive_browser_settings(**payload.model_dump()),
+    )
 
 
 @router.get("/quotas")

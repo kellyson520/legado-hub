@@ -53,6 +53,38 @@ def test_source_build_agent_setting_rejects_missing_permission(monkeypatch, tmp_
     assert put_response.status_code == 403
 
 
+def test_interactive_browser_settings_default_disabled_and_persist(monkeypatch, tmp_path):
+    client, headers = build_client(monkeypatch, tmp_path, ['system.settings.manage'])
+
+    initial = client.get('/api/system/interactive-browser-settings', headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()['data'] == {
+        'enabled': False,
+        'automatic_enabled': True,
+        'max_sessions': 1,
+        'session_timeout_seconds': 300,
+    }
+
+    updated = client.put(
+        '/api/system/interactive-browser-settings',
+        headers=headers,
+        json={
+            'enabled': True,
+            'automatic_enabled': False,
+            'max_sessions': 2,
+            'session_timeout_seconds': 180,
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()['data'] == {
+        'enabled': True,
+        'automatic_enabled': False,
+        'max_sessions': 2,
+        'session_timeout_seconds': 180,
+    }
+
+
 def test_source_build_agent_availability_uses_source_build_route():
     from app.application.services.system_settings_service import SystemSettingsService
 

@@ -34,12 +34,31 @@ class SQLiteSystemSettingsRepository(SystemSettingsRepository):
             self._close(db)
 
     def set_bool(self, key: str, value: bool) -> None:
+        self._set_value(key, "true" if value else "false")
+
+    def get_int(self, key: str, default: int) -> int:
+        db = self._db()
+        try:
+            row = db.query(SystemSettingModel).filter(SystemSettingModel.key == key).first()
+            if row is None:
+                return default
+            try:
+                return int(row.value)
+            except (TypeError, ValueError):
+                return default
+        finally:
+            self._close(db)
+
+    def set_int(self, key: str, value: int) -> None:
+        self._set_value(key, str(int(value)))
+
+    def _set_value(self, key: str, value: str) -> None:
         db = self._db()
         try:
             now = datetime.utcnow()
             statement = insert(SystemSettingModel).values(
                 key=key,
-                value="true" if value else "false",
+                value=value,
                 updated_at=now,
             )
             db.execute(

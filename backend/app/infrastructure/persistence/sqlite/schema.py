@@ -95,6 +95,36 @@ class SystemSettingModel(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class InteractiveBrowserSessionModel(Base):
+    __tablename__ = 'interactive_browser_sessions'
+
+    id = Column(String, primary_key=True)
+    source_version_id = Column(String, ForeignKey('source_versions.id'), nullable=False, index=True)
+    owner_id = Column(String, nullable=False, index=True)
+    allowed_origins = Column(Text, nullable=False, default='[]')
+    state = Column(String, nullable=False, default='pending', index=True)
+    automatic_attempted = Column(Boolean, nullable=False, default=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    closed_at = Column(DateTime, nullable=True)
+    terminal_reason = Column(String, nullable=True)
+    relay_token_digest = Column(String, nullable=True, unique=True, index=True)
+    relay_token_owner_id = Column(String, nullable=True)
+    relay_token_expires_at = Column(DateTime, nullable=True)
+    relay_token_consumed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class InteractiveBrowserEventModel(Base):
+    __tablename__ = 'interactive_browser_events'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey('interactive_browser_sessions.id'), nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    actor_id = Column(String, nullable=False, default='')
+    detail = Column(Text, nullable=False, default='{}')
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
 class JobModel(Base):
     __tablename__ = 'jobs'
 

@@ -1,0 +1,47 @@
+from abc import ABC, abstractmethod
+from datetime import datetime
+
+from app.domain.entities.interactive_browser import (
+    InteractiveBrowserEvent,
+    InteractiveBrowserSession,
+)
+
+
+class InteractiveBrowserRepository(ABC):
+    @abstractmethod
+    def create(self, session: InteractiveBrowserSession) -> InteractiveBrowserSession:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get(self, session_id: str) -> InteractiveBrowserSession | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_for_owner(self, session_id: str, owner_id: str) -> InteractiveBrowserSession | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def issue_relay_token(
+        self,
+        *,
+        session_id: str,
+        owner_id: str,
+        raw_token: str,
+        expires_at: datetime,
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def consume_relay_token(self, raw_token: str, *, owner_id: str) -> InteractiveBrowserSession | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def record_event(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        actor_id: str,
+        detail: dict,
+    ) -> InteractiveBrowserEvent:
+        raise NotImplementedError

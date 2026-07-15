@@ -48,6 +48,7 @@ from app.infrastructure.persistence.sqlite.source_health_repo_impl import SQLite
 from app.infrastructure.persistence.sqlite.source_review_repo_impl import SQLiteSourceReviewRepository
 from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
 from app.infrastructure.persistence.sqlite.system_settings_repo_impl import SQLiteSystemSettingsRepository
+from app.infrastructure.persistence.sqlite.interactive_browser_repo_impl import SQLiteInteractiveBrowserRepository
 from app.infrastructure.persistence.sqlite.translation_runtime_repo_impl import (
     SQLiteTranslationRuntimeRepository,
 )
@@ -107,6 +108,11 @@ def build_provider_repository() -> SQLiteProviderRepository:
 def build_system_settings_repository() -> SQLiteSystemSettingsRepository:
     bootstrap_sqlite()
     return SQLiteSystemSettingsRepository()
+
+
+def build_interactive_browser_repository() -> SQLiteInteractiveBrowserRepository:
+    bootstrap_sqlite()
+    return SQLiteInteractiveBrowserRepository()
 
 
 def build_source_runtime_service() -> SourceRuntimeService:
