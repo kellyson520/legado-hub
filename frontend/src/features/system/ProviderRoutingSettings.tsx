@@ -282,8 +282,9 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline" size="sm" aria-label={`Get models for ${provider.name}`} onClick={() => void handleLoadModels(provider)} disabled={loadingModels === provider.id || !isApiKeyConfigured(provider)}>
                     <RefreshCw className="h-4 w-4" />
+                    <span className="ml-2">{loadingModels === provider.id ? 'Loading…' : 'Models'}</span>
                   </Button>
-                  <Button type="button" variant="outline" size="sm" aria-label={`Edit ${provider.name}`} onClick={() => setForm(toForm(provider))}>
+                  <Button type="button" variant="outline" size="sm" aria-label={`Edit ${provider.name}`} title={`Edit ${provider.name}`} onClick={() => setForm(toForm(provider))}>
                     <Pencil className="h-4 w-4" />
                   </Button>
                 </div>
