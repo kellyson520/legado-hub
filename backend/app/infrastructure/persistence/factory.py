@@ -8,6 +8,7 @@ from app.application.services.dashboard_service import DashboardService
 from app.application.services.event_delivery_service import EventDeliveryService
 from app.application.services.engine_service import EngineService
 from app.application.services.job_service import JobService
+from app.application.services.interactive_browser_service import InteractiveBrowserService
 from app.application.services.novel_agent_service import NovelAgentService
 from app.application.services.novel_app_service import NovelAppService
 from app.application.services.provider_platform_service import ProviderPlatformService
@@ -30,6 +31,7 @@ from app.application.services.system_settings_service import SystemSettingsServi
 from app.application.services.translation_service import TranslationService
 from app.application.services.work_knowledge_service import WorkKnowledgeService
 from app.core.config import settings
+from app.infrastructure.browser.playwright_driver import PlaywrightBrowserDriver
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
 from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIRuntimeRepository
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
@@ -147,6 +149,7 @@ def build_source_build_audit_service() -> SourceBuildAuditService:
         probe_service_factory=build_source_probe_service,
         build_service=build_source_build_service(),
         review_service=build_source_review_service(),
+        interactive_browser_service=build_interactive_browser_service(),
     )
 
 
@@ -306,6 +309,20 @@ def build_system_settings_service() -> SystemSettingsService:
     return SystemSettingsService(
         repo=build_system_settings_repository(),
         provider_registry=build_provider_registry(),
+    )
+
+
+def build_interactive_browser_service() -> InteractiveBrowserService:
+    return InteractiveBrowserService(
+        repo=build_interactive_browser_repository(),
+        driver=PlaywrightBrowserDriver(
+            chromium_path=settings.INTERACTIVE_BROWSER_CHROMIUM_PATH,
+            xvfb_path=settings.INTERACTIVE_BROWSER_XVFB_PATH,
+            x11vnc_path=settings.INTERACTIVE_BROWSER_X11VNC_PATH,
+            websockify_path=settings.INTERACTIVE_BROWSER_WEBSOCKIFY_PATH,
+        ),
+        settings=build_system_settings_service(),
+        profile_root=settings.INTERACTIVE_BROWSER_PROFILE_ROOT,
     )
 
 

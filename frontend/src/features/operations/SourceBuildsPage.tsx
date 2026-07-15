@@ -6,6 +6,7 @@ import {
   type OperationSourceBuildRow,
 } from '@/api/modules/operations'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { ManualVerificationPanel } from './ManualVerificationPanel'
 
 function getSourceId(row: OperationSourceBuildRow) {
   return row.sourceId ?? row.source_id ?? row.payload.canonical_url ?? '-'
@@ -82,6 +83,7 @@ export function SourceAuditSummary({ audit }: { audit?: OperationSourceBuildAudi
 
 export function SourceBuildsPage() {
   const [rows, setRows] = useState<OperationSourceBuildRow[]>([])
+  const [verificationSessionId, setVerificationSessionId] = useState<string | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -133,6 +135,16 @@ export function SourceBuildsPage() {
                   <td className="px-4 py-3">{latestRun?.grade ?? '-'}</td>
                   <td className="px-4 py-3">
                     <SourceAuditSummary audit={sourceAudit} />
+                    {getAuditStatus(sourceAudit ?? {}) === 'awaiting_manual_verification' ? (
+                      <button
+                        type="button"
+                        className="mt-2 text-xs font-medium text-primary underline"
+                        onClick={() => setVerificationSessionId(sourceAudit?.browser_session_id ?? sourceAudit?.browserSessionId ?? null)}
+                        disabled={!sourceAudit?.browser_session_id && !sourceAudit?.browserSessionId}
+                      >
+                        Open manual verification
+                      </button>
+                    ) : null}
                   </td>
                   <td className="px-4 py-3">
                     {autonomousBuild ? (
@@ -180,6 +192,9 @@ export function SourceBuildsPage() {
           </tbody>
         </table>
       </div>
+      {verificationSessionId ? (
+        <ManualVerificationPanel sessionId={verificationSessionId} onFinished={() => setVerificationSessionId(null)} />
+      ) : null}
     </ConsoleLayout>
   )
 }

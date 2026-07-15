@@ -17,11 +17,20 @@ class SourceBuildAuditService:
     MAX_TOTAL_ELAPSED_MS = 25_000
     MIN_CLOSE_TIMEOUT_SECONDS = 0.001
 
-    def __init__(self, *, runtime_repo, probe_service_factory, build_service, review_service):
+    def __init__(
+        self,
+        *,
+        runtime_repo,
+        probe_service_factory,
+        build_service,
+        review_service,
+        interactive_browser_service=None,
+    ):
         self._runtime = runtime_repo
         self._probe_service_factory = probe_service_factory
         self._build_service = build_service
         self._review_service = review_service
+        self._interactive_browser = interactive_browser_service
 
     async def audit(
         self,
@@ -127,6 +136,50 @@ class SourceBuildAuditService:
             'grade': grade,
         })
         if report.get('reason') == 'verification_required':
+            browser_session_id = None
+            browser_result = None
+            if self._interactive_browser is not None:
+                browser_result = await self._interactive_browser.attempt_automatic(
+                    source_version_id=version.id,
+                    owner_id=version.created_by or 'system',
+                    source_rule=source_rule,
+                    keyword=keyword,
+                )
+                browser_session_id = browser_result.session_id
+            browser_validation = getattr(browser_result, 'validation', None)
+            if getattr(browser_result, 'state', '') == 'validated' and browser_validation is not None and browser_validation.passed:
+                report = self._browser_validation_report(browser_validation.stages or {})
+                passed = True
+                diagnostics = []
+                step_passes = {'search': True, 'toc': True, 'content': True}
+                score = 100
+                grade = 'A'
+                report.update({
+                    'attempt': attempt,
+                    'max_attempts': self.MAX_ATTEMPTS,
+                    'score': score,
+                    'grade': grade,
+                })
+                audit.update({
+                    'status': 'passed',
+                    'attempt': attempt,
+                    'max_attempts': self.MAX_ATTEMPTS,
+                    'report': report,
+                    'history': list(audit.get('history') or [])[-4:] + [report],
+                })
+                if browser_session_id:
+                    audit['browser_session_id'] = browser_session_id
+                payload['source_audit'] = audit
+                return self._persist_outcome_with_test_run(
+                    version=version,
+                    payload=payload,
+                    audit=audit,
+                    report=report,
+                    score=score,
+                    grade=grade,
+                    step_passes=step_passes,
+                    diagnostics=diagnostics,
+                )
             audit.update({
                 'status': 'awaiting_manual_verification',
                 'attempt': attempt,
@@ -134,6 +187,8 @@ class SourceBuildAuditService:
                 'report': report,
                 'history': list(audit.get('history') or [])[-4:] + [report],
             })
+            if browser_session_id:
+                audit['browser_session_id'] = browser_session_id
             payload['source_audit'] = audit
             return self._persist_outcome_with_test_run(
                 version=version,
@@ -670,6 +725,34 @@ class SourceBuildAuditService:
         if reason:
             report['reason'] = reason
         return report, passed, diagnostics, step_passes
+
+    @staticmethod
+    def _browser_validation_report(stages: dict) -> dict:
+        def stage(name: str, *, content: bool = False) -> dict:
+            raw = stages.get(name) if isinstance(stages, dict) else {}
+            raw = raw if isinstance(raw, dict) else {}
+            result = {
+                'status': str(raw.get('status') or 'failed'),
+                'elapsed_ms': int(raw.get('elapsed_ms', 0) or 0),
+                'title': str(raw.get('title') or ''),
+            }
+            if content:
+                result['content_length'] = int(raw.get('content_length', 0) or 0)
+            else:
+                result['hit_count'] = int(raw.get('hit_count', 0) or 0)
+            return result
+
+        normalized = {
+            'search': stage('search'),
+            'toc': stage('toc'),
+            'content': stage('content', content=True),
+        }
+        return {
+            'status': 'passed',
+            'total_elapsed_ms': sum(item['elapsed_ms'] for item in normalized.values()),
+            'stages': normalized,
+            'browser_validation': True,
+        }
 
     @staticmethod
     def _missing_rule_evaluation():

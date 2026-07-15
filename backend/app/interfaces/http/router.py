@@ -12,6 +12,7 @@ from app.interfaces.http import (
     events,
     export,
     health,
+    interactive_browser,
     jobs,
     novel,
     reading,
@@ -44,3 +45,4 @@ api_router.include_router(work_knowledge.router, prefix="/work-knowledge", tags=
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(reading.router, prefix="/reading", tags=["reading"])
 api_router.include_router(source_health.router, prefix="/source-health", tags=["source-health"])
+api_router.include_router(interactive_browser.router, prefix='/interactive-browser', tags=['interactive-browser'])

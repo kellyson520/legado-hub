@@ -93,6 +93,8 @@ export interface OperationSourceBuildAuditSummary {
   grade?: string
   test_run_pending?: boolean
   testRunPending?: boolean
+  browser_session_id?: string
+  browserSessionId?: string
   report?: OperationSourceBuildAuditReport
 }
 

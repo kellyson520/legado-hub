@@ -199,6 +199,18 @@ class FakeReviewRepository:
         ]
 
 
+def test_source_build_audit_factory_wires_interactive_browser_service(tmp_path, monkeypatch):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-build-browser-factory.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.infrastructure.persistence.factory import build_source_build_audit_service
+
+    service = build_source_build_audit_service()
+
+    assert service._interactive_browser is not None
+
+
 @pytest.mark.asyncio
 async def test_audit_blocking_runs_inside_an_active_event_loop():
     from app.application.services.source_build_audit_service import SourceBuildAuditService
@@ -394,6 +406,103 @@ async def test_verification_wall_audit_parks_candidate_without_repair_or_termina
     assert build.repairs == []
     assert review.failures == []
     assert runtime.runs[0]['diagnostics'] == ['verification_required']
+
+
+async def test_verification_wall_attempts_standard_browser_once_before_awaiting_manual():
+    from app.application.services.interactive_browser_service import BrowserVerificationResult
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    class BrowserService:
+        def __init__(self):
+            self.calls = []
+
+        async def attempt_automatic(self, **kwargs):
+            self.calls.append(kwargs)
+            return BrowserVerificationResult.needs_manual('browser-session-1', 'verification_required')
+
+    version = SourceVersion(
+        id='candidate-browser-verification',
+        source_definition_id=17,
+        source_type='book',
+        source_id='https://blocked.example.test',
+        status='candidate',
+        created_by='tenant-1',
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://blocked.example.test',
+            'source_rule': {'bookSourceUrl': 'https://blocked.example.test'},
+            'source_audit': {'status': 'pending', 'attempt': 0, 'max_attempts': 5, 'history': []},
+        },
+    )
+    runtime = FakeRuntimeRepository(version)
+    browsers = BrowserService()
+    service = SourceBuildAuditService(
+        runtime_repo=runtime,
+        probe_service_factory=lambda: VerificationWallProbe(),
+        build_service=FakeBuildService(),
+        review_service=FakeReviewService(),
+        interactive_browser_service=browsers,
+    )
+
+    result = await service.audit(version.id)
+
+    assert result['status'] == 'awaiting_manual_verification'
+    assert browsers.calls == [{
+        'source_version_id': version.id,
+        'owner_id': 'tenant-1',
+        'source_rule': {'bookSourceUrl': 'https://blocked.example.test', 'id': 17},
+        'keyword': 'sample',
+    }]
+    assert version.payload['source_audit']['browser_session_id'] == 'browser-session-1'
+
+
+async def test_verification_wall_uses_validated_standard_browser_full_chain_without_manual_pause():
+    from app.application.services.interactive_browser_service import (
+        BrowserValidationResult,
+        BrowserVerificationResult,
+    )
+    from app.application.services.source_build_audit_service import SourceBuildAuditService
+
+    class BrowserService:
+        async def attempt_automatic(self, **_kwargs):
+            return BrowserVerificationResult.validated(
+                'browser-session-1',
+                BrowserValidationResult.passed({
+                    'search': {'status': 'ok', 'hit_count': 1},
+                    'toc': {'status': 'ok', 'hit_count': 1},
+                    'content': {'status': 'ok', 'content_length': 120},
+                }),
+            )
+
+    version = SourceVersion(
+        id='candidate-browser-success',
+        source_definition_id=17,
+        source_type='book',
+        source_id='https://blocked.example.test',
+        status='candidate',
+        created_by='tenant-1',
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://blocked.example.test',
+            'source_rule': {'bookSourceUrl': 'https://blocked.example.test'},
+            'source_audit': {'status': 'pending', 'attempt': 0, 'max_attempts': 5, 'history': []},
+        },
+    )
+    runtime = FakeRuntimeRepository(version)
+    service = SourceBuildAuditService(
+        runtime_repo=runtime,
+        probe_service_factory=lambda: VerificationWallProbe(),
+        build_service=FakeBuildService(),
+        review_service=FakeReviewService(),
+        interactive_browser_service=BrowserService(),
+    )
+
+    result = await service.audit(version.id)
+
+    assert result['status'] == 'passed'
+    assert result['score'] == 100
+    assert result['report']['stages']['content']['content_length'] == 120
+    assert version.payload['source_audit']['browser_session_id'] == 'browser-session-1'
 
 
 async def test_fifth_failed_audit_marks_candidate_failed_and_enqueues_one_review():
