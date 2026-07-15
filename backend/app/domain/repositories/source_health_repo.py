@@ -18,6 +18,15 @@ class SourceHealthRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_book_source_health_inventory(
+        self,
+        statuses: list[str] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[SourceHealthSnapshot], int]:
+        raise NotImplementedError
+
+    @abstractmethod
     def upsert_snapshot(self, snapshot: SourceHealthSnapshot) -> SourceHealthSnapshot:
         raise NotImplementedError
 

@@ -105,6 +105,85 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
 
 
 @pytest.mark.asyncio
+async def test_health_inventory_paginates_in_repository_without_loading_full_sources(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-inventory-page.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from sqlalchemy import event
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.database import engine
+    from app.domain.entities.source_health import SourceHealthSnapshot
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    first_unprobed = await source_repo.create_book_source(
+        {
+            "bookSourceName": "未探测一",
+            "bookSourceUrl": "https://unprobed-page-one.example",
+            "enabled": True,
+            "ruleSearch": "x" * 10000,
+        },
+        actor_id=1,
+    )
+    probed = await source_repo.create_book_source(
+        {"bookSourceName": "已探测", "bookSourceUrl": "https://probed-page.example", "enabled": True},
+        actor_id=1,
+    )
+    second_unprobed = await source_repo.create_book_source(
+        {"bookSourceName": "未探测二", "bookSourceUrl": "https://unprobed-page-two.example", "enabled": True},
+        actor_id=1,
+    )
+    health_repo.upsert_snapshot(
+        SourceHealthSnapshot(
+            source_id=probed["id"],
+            source_name=probed["bookSourceName"],
+            source_url=probed["bookSourceUrl"],
+            health_status="healthy",
+            route_policy="allow",
+            route_score=100.0,
+        )
+    )
+
+    async def fail_full_book_source_load(*args, **kwargs):
+        pytest.fail("paginated health inventory must not load full book sources")
+
+    def fail_unbounded_snapshot_read(*args, **kwargs):
+        pytest.fail("paginated health inventory must not call list_snapshots")
+
+    monkeypatch.setattr(source_repo, "list_book_sources_full", fail_full_book_source_load)
+    monkeypatch.setattr(health_repo, "list_snapshots", fail_unbounded_snapshot_read)
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=None,
+        classifier=None,
+    )
+    statements = []
+
+    def capture_statement(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture_statement)
+    try:
+        result = await service.list_book_source_health(page=2, page_size=1, statuses=["unknown"])
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statement)
+
+    assert result["meta"] == {"page": 2, "page_size": 1, "total": 2}
+    assert [item["source_id"] for item in result["items"]] == [second_unprobed["id"]]
+    health_queries = [statement.lower() for statement in statements if "source_health_snapshots" in statement.lower()]
+    assert health_queries
+    assert all("payload" not in statement.lower() for statement in statements)
+    assert all(" limit " in statement for statement in health_queries if "count(" not in statement)
+    assert first_unprobed["id"] < second_unprobed["id"]
+
+
+@pytest.mark.asyncio
 async def test_admin_service_persists_snapshot_and_mirrors_book_source_fields(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-admin.sqlite3"))

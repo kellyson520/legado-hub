@@ -1,10 +1,12 @@
 import json
 
+from sqlalchemy import func
+
 from app.database import SessionLocal
 from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
 from app.domain.repositories.source_health_repo import SourceHealthRepository
 
-from .schema import SourceHealthSnapshotModel, SourceProbeRunModel
+from .schema import BookSourceModel, SourceHealthSnapshotModel, SourceProbeRunModel
 
 
 class SQLiteSourceHealthRepository(SourceHealthRepository):
@@ -90,6 +92,94 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             return [self._snapshot_to_entity(row) for row in rows], total
         finally:
             self._close(db)
+
+    def list_book_source_health_inventory(
+        self,
+        statuses: list[str] | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[SourceHealthSnapshot], int]:
+        db = self._db()
+        try:
+            derived_status = func.coalesce(SourceHealthSnapshotModel.health_status, "unknown")
+            count_query = db.query(func.count(BookSourceModel.id)).outerjoin(
+                SourceHealthSnapshotModel,
+                SourceHealthSnapshotModel.source_id == BookSourceModel.id,
+            )
+            if statuses:
+                count_query = count_query.filter(derived_status.in_(statuses))
+            total = int(count_query.scalar() or 0)
+
+            query = (
+                db.query(
+                    BookSourceModel.id.label("book_source_id"),
+                    BookSourceModel.bookSourceName.label("book_source_name"),
+                    BookSourceModel.bookSourceUrl.label("book_source_url"),
+                    SourceHealthSnapshotModel.source_id.label("snapshot_source_id"),
+                    SourceHealthSnapshotModel.source_name.label("snapshot_source_name"),
+                    SourceHealthSnapshotModel.source_url.label("snapshot_source_url"),
+                    SourceHealthSnapshotModel.health_status.label("snapshot_health_status"),
+                    SourceHealthSnapshotModel.search_status.label("snapshot_search_status"),
+                    SourceHealthSnapshotModel.toc_status.label("snapshot_toc_status"),
+                    SourceHealthSnapshotModel.content_status.label("snapshot_content_status"),
+                    SourceHealthSnapshotModel.failure_reason.label("snapshot_failure_reason"),
+                    SourceHealthSnapshotModel.decision_confidence.label("snapshot_decision_confidence"),
+                    SourceHealthSnapshotModel.route_policy.label("snapshot_route_policy"),
+                    SourceHealthSnapshotModel.route_score.label("snapshot_route_score"),
+                    SourceHealthSnapshotModel.consecutive_failures.label("snapshot_consecutive_failures"),
+                    SourceHealthSnapshotModel.consecutive_successes.label("snapshot_consecutive_successes"),
+                    SourceHealthSnapshotModel.last_success_at.label("snapshot_last_success_at"),
+                    SourceHealthSnapshotModel.last_probe_at.label("snapshot_last_probe_at"),
+                    SourceHealthSnapshotModel.next_probe_at.label("snapshot_next_probe_at"),
+                    SourceHealthSnapshotModel.metadata_json.label("snapshot_metadata_json"),
+                )
+                .outerjoin(
+                    SourceHealthSnapshotModel,
+                    SourceHealthSnapshotModel.source_id == BookSourceModel.id,
+                )
+                .order_by(BookSourceModel.id.asc())
+            )
+            if statuses:
+                query = query.filter(derived_status.in_(statuses))
+            rows = query.offset(offset).limit(limit).all()
+            return [self._inventory_row_to_snapshot(row) for row in rows], total
+        finally:
+            self._close(db)
+
+    def _inventory_row_to_snapshot(self, row) -> SourceHealthSnapshot:
+        if row.snapshot_source_id is None:
+            return SourceHealthSnapshot(
+                source_id=row.book_source_id,
+                source_name=row.book_source_name,
+                source_url=row.book_source_url,
+                health_status="unknown",
+                search_status="unknown",
+                toc_status="unknown",
+                content_status="unknown",
+                failure_reason="not_probed",
+                decision_confidence="low",
+                route_policy="probe_only",
+                route_score=10.0,
+            )
+        return SourceHealthSnapshot(
+            source_id=row.snapshot_source_id,
+            source_name=row.snapshot_source_name,
+            source_url=row.snapshot_source_url,
+            health_status=row.snapshot_health_status,
+            search_status=row.snapshot_search_status,
+            toc_status=row.snapshot_toc_status,
+            content_status=row.snapshot_content_status,
+            failure_reason=row.snapshot_failure_reason,
+            decision_confidence=row.snapshot_decision_confidence,
+            route_policy=row.snapshot_route_policy,
+            route_score=float(row.snapshot_route_score or 0),
+            consecutive_failures=row.snapshot_consecutive_failures,
+            consecutive_successes=row.snapshot_consecutive_successes,
+            last_success_at=row.snapshot_last_success_at,
+            last_probe_at=row.snapshot_last_probe_at,
+            next_probe_at=row.snapshot_next_probe_at,
+            metadata=self._loads_dict(row.snapshot_metadata_json),
+        )
 
     def upsert_snapshot(self, snapshot: SourceHealthSnapshot) -> SourceHealthSnapshot:
         db = self._db()
