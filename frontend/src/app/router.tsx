@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { AdminAuditPage } from '@/features/admin/AdminAuditPage'
 import { AdminUsersPage } from '@/features/admin/AdminUsersPage'
+import { ApiKeysPage } from '@/features/admin/ApiKeysPage'
 import { AITasksPage } from '@/features/ai/AITasksPage'
 import { AIWorkspacePage } from '@/features/ai/AIWorkspacePage'
 import { EngineRunsPage } from '@/features/engine/EngineRunsPage'
@@ -30,6 +31,7 @@ export const appRoutes = [
   { path: '/engine', element: <EngineRunsPage /> },
   { path: '/admin/users', element: <AdminUsersPage /> },
   { path: '/admin/audit', element: <AdminAuditPage /> },
+  { path: '/admin/api-keys', element: <ApiKeysPage /> },
   { path: '/ai/tasks', element: <AITasksPage /> },
   { path: '/ai/workspace', element: <AIWorkspacePage /> },
   { path: '/translation/jobs', element: <TranslationJobsPage /> },
@@ -56,6 +58,7 @@ export function AppRoutes() {
         <Route element={<RequirePermission permission="engine.test" />}><Route path="/engine" element={<EngineRunsPage />} /></Route>
         <Route element={<RequirePermission permission="users.read" />}><Route path="/admin/users" element={<AdminUsersPage />} /></Route>
         <Route element={<RequirePermission permission="system.audit.read" />}><Route path="/admin/audit" element={<AdminAuditPage />} /></Route>
+        <Route element={<RequirePermission permission="api_keys.read" />}><Route path="/admin/api-keys" element={<ApiKeysPage />} /></Route>
         <Route element={<RequirePermission permission="ai.run" />}>
           <Route path="/ai/tasks" element={<AITasksPage />} />
           <Route path="/ai/workspace" element={<AIWorkspacePage />} />
