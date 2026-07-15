@@ -10,6 +10,14 @@ def _normalize_endpoint_url(endpoint_url: str) -> str:
     return normalized + "/v1/chat/completions"
 
 
+def _models_endpoint_url(endpoint_url: str) -> str:
+    normalized = _normalize_endpoint_url(endpoint_url)
+    suffix = "/chat/completions"
+    if normalized.endswith(suffix):
+        return normalized[: -len(suffix)] + "/models"
+    return normalized.rstrip("/") + "/models"
+
+
 class OpenAICompatibleProvider:
     def __init__(
         self,
@@ -62,6 +70,22 @@ class OpenAICompatibleProvider:
             },
             "raw": body,
         }
+
+    async def list_models(self) -> list[str]:
+        response = await self._client.get(
+            _models_endpoint_url(self._endpoint_url),
+            headers={"Authorization": f"Bearer {self._api_key}"},
+        )
+        response.raise_for_status()
+        body = response.json()
+        data = body.get("data", []) if isinstance(body, dict) else []
+        return sorted(
+            {
+                str(item["id"])
+                for item in data
+                if isinstance(item, dict) and isinstance(item.get("id"), str) and item["id"].strip()
+            }
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()
