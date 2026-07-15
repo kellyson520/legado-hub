@@ -23,11 +23,32 @@ class SourceHealthAdminService:
         page_size: int = 20,
         statuses: list[str] | None = None,
     ) -> dict:
-        rows, total = self._health_repo.list_snapshots(
-            statuses=statuses,
-            limit=page_size,
-            offset=(page - 1) * page_size,
-        )
+        snapshots, snapshot_total = self._health_repo.list_snapshots(limit=1)
+        if snapshot_total > len(snapshots):
+            snapshots, _ = self._health_repo.list_snapshots(limit=snapshot_total)
+        snapshots_by_source_id = {snapshot.source_id: snapshot for snapshot in snapshots}
+        rows = []
+        for source in await self._source_repo.list_book_sources_full():
+            snapshot = snapshots_by_source_id.get(source["id"])
+            row = snapshot or SourceHealthSnapshot(
+                source_id=source["id"],
+                source_name=source["bookSourceName"],
+                source_url=source["bookSourceUrl"],
+                health_status="unknown",
+                search_status="unknown",
+                toc_status="unknown",
+                content_status="unknown",
+                failure_reason="not_probed",
+                decision_confidence="low",
+                route_policy="probe_only",
+                route_score=10.0,
+            )
+            if not statuses or row.health_status in statuses:
+                rows.append(row)
+
+        total = len(rows)
+        offset = (page - 1) * page_size
+        rows = rows[offset : offset + page_size]
         return {
             "items": [self._snapshot_to_dict(item) for item in rows],
             "meta": {"page": page, "page_size": page_size, "total": total},
