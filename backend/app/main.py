@@ -5,7 +5,10 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
-from app.infrastructure.persistence.factory import close_interactive_browser_supervisor
+from app.infrastructure.persistence.factory import (
+    build_source_runtime_service,
+    close_interactive_browser_supervisor,
+)
 from app.interfaces.http.router import api_router
 from app.tasks.scheduler import run_event_delivery_job, run_source_build_job
 
@@ -41,6 +44,7 @@ async def lifespan(app: FastAPI):
     stop_event = None
     source_build_worker_task = None
     source_build_stop_event = None
+    await build_source_runtime_service().register_published_book_sources()
     if settings.ENV != 'test' and settings.EVENT_DELIVERY_WORKER_ENABLED:
         stop_event = asyncio.Event()
         worker_task = asyncio.create_task(_event_delivery_worker(stop_event))

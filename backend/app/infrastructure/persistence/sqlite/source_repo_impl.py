@@ -148,6 +148,27 @@ class SQLiteSourceRepository(SourceRepository):
         finally:
             db.close()
 
+    async def upsert_runtime_book_sources(self, items: list[dict], actor_id: int) -> int:
+        db = SessionLocal()
+        try:
+            count = 0
+            for item in items:
+                url = item.get("bookSourceUrl")
+                if not url:
+                    continue
+                columns = self._extract_book_source_columns(item)
+                model = db.query(BookSourceModel).filter(BookSourceModel.bookSourceUrl == url).first()
+                if model is None:
+                    db.add(BookSourceModel(**columns))
+                else:
+                    for key in ("bookSourceName", "bookSourceGroup", "enabled", "payload"):
+                        setattr(model, key, columns[key])
+                count += 1
+            db.commit()
+            return count
+        finally:
+            db.close()
+
     async def list_book_sources_full(
         self,
         enabled_only: bool = False,

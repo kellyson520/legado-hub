@@ -35,6 +35,9 @@ class SourceRepository(ABC):
     async def upsert_book_sources(self, items: list[dict], actor_id: int) -> int:
         raise NotImplementedError
 
+    async def upsert_runtime_book_sources(self, items: list[dict], actor_id: int) -> int:
+        raise NotImplementedError
+
     async def list_book_sources_full(
         self,
         enabled_only: bool = False,

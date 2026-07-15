@@ -1,6 +1,45 @@
 from fastapi.testclient import TestClient
 
 
+async def test_app_lifespan_rehydrates_published_runtime_book_source(monkeypatch, tmp_path):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'runtime-source-rehydration.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+    monkeypatch.setenv('EVENT_DELIVERY_WORKER_ENABLED', 'false')
+    monkeypatch.setenv('SOURCE_BUILD_WORKER_ENABLED', 'false')
+
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.source_repo_impl import SQLiteSourceRepository
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+
+    bootstrap_sqlite()
+    runtime_repo = SQLiteSourceRuntimeRepository()
+    source_repo = SQLiteSourceRepository()
+    published = runtime_repo.create_candidate_version(
+        'book',
+        'https://lifespan.example.test/books',
+        {
+            'bookSourceName': '启动重建书源',
+            'bookSourceUrl': 'https://lifespan.example.test/books',
+            'ruleSearch': {'bookList': '.book'},
+        },
+        '7',
+    )
+    runtime_repo.update_version_status(published.id, 'published')
+    _, total_before = await source_repo.list_book_sources(page=1, page_size=10)
+    assert total_before == 0
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        assert client.get('/api/status').status_code == 200
+
+    legacy_sources, total_after = await source_repo.list_book_sources(page=1, page_size=10)
+    assert total_after == 1
+    assert legacy_sources[0]['bookSourceName'] == '启动重建书源'
+    assert legacy_sources[0]['bookSourceUrl'] == 'https://lifespan.example.test/books'
+
+
 def test_app_lifespan_starts_source_build_worker_when_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv('APP_ENV', 'dev')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'source-build-lifespan.sqlite3'))
@@ -13,20 +52,25 @@ def test_app_lifespan_starts_source_build_worker_when_enabled(monkeypatch, tmp_p
     from app.main import app
     import app.main as app_main
 
-    calls: list[int] = []
+    calls: list[object] = []
+
+    class RuntimeService:
+        async def register_published_book_sources(self) -> None:
+            calls.append('runtime_sources_registered')
 
     async def fake_run_source_build_job(limit: int = 1) -> dict:
-        calls.append(limit)
+        calls.append(('source_build_worker', limit))
         return {'processed': 0, 'jobs': []}
 
+    monkeypatch.setattr(app_main, 'build_source_runtime_service', lambda: RuntimeService(), raising=False)
     monkeypatch.setattr(app_main, 'run_source_build_job', fake_run_source_build_job)
 
     with TestClient(app) as client:
         response = client.get('/api/status')
         assert response.status_code == 200
 
-    assert calls
-    assert calls[0] == 2
+    assert calls[0] == 'runtime_sources_registered'
+    assert ('source_build_worker', 2) in calls
 
 
 def test_app_lifespan_closes_interactive_browser_supervisor_on_shutdown(monkeypatch, tmp_path):

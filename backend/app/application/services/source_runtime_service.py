@@ -35,9 +35,57 @@ def _sanitize_legado_value(value):
 
 
 class SourceRuntimeService:
-    def __init__(self, repo: SourceRuntimeRepository, audit=None):
+    def __init__(self, repo: SourceRuntimeRepository, audit=None, source_repo=None):
         self._repo = repo
         self._audit = audit
+        self._source_repo = source_repo
+
+    async def register_published_book_sources(self, actor_id: str | int = 0) -> int:
+        if self._source_repo is None:
+            return 0
+
+        sources_by_url: dict[str, dict] = {}
+        for version in self._repo.list_published_versions():
+            if version.source_type != "book" or not isinstance(version.payload, dict):
+                continue
+            source = self._legacy_book_source_payload(version.payload)
+            if source is None:
+                continue
+            sources_by_url.setdefault(source["bookSourceUrl"], source)
+
+        if not sources_by_url:
+            return 0
+        try:
+            legacy_actor_id = int(actor_id)
+        except (TypeError, ValueError):
+            legacy_actor_id = 0
+        return await self._source_repo.upsert_runtime_book_sources(
+            list(sources_by_url.values()),
+            actor_id=legacy_actor_id,
+        )
+
+    @staticmethod
+    def _legacy_book_source_payload(payload: dict) -> dict | None:
+        for candidate in (payload.get("source_rule"), payload):
+            source = SourceRuntimeService._normalize_legacy_book_source_payload(candidate)
+            if source is not None:
+                return source
+        return None
+
+    @staticmethod
+    def _normalize_legacy_book_source_payload(candidate: object) -> dict | None:
+        if not isinstance(candidate, dict):
+            return None
+        name = candidate.get("bookSourceName")
+        url = candidate.get("bookSourceUrl")
+        if not isinstance(name, str) or not name.strip() or not isinstance(url, str) or not url.strip():
+            return None
+        if any(field in candidate and not isinstance(candidate[field], dict) for field in _LEGADO_RULE_FIELDS):
+            return None
+        source = dict(candidate)
+        source["bookSourceName"] = name.strip()
+        source["bookSourceUrl"] = url.strip()
+        return source
 
     async def generate(self, payload: dict, actor_id: str) -> dict:
         source_type = payload.get("source_type", "book")
@@ -256,6 +304,7 @@ class SourceRuntimeService:
             actor_id=actor_id,
         )
         await self._audit_event(actor_id, "source_rule.publish", published.id)
+        await self.register_published_book_sources(actor_id)
         return {
             "source_version_id": published.id,
             "status": published.status,
@@ -362,6 +411,7 @@ class SourceRuntimeService:
             },
             actor_id=reviewer_id,
         )
+        await self.register_published_book_sources(reviewer_id)
         return {
             "source_version_id": published.id,
             "status": published.status,

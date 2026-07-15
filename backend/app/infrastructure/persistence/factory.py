@@ -128,6 +128,7 @@ def build_source_runtime_service() -> SourceRuntimeService:
     return SourceRuntimeService(
         build_source_runtime_repository(),
         audit=build_auth_repository(),
+        source_repo=build_source_repository(),
     )
 
 
