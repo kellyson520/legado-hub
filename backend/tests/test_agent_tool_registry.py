@@ -125,6 +125,59 @@ def test_source_inspect_handler_is_invoked_and_cross_tenant_arguments_are_reject
         )
 
 
+@pytest.mark.asyncio
+async def test_ainvoke_runs_async_handlers_but_invoke_rejects_them_without_running():
+    from app.application.services.agent_tool_registry import AgentToolRegistry
+    from app.domain.entities.agent_runtime import ToolResult
+
+    calls = []
+
+    async def inspect_page(arguments):
+        calls.append(arguments)
+        return ToolResult(status='accepted', data={'url': arguments['url']})
+
+    registry = AgentToolRegistry(source_build_handlers={'page.inspect': inspect_page})
+
+    synchronous_result = registry.invoke(
+        agent_kind='source_build',
+        tool_name='page.inspect',
+        arguments={'url': 'https://books.example/list'},
+        tenant_id='tenant-1',
+    )
+    asynchronous_result = await registry.ainvoke(
+        agent_kind='source_build',
+        tool_name='page.inspect',
+        arguments={'url': 'https://books.example/list'},
+        tenant_id='tenant-1',
+    )
+
+    assert synchronous_result.error_code == 'async_tool_requires_ainvoke'
+    assert calls == [{'url': 'https://books.example/list'}]
+    assert asynchronous_result.status == 'accepted'
+
+
+@pytest.mark.asyncio
+async def test_ainvoke_preserves_tenant_checks_and_fixed_page_tool_allowlist():
+    from app.application.services.agent_tool_registry import AgentToolRegistry
+    from app.domain.entities.agent_runtime import ToolResult
+
+    registry = AgentToolRegistry(source_build_handlers={
+        'page.inspect': lambda _arguments: ToolResult(status='accepted'),
+        'page.request': lambda _arguments: ToolResult(status='accepted'),
+        'shell.exec': lambda _arguments: ToolResult(status='accepted'),
+    })
+
+    assert registry.get('page.inspect').handler is not None
+    assert registry.get('page.request').handler is not None
+    with pytest.raises(AuthorizationException):
+        await registry.ainvoke(
+            agent_kind='source_build',
+            tool_name='page.inspect',
+            arguments={'tenant_id': 'tenant-2'},
+            tenant_id='tenant-1',
+        )
+
+
 def test_knowledge_proposal_with_evidence_is_accepted(registry):
     result = registry.invoke(
         agent_kind='knowledge',

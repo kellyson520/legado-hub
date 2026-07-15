@@ -9,6 +9,7 @@ Legado 书源抓取器。
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 import re
 from typing import Any, Dict, List
@@ -42,6 +43,11 @@ class LegadoBookSourceFetcher:
             max_concurrent=max_concurrent,
         )
         self._js_runtime = JsRuntime()
+
+    def set_execution_deadline(self, deadline: float | None) -> None:
+        setter = getattr(self._js_runtime, 'set_execution_deadline', None)
+        if callable(setter):
+            setter(deadline)
 
     def _selector_context(self, **kwargs) -> Dict[str, Any]:
         return {
@@ -589,7 +595,16 @@ class LegadoBookSourceFetcher:
         return value
 
     async def close(self):
-        await self._http.close()
+        try:
+            http_close = self._http.close()
+            if inspect.isawaitable(http_close):
+                await http_close
+        finally:
+            runtime_close = getattr(self._js_runtime, 'close', None)
+            if callable(runtime_close):
+                result = runtime_close()
+                if inspect.isawaitable(result):
+                    await result
 
     async def __aenter__(self):
         return self

@@ -203,3 +203,75 @@ def test_system_provider_api_persists_llm_settings_and_registry_uses_them(monkey
 
     snapshot = build_provider_registry().snapshot()
     assert snapshot["default"][0].name == "Primary OpenAI"
+
+    renamed = client.put(
+        "/api/system/llm-settings",
+        headers=headers,
+        json={
+            "provider_name": "Renamed OpenAI",
+            "base_url": "https://api.renamed.test/v1",
+            "api_key": "sk-renamed",
+            "model": "gpt-4.1",
+        },
+    )
+    assert renamed.status_code == 200
+    updated_snapshot = build_provider_registry().snapshot()
+    assert updated_snapshot["default"][0].name == "Renamed OpenAI"
+    assert updated_snapshot["default"][0].model == "gpt-4.1"
+
+
+def test_system_provider_management_discovers_models_without_leaking_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "provider-management.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+    monkeypatch.delenv("LLM_API_URL", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
+    from app.main import app
+
+    async def fake_list_models(self):
+        return ["gpt-b", "gpt-a"]
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "list_models", fake_list_models, raising=False)
+    bootstrap_sqlite()
+    client = TestClient(app)
+    token = create_access_token(
+        {"sub": "1", "permissions": ["system.settings.manage"], "sid": "provider-management-1"}
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+
+    saved = client.post(
+        "/api/system/providers",
+        headers=headers,
+        json={
+            "name": "primary",
+            "base_url": "https://api.example/v1",
+            "api_key": "sk-secret",
+            "default_model": "",
+            "enabled": True,
+        },
+    )
+
+    assert saved.status_code == 200
+    provider_id = saved.json()["data"]["id"]
+    models = client.post(f"/api/system/providers/{provider_id}/models", headers=headers)
+    listed = client.get("/api/system/providers", headers=headers)
+    route = client.put(
+        "/api/system/provider-routes/ai",
+        headers=headers,
+        json={"entries": [{"provider_account_id": provider_id, "model": "gpt-b"}]},
+    )
+
+    assert models.json()["data"] == ["gpt-a", "gpt-b"]
+    assert "sk-secret" not in str(listed.json())
+    assert route.json()["data"]["entries"][0]["model"] == "gpt-b"
+
+    disabled_route = client.put(
+        "/api/system/provider-routes/translation",
+        headers=headers,
+        json={"entries": [{"provider_account_id": provider_id, "model": "gpt-b", "enabled": False}]},
+    )
+    assert disabled_route.status_code == 422

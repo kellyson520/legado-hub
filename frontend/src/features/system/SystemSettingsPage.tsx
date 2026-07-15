@@ -1,17 +1,21 @@
 import { FormEvent, useEffect, useState } from 'react'
 
 import {
+  getSourceBuildAgentSettings,
   getLLMSettings,
   listProviders,
   listQuotaPolicies,
+  updateSourceBuildAgentSettings,
   updateLLMSettings,
   type LLMSettings,
   type ProviderRow,
   type QuotaPolicyRow,
+  type SourceBuildAgentSettings,
 } from '@/api/modules/system'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ProviderRoutingSettings } from './ProviderRoutingSettings'
 
 function getProviderName(settings: LLMSettings | null) {
   return settings?.providerName ?? settings?.provider_name ?? 'local-llm'
@@ -25,16 +29,38 @@ function isApiKeyConfigured(settings: LLMSettings | null) {
   return Boolean(settings?.apiKeyConfigured ?? settings?.api_key_configured)
 }
 
+function isSourceBuildAgentProviderConfigured(settings: SourceBuildAgentSettings | null) {
+  return Boolean(settings?.providerConfigured ?? settings?.provider_configured)
+}
+
 export function SystemSettingsPage() {
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [quotas, setQuotas] = useState<QuotaPolicyRow[]>([])
   const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null)
+  const [sourceBuildAgentSettings, setSourceBuildAgentSettings] = useState<SourceBuildAgentSettings | null>(null)
+  const [sourceBuildAgentLoaded, setSourceBuildAgentLoaded] = useState(false)
   const [providerName, setProviderName] = useState('local-llm')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [model, setModel] = useState('gpt-4.1-mini')
   const [saving, setSaving] = useState(false)
+  const [savingSourceBuildAgent, setSavingSourceBuildAgent] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [sourceBuildAgentMessage, setSourceBuildAgentMessage] = useState<string | null>(null)
+  const [sourceBuildAgentError, setSourceBuildAgentError] = useState<string | null>(null)
+  const [settingsRefreshVersion, setSettingsRefreshVersion] = useState(0)
+
+  async function refreshSourceBuildAgentSettings() {
+    try {
+      const response = await getSourceBuildAgentSettings()
+      setSourceBuildAgentSettings(response.data)
+      setSourceBuildAgentError(null)
+    } catch {
+      setSourceBuildAgentError('Failed to load source build Agent settings')
+    } finally {
+      setSourceBuildAgentLoaded(true)
+    }
+  }
 
   useEffect(() => {
     let mounted = true
@@ -55,10 +81,11 @@ export function SystemSettingsPage() {
     }
 
     void load()
+    void refreshSourceBuildAgentSettings()
     return () => {
       mounted = false
     }
-  }, [])
+  }, [settingsRefreshVersion])
 
   async function handleSaveLLM(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -76,12 +103,35 @@ export function SystemSettingsPage() {
       setBaseUrl(getBaseUrl(response.data))
       setModel(response.data.model || model)
       setApiKey('')
+      await refreshSourceBuildAgentSettings()
+      setSettingsRefreshVersion((current) => current + 1)
       setMessage('LLM settings saved')
     } catch {
       setMessage('Failed to save LLM settings')
     } finally {
       setSaving(false)
     }
+  }
+
+  async function handleSourceBuildAgentToggle() {
+    const enabled = !Boolean(sourceBuildAgentSettings?.enabled)
+    setSavingSourceBuildAgent(true)
+    setSourceBuildAgentMessage(null)
+    setSourceBuildAgentError(null)
+    try {
+      const response = await updateSourceBuildAgentSettings({ enabled })
+      setSourceBuildAgentSettings(response.data)
+      setSourceBuildAgentMessage('Source build Agent settings saved')
+    } catch {
+      setSourceBuildAgentError('Failed to save source build Agent settings')
+    } finally {
+      setSavingSourceBuildAgent(false)
+    }
+  }
+
+  async function handleProviderSaved() {
+    await refreshSourceBuildAgentSettings()
+    setSettingsRefreshVersion((current) => current + 1)
   }
 
   return (
@@ -156,6 +206,50 @@ export function SystemSettingsPage() {
               ) : null}
             </div>
           </form>
+
+          <div className="mt-5 border-t border-border pt-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium text-foreground">Agent-enhanced source build</h4>
+                <p className="text-sm text-muted-foreground">
+                  仅当确定性书源构建失败后才会调用 Agent / Agent runs only after deterministic source build fails.
+                </p>
+                <p
+                  className={
+                    isSourceBuildAgentProviderConfigured(sourceBuildAgentSettings)
+                      ? 'text-xs font-medium text-emerald-600 dark:text-emerald-400'
+                      : 'text-xs font-medium text-amber-600 dark:text-amber-400'
+                  }
+                >
+                  {isSourceBuildAgentProviderConfigured(sourceBuildAgentSettings)
+                    ? 'LLM provider 已配置 / Provider configured'
+                    : 'LLM provider 未配置 / Provider not configured'}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                role="switch"
+                aria-checked={Boolean(sourceBuildAgentSettings?.enabled)}
+                aria-label="Agent-enhanced source build"
+                disabled={saving || savingSourceBuildAgent || !sourceBuildAgentLoaded}
+                onClick={handleSourceBuildAgentToggle}
+              >
+                {!sourceBuildAgentLoaded ? 'Loading…' : savingSourceBuildAgent ? 'Saving…' : sourceBuildAgentSettings?.enabled ? 'Enabled' : 'Disabled'}
+              </Button>
+            </div>
+            {sourceBuildAgentMessage ? (
+              <p role="status" className="mt-3 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                {sourceBuildAgentMessage}
+              </p>
+            ) : null}
+            {sourceBuildAgentError ? (
+              <p role="alert" className="mt-3 text-sm font-medium text-destructive">
+                {sourceBuildAgentError}
+              </p>
+            ) : null}
+          </div>
         </section>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -181,6 +275,7 @@ export function SystemSettingsPage() {
           </section>
         </div>
       </div>
+      <ProviderRoutingSettings onProviderSaved={handleProviderSaved} />
     </ConsoleLayout>
   )
 }

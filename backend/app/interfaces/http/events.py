@@ -35,6 +35,11 @@ def _iso(value) -> str | None:
 
 
 def _source_review_evidence(payload: dict, source_url: str) -> str:
+    audit_report = payload.get('audit_report')
+    if isinstance(audit_report, dict):
+        audit_reason = audit_report.get('reason')
+        if isinstance(audit_reason, str) and audit_reason.strip():
+            return audit_reason.strip()
     reason = payload.get('reason')
     if isinstance(reason, str) and reason.strip():
         return reason.strip()
@@ -208,7 +213,14 @@ async def list_event_delivery_attempts(
 async def list_source_build_candidates(
     _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
 ):
-    data = await build_source_runtime_service().list_recent_versions(status='candidate', limit=50)
+    source_runtime = build_source_runtime_service()
+    candidates = await source_runtime.list_recent_versions(status='candidate', limit=50)
+    failed = await source_runtime.list_recent_versions(status='failed', limit=50)
+    data = sorted(
+        [*candidates, *failed],
+        key=lambda item: (item.get('created_at') or '', item['id']),
+        reverse=True,
+    )[:50]
     return {
         'success': True,
         'code': 'OK',

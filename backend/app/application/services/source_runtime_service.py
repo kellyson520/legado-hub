@@ -226,6 +226,7 @@ class SourceRuntimeService:
             raise NotFoundException("source version not found")
         if version.status != "candidate":
             raise ValidationException("Only candidate source versions can be published")
+        self._assert_source_audit_publishable(version)
 
         latest_runs = self._repo.list_test_runs(source_version_id)
         latest_run = latest_runs[0] if latest_runs else None
@@ -338,6 +339,7 @@ class SourceRuntimeService:
             raise NotFoundException("source version not found")
         if version.status != "candidate":
             raise ValidationException("Only candidate source versions can be published")
+        self._assert_source_audit_publishable(version)
 
         superseded_version_ids: list[str] = []
         for item in self._repo.list_versions(version.source_type, version.source_id):
@@ -473,6 +475,16 @@ class SourceRuntimeService:
             if isinstance(probe, dict) and isinstance(probe.get("content_status"), str):
                 return probe["content_status"]
         return "ready"
+
+    def _assert_source_audit_publishable(self, version) -> None:
+        payload = version.payload if isinstance(version.payload, dict) else {}
+        if "source_audit" not in payload:
+            return
+        audit = payload["source_audit"]
+        if not isinstance(audit, dict) or audit.get("status") != "passed":
+            raise ValidationException("source audit must pass before publication")
+        if audit.get("test_run_pending"):
+            raise ValidationException("source audit test-run checkpoint must settle before publication")
 
     @staticmethod
     def _serialize_test_run(run) -> dict | None:

@@ -1,5 +1,7 @@
 import json
 
+from sqlalchemy.exc import IntegrityError
+
 from app.database import SessionLocal
 from app.domain.entities.source_review import SourceReviewItem
 from app.domain.repositories.source_review_repo import SourceReviewRepository
@@ -53,7 +55,14 @@ class SQLiteSourceReviewRepository(SourceReviewRepository):
             model.created_at = item.created_at
             model.resolved_at = item.resolved_at
 
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                existing = db.query(SourceReviewItemModel).filter(SourceReviewItemModel.id == item.id).first()
+                if existing is None:
+                    raise
+                return self._entity(existing)
             db.refresh(model)
             return self._entity(model)
         finally:

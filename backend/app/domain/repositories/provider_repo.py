@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from app.domain.entities.provider import ProviderAccount, ProviderModel, QuotaPolicy
+from app.domain.entities.provider import ProviderAccount, ProviderModel, ProviderRoute, QuotaPolicy
 
 
 class ProviderRepository(ABC):
@@ -17,6 +17,27 @@ class ProviderRepository(ABC):
         api_key: str,
         default_model: str,
     ) -> ProviderAccount:
+        raise NotImplementedError
+
+    @abstractmethod
+    def save_provider(
+        self,
+        *,
+        name: str,
+        base_url: str,
+        api_key: str,
+        default_model: str,
+        enabled: bool,
+        id: str | None = None,
+    ) -> ProviderAccount:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_routes(self, provider_group: str) -> list[ProviderRoute]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def replace_routes(self, provider_group: str, entries: list[dict]) -> list[ProviderRoute]:
         raise NotImplementedError
 
     @abstractmethod

@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { vi } from 'vitest'
+import { beforeEach, vi } from 'vitest'
 
 const systemMocks = vi.hoisted(() => ({
+  getSourceBuildAgentSettings: vi.fn(),
+  createProvider: vi.fn(),
+  updateProvider: vi.fn(),
+  discoverProviderModels: vi.fn(),
+  getProviderRoute: vi.fn(),
+  updateProviderRoute: vi.fn(),
   updateLLMSettings: vi.fn().mockResolvedValue({
     success: true,
     code: 'OK',
@@ -18,6 +24,7 @@ const systemMocks = vi.hoisted(() => ({
     meta: {},
     trace_id: null,
   }),
+  updateSourceBuildAgentSettings: vi.fn(),
 }))
 
 vi.mock('@/api/modules/system', () => ({
@@ -53,7 +60,14 @@ vi.mock('@/api/modules/system', () => ({
     meta: {},
     trace_id: null,
   }),
+  getSourceBuildAgentSettings: systemMocks.getSourceBuildAgentSettings,
+  createProvider: systemMocks.createProvider,
+  updateProvider: systemMocks.updateProvider,
+  discoverProviderModels: systemMocks.discoverProviderModels,
+  getProviderRoute: systemMocks.getProviderRoute,
+  updateProviderRoute: systemMocks.updateProviderRoute,
   updateLLMSettings: systemMocks.updateLLMSettings,
+  updateSourceBuildAgentSettings: systemMocks.updateSourceBuildAgentSettings,
 }))
 
 vi.mock('@/api/modules/ai', () => ({
@@ -79,6 +93,37 @@ vi.mock('@/api/modules/ai', () => ({
 import { AITasksPage } from '@/features/ai/AITasksPage'
 import { SystemSettingsPage } from './SystemSettingsPage'
 
+const sourceBuildAgentSettings = {
+  success: true,
+  code: 'OK',
+  message: 'ok',
+  data: {
+    enabled: false,
+    provider_configured: false,
+  },
+  meta: {},
+  trace_id: null,
+}
+
+beforeEach(() => {
+  systemMocks.getSourceBuildAgentSettings.mockReset().mockResolvedValue(sourceBuildAgentSettings)
+  systemMocks.createProvider.mockReset()
+  systemMocks.updateProvider.mockReset()
+  systemMocks.discoverProviderModels.mockReset()
+  systemMocks.getProviderRoute.mockReset().mockImplementation((group: string) => Promise.resolve({
+    ...sourceBuildAgentSettings,
+    data: { group, entries: [] },
+  }))
+  systemMocks.updateProviderRoute.mockReset()
+  systemMocks.updateSourceBuildAgentSettings.mockReset().mockResolvedValue({
+    ...sourceBuildAgentSettings,
+    data: {
+      enabled: true,
+      provider_configured: false,
+    },
+  })
+})
+
 test('system settings page shows provider health and quota panels', async () => {
   render(<SystemSettingsPage />)
 
@@ -87,6 +132,16 @@ test('system settings page shows provider health and quota panels', async () => 
 })
 
 test('system settings page saves llm api configuration', async () => {
+  systemMocks.getSourceBuildAgentSettings
+    .mockResolvedValueOnce(sourceBuildAgentSettings)
+    .mockResolvedValueOnce({
+      ...sourceBuildAgentSettings,
+      data: { enabled: false, provider_configured: true },
+    })
+    .mockResolvedValueOnce({
+      ...sourceBuildAgentSettings,
+      data: { enabled: false, provider_configured: true },
+    })
   render(<SystemSettingsPage />)
 
   expect(await screen.findByText('LLM API configuration')).toBeInTheDocument()
@@ -113,6 +168,103 @@ test('system settings page saves llm api configuration', async () => {
     })
   })
   expect(await screen.findByText('LLM settings saved')).toBeInTheDocument()
+  expect(await screen.findByText('LLM provider 已配置 / Provider configured')).toBeInTheDocument()
+})
+
+test('system settings page defaults source build Agent off and persists an enabled setting', async () => {
+  render(<SystemSettingsPage />)
+
+  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent-enhanced source build' })
+  expect(sourceBuildAgentSwitch).not.toBeChecked()
+  expect(
+    screen.getByText('仅当确定性书源构建失败后才会调用 Agent / Agent runs only after deterministic source build fails.'),
+  ).toBeInTheDocument()
+  expect(screen.getByText('LLM provider 未配置 / Provider not configured')).toBeInTheDocument()
+
+  fireEvent.click(sourceBuildAgentSwitch)
+
+  await waitFor(() => {
+    expect(systemMocks.updateSourceBuildAgentSettings).toHaveBeenCalledWith({ enabled: true })
+  })
+  expect(sourceBuildAgentSwitch).toBeChecked()
+})
+
+test('system settings page disables the source build Agent switch while saving', async () => {
+  let resolveUpdate: (value: typeof sourceBuildAgentSettings) => void
+  systemMocks.updateSourceBuildAgentSettings.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveUpdate = resolve
+      }),
+  )
+  render(<SystemSettingsPage />)
+
+  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent-enhanced source build' })
+  fireEvent.click(sourceBuildAgentSwitch)
+
+  expect(sourceBuildAgentSwitch).toBeDisabled()
+
+  resolveUpdate!({
+    ...sourceBuildAgentSettings,
+    data: {
+      enabled: true,
+      provider_configured: false,
+    },
+  })
+  await waitFor(() => expect(sourceBuildAgentSwitch).not.toBeDisabled())
+})
+
+test('system settings page supports camelCase Agent provider configuration', async () => {
+  systemMocks.getSourceBuildAgentSettings.mockResolvedValueOnce({
+    ...sourceBuildAgentSettings,
+    data: {
+      enabled: true,
+      providerConfigured: true,
+    },
+  })
+  render(<SystemSettingsPage />)
+
+  expect(await screen.findByRole('switch', { name: 'Agent-enhanced source build' })).toBeChecked()
+  expect(screen.getByText('LLM provider 已配置 / Provider configured')).toBeInTheDocument()
+})
+
+test('system settings page keeps LLM panels available when Agent settings fail to load', async () => {
+  systemMocks.getSourceBuildAgentSettings.mockRejectedValueOnce(new Error('settings unavailable'))
+  render(<SystemSettingsPage />)
+
+  expect(await screen.findByText('LLM API configuration')).toBeInTheDocument()
+  expect(await screen.findByText('Provider health')).toBeInTheDocument()
+  expect(await screen.findByText('Quota policies')).toBeInTheDocument()
+  expect(await screen.findByText('Primary OpenAI · healthy')).toBeInTheDocument()
+  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load source build Agent settings')
+})
+
+test('system settings page prevents toggling Agent settings before the initial load completes', async () => {
+  let resolveInitialSettings: (value: typeof sourceBuildAgentSettings) => void
+  systemMocks.getSourceBuildAgentSettings.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveInitialSettings = resolve
+      }),
+  )
+  render(<SystemSettingsPage />)
+
+  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent-enhanced source build' })
+  expect(sourceBuildAgentSwitch).toBeDisabled()
+  expect(systemMocks.updateSourceBuildAgentSettings).not.toHaveBeenCalled()
+
+  resolveInitialSettings!(sourceBuildAgentSettings)
+  await waitFor(() => expect(sourceBuildAgentSwitch).not.toBeDisabled())
+})
+
+test('system settings page announces Agent settings save failures as errors', async () => {
+  systemMocks.updateSourceBuildAgentSettings.mockRejectedValueOnce(new Error('save unavailable'))
+  render(<SystemSettingsPage />)
+
+  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent-enhanced source build' })
+  fireEvent.click(sourceBuildAgentSwitch)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save source build Agent settings')
 })
 
 test('ai tasks page shows provider and model for each task', async () => {

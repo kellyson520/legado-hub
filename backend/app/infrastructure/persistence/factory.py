@@ -14,6 +14,7 @@ from app.application.services.provider_platform_service import ProviderPlatformS
 from app.application.services.source_complement_app_service import SourceComplementAppService
 from app.application.services.source_build_agent import SourceBuildAgent
 from app.application.services.source_build_ai_repair_service import SourceBuildAIRepairService
+from app.application.services.source_build_audit_service import SourceBuildAuditService
 from app.application.services.source_build_runtime_service import SourceBuildRuntimeService
 from app.application.services.source_build_service import SourceBuildService
 from app.application.services.source_health_admin_service import SourceHealthAdminService
@@ -25,6 +26,7 @@ from app.application.services.source_probe_service import SourceProbeService
 from app.application.services.source_routing_service import SourceRoutingService
 from app.application.services.source_service import SourceAppService
 from app.application.services.source_runtime_service import SourceRuntimeService
+from app.application.services.system_settings_service import SystemSettingsService
 from app.application.services.translation_service import TranslationService
 from app.application.services.work_knowledge_service import WorkKnowledgeService
 from app.core.config import settings
@@ -37,7 +39,7 @@ from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLit
 from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
 from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
 from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
-from app.infrastructure.providers.registry import ProviderRegistry
+from app.infrastructure.providers.registry import ProviderRegistry, ProviderSelection
 from app.infrastructure.persistence.sqlite.auth_repo_impl import SQLiteAuthRepository
 from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
 from app.infrastructure.persistence.sqlite.canonical_content_repo_impl import SQLiteCanonicalContentRepository
@@ -45,6 +47,7 @@ from app.infrastructure.persistence.sqlite.source_repo_impl import SQLiteSourceR
 from app.infrastructure.persistence.sqlite.source_health_repo_impl import SQLiteSourceHealthRepository
 from app.infrastructure.persistence.sqlite.source_review_repo_impl import SQLiteSourceReviewRepository
 from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+from app.infrastructure.persistence.sqlite.system_settings_repo_impl import SQLiteSystemSettingsRepository
 from app.infrastructure.persistence.sqlite.translation_runtime_repo_impl import (
     SQLiteTranslationRuntimeRepository,
 )
@@ -59,6 +62,11 @@ def build_auth_repository() -> SQLiteAuthRepository:
 def build_job_service() -> JobService:
     bootstrap_sqlite()
     return JobService(SQLiteJobRepository())
+
+
+def build_job_repository() -> SQLiteJobRepository:
+    bootstrap_sqlite()
+    return SQLiteJobRepository()
 
 
 def build_agent_runtime_service() -> AgentRuntimeService:
@@ -96,6 +104,11 @@ def build_provider_repository() -> SQLiteProviderRepository:
     return SQLiteProviderRepository()
 
 
+def build_system_settings_repository() -> SQLiteSystemSettingsRepository:
+    bootstrap_sqlite()
+    return SQLiteSystemSettingsRepository()
+
+
 def build_source_runtime_service() -> SourceRuntimeService:
     return SourceRuntimeService(
         build_source_runtime_repository(),
@@ -122,6 +135,15 @@ def build_source_build_service() -> SourceBuildService:
     )
 
 
+def build_source_build_audit_service() -> SourceBuildAuditService:
+    return SourceBuildAuditService(
+        runtime_repo=build_source_runtime_repository(),
+        probe_service_factory=build_source_probe_service,
+        build_service=build_source_build_service(),
+        review_service=build_source_review_service(),
+    )
+
+
 def build_source_health_service() -> SourceHealthService:
     return SourceHealthService(
         build_source_runtime_repository(),
@@ -134,13 +156,15 @@ def build_source_build_agent() -> SourceBuildAgent:
     return SourceBuildAgent(review_service=build_source_review_service())
 
 
-def build_source_build_runtime_service() -> SourceBuildRuntimeService:
+def build_source_build_runtime_service(*, use_ai_repair: bool = True) -> SourceBuildRuntimeService:
     return SourceBuildRuntimeService(
         runtime_repo=build_source_runtime_repository(),
         agent_runtime=build_agent_runtime_service(),
         build_agent=build_source_build_agent(),
         probe_factory=build_source_probe_service,
-        ai_repair_service=build_source_build_ai_repair_service(),
+        ai_repair_service=(build_source_build_ai_repair_service() if use_ai_repair else None),
+        system_settings_service=build_system_settings_service(),
+        review_service=build_source_review_service(),
     )
 
 
@@ -209,32 +233,54 @@ class _AllowAllProviderQuotaLimiter:
 
 
 def build_provider_registry() -> ProviderRegistry:
-    groups: dict[str, list[OpenAICompatibleProvider]] = {}
+    provider_groups = ("default", "ai", "source_build", "translation", "novel")
+    groups: dict[str, list[ProviderSelection]] = {}
     if settings.LLM_API_URL and settings.LLM_API_KEY:
         provider = OpenAICompatibleProvider(
             name=settings.LLM_PROVIDER_NAME,
             endpoint_url=settings.LLM_API_URL,
             api_key=settings.LLM_API_KEY,
         )
-        groups = {key: [provider] for key in ("default", "ai", "translation", "novel")}
+        groups = {
+            key: [ProviderSelection(provider=provider, model=settings.LLM_MODEL)]
+            for key in provider_groups
+        }
 
     try:
         repo = build_provider_repository()
-        for account in repo.list_provider_accounts():
-            if (
-                not account.enabled
-                or account.provider_type != "openai_compatible"
-                or not account.base_url
-                or not account.api_key
-            ):
-                continue
-            provider = OpenAICompatibleProvider(
-                name=account.name,
-                endpoint_url=account.base_url,
-                api_key=account.api_key,
-            )
-            for group in ("default", "ai", "translation", "novel"):
-                groups.setdefault(group, []).append(provider)
+        accounts = {account.id: account for account in repo.list_configured_openai_providers()}
+        if repo.has_routes():
+            for group in provider_groups:
+                routes = repo.list_routes(group)
+                if not routes:
+                    continue
+                selections: list[ProviderSelection] = []
+                for route in routes:
+                    account = accounts.get(route.provider_account_id)
+                    if account is None or not route.enabled or not route.model:
+                        continue
+                    selections.append(
+                        ProviderSelection(
+                            provider=OpenAICompatibleProvider(
+                                name=account.name,
+                                endpoint_url=account.base_url,
+                                api_key=account.api_key,
+                            ),
+                            model=route.model,
+                        )
+                    )
+                groups[group] = selections
+        else:
+            for account in accounts.values():
+                provider = OpenAICompatibleProvider(
+                    name=account.name,
+                    endpoint_url=account.base_url,
+                    api_key=account.api_key,
+                )
+                for group in provider_groups:
+                    groups.setdefault(group, []).append(
+                        ProviderSelection(provider=provider, model=account.default_model)
+                    )
     except Exception:
         if not groups:
             return ProviderRegistry({})
@@ -247,6 +293,13 @@ def build_provider_platform_service() -> ProviderPlatformService:
         registry=build_provider_registry(),
         quota_limiter=_AllowAllProviderQuotaLimiter(),
         provider_repo=build_provider_repository(),
+    )
+
+
+def build_system_settings_service() -> SystemSettingsService:
+    return SystemSettingsService(
+        repo=build_system_settings_repository(),
+        provider_registry=build_provider_registry(),
     )
 
 

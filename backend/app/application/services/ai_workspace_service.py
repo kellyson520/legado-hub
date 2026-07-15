@@ -101,7 +101,7 @@ class AIWorkspaceService:
         try:
             invocation = await self._platform.invoke_chat(
                 provider_group="ai",
-                model="gpt-4.1-mini",
+                model=None,
                 payload=payload,
                 quota_scope=("user", str(actor_id)),
             )

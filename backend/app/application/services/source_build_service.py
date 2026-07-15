@@ -114,6 +114,31 @@ class SourceBuildService:
             idempotency_key_prefix='source.build.catalog',
         )
 
+    def submit_audit_repair(
+        self,
+        *,
+        tenant_id: str,
+        source_version_id: str,
+        url: str,
+        keyword: str,
+        next_attempt: int,
+    ):
+        normalized_url = self._normalize_url(url)
+        return self._jobs.enqueue(
+            kind='source.build',
+            tenant_id=tenant_id,
+            payload={
+                'url': normalized_url,
+                'keyword': keyword,
+                'source_version_id': source_version_id,
+                'trigger': 'source_audit_repair',
+                'source_audit_attempt': next_attempt,
+            },
+            idempotency_key=(
+                f'source.audit.repair:{source_version_id}:attempt-{next_attempt}'
+            ),
+        )
+
     @staticmethod
     def _normalize_url(url: str) -> str:
         parts = urlsplit(url.strip())
@@ -159,6 +184,12 @@ class SourceBuildService:
                     'work': {},
                     'toc': {},
                     'content': {},
+                },
+                'source_audit': {
+                    'status': 'pending',
+                    'attempt': 0,
+                    'max_attempts': 5,
+                    'history': [],
                 },
                 **(extra_payload or {}),
             },

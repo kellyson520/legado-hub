@@ -91,7 +91,7 @@ test('agent runs page renders recent run summaries', async () => {
   render(<AgentRunsPage />)
 
   expect(await screen.findByRole('heading', { name: 'Agent runs' })).toBeInTheDocument()
-  expect(screen.getByText('source_build')).toBeInTheDocument()
+  expect(await screen.findByText('source_build')).toBeInTheDocument()
   expect(screen.getByText('api-key:7')).toBeInTheDocument()
   expect(screen.getByText('Tools 2 · Accepted 1 · Rejected 1')).toBeInTheDocument()
   expect(screen.getByText('Evidence 3 · Latest rule.validate')).toBeInTheDocument()

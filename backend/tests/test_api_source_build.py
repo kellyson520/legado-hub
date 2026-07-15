@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -76,10 +77,35 @@ def test_operations_source_builds_endpoint_lists_candidate_versions(monkeypatch,
 
     bootstrap_sqlite()
     repo = build_source_runtime_repository()
+    audit_report = {
+        'status': 'passed',
+        'attempt': 1,
+        'max_attempts': 5,
+        'score': 100,
+        'grade': 'A',
+        'total_elapsed_ms': 480,
+        'stages': {
+            'search': {'status': 'ok', 'elapsed_ms': 120, 'hit_count': 1, 'title': 'Sample Book'},
+            'toc': {'status': 'ok', 'elapsed_ms': 160, 'hit_count': 9, 'title': 'Chapter 1'},
+            'content': {'status': 'ok', 'elapsed_ms': 200, 'content_length': 160, 'title': 'Chapter 1'},
+        },
+    }
+    source_audit = {
+        'status': 'passed',
+        'attempt': 1,
+        'max_attempts': 5,
+        'score': 100,
+        'grade': 'A',
+        'report': audit_report,
+    }
     version = repo.create_candidate_version(
         source_type='book',
         source_id='https://example.test/books',
-        payload={'keyword': 'sample', 'canonical_url': 'https://example.test/books'},
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://example.test/books',
+            'source_audit': source_audit,
+        },
         created_by='tenant-console',
     )
     repo.record_test_run(
@@ -100,7 +126,68 @@ def test_operations_source_builds_endpoint_lists_candidate_versions(monkeypatch,
     assert row['id'] == version.id
     assert row['source_id'] == 'https://example.test/books'
     assert row['payload']['keyword'] == 'sample'
+    assert row['payload']['source_audit'] == source_audit
     assert row['latest_run']['grade'] == 'B'
+
+
+def test_operations_source_builds_endpoint_includes_failed_terminal_audit_versions(monkeypatch, tmp_path):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-terminal-audit.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    terminal_audit = {
+        'status': 'failed',
+        'attempt': 5,
+        'max_attempts': 5,
+        'score': 0,
+        'grade': 'F',
+        'report': {
+            'status': 'failed',
+            'reason': 'content parse failed',
+            'total_elapsed_ms': 480,
+            'stages': {
+                'search': {'status': 'ok', 'elapsed_ms': 120, 'hit_count': 1, 'title': 'Sample Book'},
+                'toc': {'status': 'ok', 'elapsed_ms': 160, 'hit_count': 9, 'title': 'Chapter 1'},
+                'content': {'status': 'failed', 'elapsed_ms': 200, 'content_length': 0, 'title': 'Chapter 1'},
+            },
+        },
+    }
+    bootstrap_sqlite()
+    repo = build_source_runtime_repository()
+    candidate = repo.create_candidate_version(
+        source_type='book',
+        source_id='https://example.test/candidate',
+        payload={'canonical_url': 'https://example.test/candidate'},
+        created_by='tenant-console',
+    )
+    failed = repo.create_candidate_version(
+        source_type='book',
+        source_id='https://example.test/audit-failed',
+        payload={
+            'canonical_url': 'https://example.test/audit-failed',
+            'source_audit': terminal_audit,
+        },
+        created_by='system',
+    )
+    repo.update_version_status(failed.id, 'failed')
+
+    from app.main import app
+
+    token = create_access_token({'sub': '1', 'permissions': ['book_sources.read']})
+    response = TestClient(app).get('/api/events/source-builds', headers={'Authorization': f'Bearer {token}'})
+
+    assert response.status_code == 200
+    rows = response.json()['data']
+    assert {row['id'] for row in rows} == {candidate.id, failed.id}
+    assert len(rows) <= 50
+    assert rows == sorted(rows, key=lambda row: (row['created_at'] or '', row['id']), reverse=True)
+    failed_row = next(row for row in rows if row['id'] == failed.id)
+    assert failed_row['status'] == 'failed'
+    assert failed_row['payload']['source_audit'] == terminal_audit
 
 
 def test_operations_source_builds_endpoint_exposes_autonomous_build_backflow(monkeypatch, tmp_path):
@@ -331,7 +418,130 @@ def test_review_queue_includes_persisted_source_review_items(monkeypatch, tmp_pa
     assert row['created_by'] == 'builder-1'
 
 
-def test_operations_review_queue_can_publish_source_build_candidate(monkeypatch, tmp_path):
+def test_review_queue_exposes_terminal_source_audit_report(monkeypatch, tmp_path):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-review-audit-failure.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.factory import build_source_review_service
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    audit_report = {
+        'status': 'failed',
+        'attempt': 5,
+        'max_attempts': 5,
+        'score': 0,
+        'grade': 'F',
+        'reason': 'content parse failed',
+        'total_elapsed_ms': 480,
+        'stages': {
+            'search': {'status': 'ok', 'elapsed_ms': 120, 'hit_count': 1, 'title': 'Sample Book'},
+            'toc': {'status': 'ok', 'elapsed_ms': 160, 'hit_count': 9, 'title': 'Chapter 1'},
+            'content': {'status': 'failed', 'elapsed_ms': 200, 'content_length': 0, 'title': 'Chapter 1'},
+        },
+    }
+    bootstrap_sqlite()
+    build_source_review_service().enqueue_audit_failure(
+        source_version_id='source-version-audit-failed',
+        source_url='https://example.test/audit-failed',
+        audit_report=audit_report,
+        created_by='system',
+    )
+
+    from app.main import app
+
+    token = create_access_token({'sub': '1', 'permissions': ['agent_runs.read']})
+    response = TestClient(app).get('/api/events/review-queue', headers={'Authorization': f'Bearer {token}'})
+
+    assert response.status_code == 200
+    row = next(item for item in response.json()['data'] if item['proposal_type'] == 'source_audit_failed')
+    assert row['item_type'] == 'source_review'
+    assert row['evidence'] == 'content parse failed'
+    assert row['payload']['audit_report'] == audit_report
+
+
+@pytest.mark.parametrize(
+    'audit',
+    [
+        {'status': 'pending', 'attempt': 0},
+        {'status': 'failed', 'attempt': 5},
+        {'status': 'passed', 'attempt': 1, 'test_run_pending': True},
+    ],
+    ids=['pending', 'failed', 'pending-checkpoint'],
+)
+def test_operations_review_queue_rejects_unsettled_source_audit(monkeypatch, tmp_path, audit):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / f"api-source-build-audit-{audit['status']}.sqlite3"))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    repo = build_source_runtime_repository()
+    version = repo.create_candidate_version(
+        source_type='book',
+        source_id='https://example.test/audit-blocked',
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://example.test/audit-blocked',
+            'source_audit': audit,
+        },
+        created_by='tenant-console',
+    )
+
+    from app.main import app
+
+    token = create_access_token({'sub': '1', 'permissions': ['agent_runs.write', 'engine.deploy']})
+    response = TestClient(app).post(
+        f'/api/events/review-queue/{version.id}/resolve',
+        headers={'Authorization': f'Bearer {token}'},
+        json={'item_type': 'source_version', 'action': 'publish'},
+    )
+
+    assert response.status_code == 422
+    assert 'source audit' in response.json()['message'].lower()
+    assert repo.get_version(version.id).status == 'candidate'
+
+
+def test_operations_review_queue_can_publish_source_build_candidate_with_passed_audit_without_test_run(monkeypatch, tmp_path):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-audit-passed.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    repo = build_source_runtime_repository()
+    version = repo.create_candidate_version(
+        source_type='book',
+        source_id='https://example.test/audit-passed',
+        payload={
+            'keyword': 'sample',
+            'canonical_url': 'https://example.test/audit-passed',
+            'source_audit': {'status': 'passed', 'attempt': 1},
+        },
+        created_by='tenant-console',
+    )
+
+    from app.main import app
+
+    token = create_access_token({'sub': '1', 'permissions': ['agent_runs.write', 'engine.deploy']})
+    response = TestClient(app).post(
+        f'/api/events/review-queue/{version.id}/resolve',
+        headers={'Authorization': f'Bearer {token}'},
+        json={'item_type': 'source_version', 'action': 'publish'},
+    )
+
+    assert response.status_code == 200
+    assert response.json()['data']['status'] == 'published'
+
+
+def test_operations_review_queue_can_publish_legacy_unmarked_source_build_candidate(monkeypatch, tmp_path):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-review-resolve.sqlite3'))
     monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')

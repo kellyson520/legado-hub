@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 
-import { listSourceBuildCandidates, type OperationSourceBuildRow } from '@/api/modules/operations'
+import {
+  listSourceBuildCandidates,
+  type OperationSourceBuildAuditSummary,
+  type OperationSourceBuildRow,
+} from '@/api/modules/operations'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 
 function getSourceId(row: OperationSourceBuildRow) {
@@ -16,25 +20,64 @@ function getCreatedBy(row: OperationSourceBuildRow) {
 }
 
 function getAutonomousBuild(row: OperationSourceBuildRow) {
-  return row.payload.autonomous_build as
-    | {
-        decision?: string
-        strategy?: string
-        trigger?: string
-        agent_run_id?: string
-        probe?: {
-          search_status?: string
-          toc_status?: string
-          content_status?: string
-          sample_title?: string
-          failure_reason?: string
-        }
-        validation?: {
-          grade?: string
-          quality_score?: number
-        }
-      }
-    | undefined
+  return row.payload.autonomousBuild ?? row.payload.autonomous_build
+}
+
+function getSourceAudit(row: OperationSourceBuildRow) {
+  return row.payload.sourceAudit ?? row.payload.source_audit
+}
+
+function getAuditStatus(audit: OperationSourceBuildAuditSummary) {
+  return audit.status ?? audit.report?.status ?? 'pending'
+}
+
+function getAuditAttempt(audit: OperationSourceBuildAuditSummary) {
+  return audit.attempt ?? audit.report?.attempt ?? 0
+}
+
+function getAuditMaxAttempts(audit: OperationSourceBuildAuditSummary) {
+  return audit.maxAttempts ?? audit.max_attempts ?? audit.report?.maxAttempts ?? audit.report?.max_attempts ?? 5
+}
+
+function getAuditGrade(audit: OperationSourceBuildAuditSummary) {
+  return audit.grade ?? audit.report?.grade ?? '-'
+}
+
+function getAuditTotalElapsedMs(audit: OperationSourceBuildAuditSummary) {
+  return audit.report?.totalElapsedMs ?? audit.report?.total_elapsed_ms
+}
+
+export function SourceAuditSummary({ audit }: { audit?: OperationSourceBuildAuditSummary }) {
+  if (!audit) return <span className="text-muted-foreground">-</span>
+
+  const status = getAuditStatus(audit)
+  const report = audit.report
+  const totalElapsedMs = getAuditTotalElapsedMs(audit)
+  const terminalFailure = status === 'failed'
+  const summary = (
+    <>
+      <div className={terminalFailure ? 'font-medium text-destructive' : 'font-medium text-foreground'}>
+        Audit: {status} · {getAuditAttempt(audit)}/{getAuditMaxAttempts(audit)} · {getAuditGrade(audit)}
+      </div>
+      {report?.stages ? (
+        <div className="text-muted-foreground">
+          search/toc/content: {report.stages.search?.status ?? '-'} / {report.stages.toc?.status ?? '-'} /{' '}
+          {report.stages.content?.status ?? '-'}
+          {typeof totalElapsedMs === 'number' ? ` · ${totalElapsedMs}ms` : ''}
+        </div>
+      ) : null}
+      {typeof totalElapsedMs === 'number' ? <div className="text-muted-foreground">total parse: {totalElapsedMs}ms</div> : null}
+      {report?.reason ? <div className="text-muted-foreground">{report.reason}</div> : null}
+    </>
+  )
+
+  return terminalFailure ? (
+    <div className="space-y-1 text-xs leading-5" role="alert">
+      {summary}
+    </div>
+  ) : (
+    <div className="space-y-1 text-xs leading-5">{summary}</div>
+  )
 }
 
 export function SourceBuildsPage() {
@@ -69,6 +112,7 @@ export function SourceBuildsPage() {
               <th className="px-4 py-3 font-medium">Keyword</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Latest grade</th>
+              <th className="px-4 py-3 font-medium">Audit</th>
               <th className="px-4 py-3 font-medium">Automation</th>
               <th className="px-4 py-3 font-medium">Submitted by</th>
             </tr>
@@ -77,6 +121,7 @@ export function SourceBuildsPage() {
             {rows.map((row) => {
               const latestRun = getLatestRun(row)
               const autonomousBuild = getAutonomousBuild(row)
+              const sourceAudit = getSourceAudit(row)
               return (
                 <tr key={row.id}>
                   <td className="px-4 py-3">
@@ -86,6 +131,9 @@ export function SourceBuildsPage() {
                   <td className="px-4 py-3">{row.payload.keyword || '-'}</td>
                   <td className="px-4 py-3">{row.status}</td>
                   <td className="px-4 py-3">{latestRun?.grade ?? '-'}</td>
+                  <td className="px-4 py-3">
+                    <SourceAuditSummary audit={sourceAudit} />
+                  </td>
                   <td className="px-4 py-3">
                     {autonomousBuild ? (
                       <>
@@ -124,7 +172,7 @@ export function SourceBuildsPage() {
             })}
             {rows.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-muted-foreground" colSpan={6}>
+                <td className="px-4 py-6 text-muted-foreground" colSpan={7}>
                   No source build candidates yet
                 </td>
               </tr>

@@ -1493,6 +1493,25 @@ WWW-Authenticate: Bearer
 
 ---
 
+## 系统 Provider 管理
+
+以下接口均需要 `system.settings.manage` 权限。Provider 读取响应只返回密钥是否已配置与安全掩码，绝不会返回原始 API Key。
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| `GET` | `/api/system/providers` | 列出 Provider 渠道及其脱敏配置状态 |
+| `POST` | `/api/system/providers` | 创建 Provider 渠道 |
+| `PUT` | `/api/system/providers/{provider_id}` | 编辑 Provider；空 `api_key` 保留已有密钥 |
+| `POST` | `/api/system/providers/{provider_id}/models` | 使用服务器保存的密钥发现兼容 Provider 的模型列表 |
+| `GET` | `/api/system/provider-routes/{group}` | 读取功能路由的有序渠道/模型组合 |
+| `PUT` | `/api/system/provider-routes/{group}` | 原子替换功能路由的主备顺序 |
+
+`group` 仅支持 `default`、`ai`、`source_build`、`translation` 与 `novel`。运行时按顺序尝试该路由中的渠道；超时、连接失败、429、5xx、认证失败和模型不可用会切换到备用项，400/422 请求错误不会重复调用。
+
+创建渠道时 `default_model` 可以留空：先保存接口与密钥，使用模型发现接口获取列表后，再选择模型并更新渠道或功能路由。
+
+---
+
 ## 限流说明
 
 ### 限流策略

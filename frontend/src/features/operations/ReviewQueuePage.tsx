@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react'
 import {
   listReviewQueueCandidates,
   resolveReviewQueueItem,
+  type OperationSourceBuildAuditSummary,
   type OperationReviewQueueRow,
 } from '@/api/modules/operations'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { SourceAuditSummary } from './SourceBuildsPage'
 
 function getProposalType(row: OperationReviewQueueRow) {
   return row.proposalType ?? row.proposal_type ?? '-'
@@ -37,6 +39,27 @@ function getSummary(row: OperationReviewQueueRow) {
   const relation = row.relation || '-'
   const objectName = getObjectName(row)
   return `${subject} -> ${relation} -> ${objectName}`
+}
+
+function getSourceAudit(row: OperationReviewQueueRow): OperationSourceBuildAuditSummary | undefined {
+  const payload = row.payload
+  if (!payload) return undefined
+  const sourceAudit = payload.sourceAudit ?? payload.source_audit
+  if (sourceAudit) return sourceAudit
+
+  const auditReport = payload.auditReport ?? payload.audit_report
+  if (!auditReport) return undefined
+  return {
+    status: auditReport.status,
+    attempt: auditReport.attempt,
+    max_attempts: auditReport.max_attempts,
+    maxAttempts: auditReport.maxAttempts,
+    score: auditReport.score,
+    grade: auditReport.grade,
+    test_run_pending: auditReport.test_run_pending,
+    testRunPending: auditReport.testRunPending,
+    report: auditReport,
+  }
 }
 
 function getActionLabel(row: OperationReviewQueueRow) {
@@ -130,6 +153,9 @@ export function ReviewQueuePage() {
                 const itemType = getItemType(row)
                 const actionLabel = getActionLabel(row)
                 const resolving = pendingId === row.id
+                const sourceAudit = ['source_version', 'source_review'].includes(itemType)
+                  ? getSourceAudit(row)
+                  : undefined
                 return (
                   <tr key={row.id}>
                     <td className="px-4 py-3">
@@ -145,7 +171,14 @@ export function ReviewQueuePage() {
                         {row.subject || '-'} · {row.relation || '-'} · {getObjectName(row)}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.evidence}</td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      <div>{row.evidence}</div>
+                      {sourceAudit ? (
+                        <div className="mt-1">
+                          <SourceAuditSummary audit={sourceAudit} />
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{getCreatedBy(row)}</td>
                     <td className="px-4 py-3">
                       {canResolve(row) ? (

@@ -34,8 +34,57 @@ const operationsMocks = vi.hoisted(() => ({
         objectName: 'https://example.test/books',
         evidence: 'https://example.test/books',
         status: 'candidate',
+        payload: {
+          source_audit: {
+            status: 'passed',
+            attempt: 1,
+            max_attempts: 5,
+            score: 100,
+            grade: 'A',
+            report: {
+              status: 'passed',
+              total_elapsed_ms: 480,
+              stages: {
+                search: { status: 'ok', elapsed_ms: 120 },
+                toc: { status: 'ok', elapsed_ms: 160 },
+                content: { status: 'ok', elapsed_ms: 200 },
+              },
+            },
+          },
+        },
         createdBy: 'tenant-console',
         createdAt: '2026-07-12T12:00:00Z',
+      },
+      {
+        id: 'source-audit-failed-1',
+        itemType: 'source_review',
+        workId: 'source-version-audit-failed',
+        sourceChapterId: 'source-version-audit-failed',
+        proposalType: 'source_audit_failed',
+        summary: 'Source audit retry limit reached',
+        subject: 'source_audit_failed',
+        relation: 'review',
+        objectName: 'https://example.test/audit-failed',
+        evidence: 'content parse failed',
+        status: 'candidate',
+        payload: {
+          audit_report: {
+            status: 'failed',
+            attempt: 5,
+            max_attempts: 5,
+            score: 0,
+            grade: 'F',
+            reason: 'content parse failed',
+            total_elapsed_ms: 480,
+            stages: {
+              search: { status: 'ok', elapsed_ms: 120 },
+              toc: { status: 'ok', elapsed_ms: 160 },
+              content: { status: 'failed', elapsed_ms: 200 },
+            },
+          },
+        },
+        createdBy: 'system',
+        createdAt: '2026-07-12T12:15:00Z',
       },
       {
         id: 'translation-1',
@@ -67,7 +116,7 @@ const operationsMocks = vi.hoisted(() => ({
         createdAt: '2026-07-12T10:00:00Z',
       },
     ],
-    meta: { total: 4 },
+    meta: { total: 5 },
     trace_id: null,
   }),
   resolveReviewQueueItem: vi.fn(),
@@ -100,6 +149,14 @@ test('review queue page renders source, knowledge, and translation review candid
   expect(screen.getByText('Translation memory review (2 chunks)')).toBeInTheDocument()
   expect(screen.getByText('source_version_publish')).toBeInTheDocument()
   expect(screen.getByText('Publish source candidate (grade A)')).toBeInTheDocument()
+  expect(screen.getByText('Audit: passed · 1/5 · A')).toBeInTheDocument()
+  expect(screen.getByText('search/toc/content: ok / ok / ok · 480ms')).toBeInTheDocument()
+  expect(screen.getByText('source_audit_failed')).toBeInTheDocument()
+  expect(screen.getByText('Source audit retry limit reached')).toBeInTheDocument()
+  expect(screen.getByText('Audit: failed · 5/5 · F')).toBeInTheDocument()
+  expect(screen.getByText('search/toc/content: ok / ok / failed · 480ms')).toBeInTheDocument()
+  expect(screen.getAllByText('content parse failed')).toHaveLength(2)
+  expect(screen.getByRole('alert')).toHaveTextContent('content parse failed')
   expect(screen.getByText('Translated content preview')).toBeInTheDocument()
 })
 

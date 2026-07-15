@@ -63,6 +63,15 @@ class JsRuntime:
         if hasattr(self._worker, "_bridge_http_handler"):
             self._worker._bridge_http_handler = self._handle_bridge_http
 
+    def close(self):
+        close = getattr(self._worker, 'close', None)
+        return close() if callable(close) else None
+
+    def set_execution_deadline(self, deadline: float | None) -> None:
+        setter = getattr(self._worker, 'set_execution_deadline', None)
+        if callable(setter):
+            setter(deadline)
+
     def _handle_bridge_http(self, request_spec: dict[str, Any]) -> dict[str, Any]:
         url = str(request_spec.get("url", "") or "")
         if not url:
