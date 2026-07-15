@@ -95,6 +95,15 @@ test('source list renders legacy runtime name, URL, and source status', async ()
   expect(screen.getByRole('link', { name: '打开书源健康控制台' })).toHaveClass('inline-flex')
 })
 
+test('source list stops loading and explains when the runtime inventory cannot be loaded', async () => {
+  const { listBookSources } = await import('@/api/modules/sources')
+  vi.mocked(listBookSources).mockRejectedValueOnce(new Error('network unavailable'))
+  render(<MemoryRouter><SourceListPage /></MemoryRouter>)
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('无法加载书源库存，请重试。')
+  expect(screen.queryByText('正在加载书源…')).not.toBeInTheDocument()
+})
+
 test('source list imports Legado JSON as candidate sources', async () => {
   const { importLegadoSources } = await import('@/api/modules/sources')
   render(<MemoryRouter><SourceListPage /></MemoryRouter>)
@@ -111,6 +120,16 @@ test('source list imports Legado JSON as candidate sources', async () => {
   })
   expect(await screen.findByText('已创建 1 个候选书源')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: '编辑规则' })).toHaveAttribute('href', '/sources/rules/version-1')
+})
+
+test('source list exposes an upload button that opens the Legado JSON file picker', async () => {
+  const click = vi.spyOn(HTMLInputElement.prototype, 'click')
+  render(<MemoryRouter><SourceListPage /></MemoryRouter>)
+
+  await screen.findByText('运行书源')
+  fireEvent.click(screen.getByRole('button', { name: '上传 JSON 文件' }))
+
+  expect(click).toHaveBeenCalled()
 })
 
 test('source list imports a selected Legado JSON file as candidate sources', async () => {
