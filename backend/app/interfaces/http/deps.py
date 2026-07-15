@@ -1,7 +1,8 @@
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 
 from app.application.services.auth_service import AuthAppService
 from app.core.exceptions import AuthenticationException, AuthorizationException
+from app.core.logging import set_log_context
 from app.core.permissions import Permission
 from app.core.security import decode_access_token, hash_api_key
 from app.infrastructure.persistence.factory import build_auth_repository
@@ -23,28 +24,40 @@ class ApiKeyIdentity:
         self.permissions = permissions
 
 
-def get_current_identity(authorization: str | None = Header(default=None)) -> RequestIdentity:
+def get_current_identity(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> RequestIdentity:
     if not authorization or not authorization.startswith("Bearer "):
         raise AuthenticationException("Missing bearer token")
     payload = decode_access_token(authorization[7:])
     if not payload:
         raise AuthenticationException("Invalid access token")
-    return RequestIdentity(
+    identity = RequestIdentity(
         user_id=int(payload["sub"]),
         permissions=set(payload.get("permissions", [])),
         roles=set(payload.get("roles", [])),
         display_name=str(payload.get("display_name", "")),
         session_id=payload.get("sid"),
     )
+    set_log_context(user_id=str(identity.user_id))
+    request.state.user_id = str(identity.user_id)
+    return identity
 
 
-async def get_api_key_identity(authorization: str | None = Header(default=None)) -> ApiKeyIdentity:
+async def get_api_key_identity(
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> ApiKeyIdentity:
     if not authorization or not authorization.startswith('Bearer lh_'):
         raise AuthenticationException('Missing API key')
     api_key = await build_auth_repository().get_api_key_by_hash(hash_api_key(authorization[7:]))
     if api_key is None or not api_key.is_enabled:
         raise AuthenticationException('Invalid API key')
-    return ApiKeyIdentity(api_key.id, api_key.name, set(api_key.permissions))
+    identity = ApiKeyIdentity(api_key.id, api_key.name, set(api_key.permissions))
+    set_log_context(api_key_id=identity.api_key_id)
+    request.state.api_key_id = identity.api_key_id
+    return identity
 
 
 def get_auth_service() -> AuthAppService:

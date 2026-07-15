@@ -48,6 +48,19 @@ class AuditRepository:
         self.events.append(event)
 
 
+class SourceRuntimeService:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def create_rule_draft(self, source_version_id, patch, actor_id):
+        self.calls.append({
+            "source_version_id": source_version_id,
+            "patch": patch,
+            "actor_id": actor_id,
+        })
+        return {"source_version_id": "candidate-repair-1", "status": "candidate"}
+
+
 class VisibleSourceRepository:
     def list_recent_versions(self, **_kwargs):
         return [
@@ -182,6 +195,52 @@ async def test_workspace_message_persists_reply_and_sanitizes_tool_result(tmp_pa
     assert [event.action for event in audit.events] == ["ai.conversation.create", "ai.tool.invoke", "ai.conversation.message"]
     assert platform.calls[0]["provider_group"] == "ai"
     assert platform.calls[0]["model"] is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_creates_an_owned_candidate_rule_draft_when_explicitly_granted(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-draft.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    runtime = SourceRuntimeService()
+    service = AIWorkspaceService(
+        RecordingPlatform(),
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        source_runtime=runtime,
+    )
+    conversation = await service.create_conversation("7")
+
+    reply = await service.send_message(
+        conversation["id"],
+        "7",
+        "chat",
+        "为我的书源修复正文规则",
+        [{
+            "name": "create_source_rule_draft",
+            "arguments": {
+                "source_version_id": "owned-candidate",
+                "patch": {"ruleContent": {"content": "id.content@html"}},
+            },
+        }],
+        allowed_tool_names={"create_source_rule_draft"},
+    )
+
+    assert runtime.calls == [{
+        "source_version_id": "owned-candidate",
+        "patch": {"ruleContent": {"content": "id.content@html"}},
+        "actor_id": "7",
+    }]
+    assert reply["tool_calls"][0]["result"] == {
+        "source_version_id": "candidate-repair-1",
+        "status": "candidate",
+    }
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@
 - Trace ID 生成 → 注入到日志上下文
 """
 
+import json
 import time
 import uuid
 import asyncio
@@ -68,6 +69,8 @@ class TraceMiddleware(BaseHTTPMiddleware):
                     "path": path,
                     "status_code": response.status_code,
                     "duration_ms": round(elapsed, 2),
+                    "user_id": getattr(request.state, "user_id", None),
+                    "api_key_id": getattr(request.state, "api_key_id", None),
                 }
             )
             return response
@@ -115,11 +118,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # 构建限流 key
         client_ip = request.client.host if request.client else "unknown"
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer lh_"):
-            key = f"ratelimit:api:{auth_header[7:15]}"
-        else:
-            key = f"ratelimit:ip:{client_ip}"
+        # Authentication is resolved deeper in the request stack. Never trust an
+        # unauthenticated token prefix here, otherwise rotating fake keys bypass
+        # the shared pre-auth IP window.
+        key = f"ratelimit:ip:{client_ip}"
 
         # 检查限流
         allowed, remaining, reset_after = await redis_client.check_rate_limit(
@@ -198,76 +200,69 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         duration = time.time() - start_time
 
-        # 异步记录审计日志（不阻塞响应）
-        try:
-            await self._record_audit(request, response, duration)
-        except Exception as e:
-            logger.warning(
-                f"[Audit] 审计记录异常: {type(e).__name__}: {e}",
-                extra={"action": "audit_error", "error": str(e)},
-                exc_info=True
-            )
+        # SQLite 审计仓储是同步 I/O；将持久化放到响应路径之外。
+        task = asyncio.create_task(self._record_audit(request, response, duration))
+        task.add_done_callback(self._report_audit_task_failure)
 
         return response
 
+    @staticmethod
+    def _report_audit_task_failure(task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        try:
+            error = task.exception()
+        except asyncio.CancelledError:
+            return
+        if error is not None:
+            logger.warning(
+                f"[Audit] 审计记录异常: {type(error).__name__}: {error}",
+                extra={"action": "audit_error", "error": str(error)},
+                exc_info=(type(error), error, error.__traceback__),
+            )
+
     async def _record_audit(self, request: Request, response: Response, duration: float):
-        """异步记录审计日志（通过仓储接口）"""
-        from ..infrastructure.persistence.factory import get_user_repo
-        from ..domain.entities.user import AuditLog
+        """Persist a compact audit event through the active auth repository contract."""
+        from ..domain.entities.auth import AuditEvent
 
         client_ip = request.client.host if request.client else "unknown"
-
-        # 提取 API Key ID
-        api_key_id = None
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer lh_"):
-            from ..core.security import hash_api_key
-            try:
-                repo = get_user_repo()
-                hashed = hash_api_key(auth_header[7:])
-                key = await repo.get_api_key_by_hash(hashed)
-                if key:
-                    api_key_id = key.id
-            except Exception as e:
-                logger.debug(
-                    f"[Audit] API Key 查询失败（审计降级）: {e}",
-                    extra={"action": "audit_key_lookup_error", "error": str(e)}
-                )
-
-        audit = AuditLog(
-            api_key_id=api_key_id,
+        raw_user_id = getattr(request.state, "user_id", None)
+        try:
+            actor_id = int(raw_user_id) if raw_user_id is not None else None
+        except (TypeError, ValueError):
+            actor_id = None
+        api_key_id = getattr(request.state, "api_key_id", None)
+        audit = AuditEvent(
+            actor_id=actor_id,
             action=f"{request.method} {request.url.path}",
-            resource_type="api",
-            resource_id=request.url.path,
-            details={
+            resource="api",
+            detail=json.dumps({
                 "method": request.method,
                 "path": str(request.url.path),
                 "status_code": response.status_code,
                 "duration_ms": round(duration * 1000, 2),
                 "client_ip": client_ip,
                 "user_agent": request.headers.get("User-Agent", "")[:200],
-            },
-            ip_address=client_ip,
+                "api_key_id": api_key_id,
+            }, ensure_ascii=False, separators=(",", ":")),
         )
 
-        try:
-            repo = get_user_repo()
-            await repo.save_audit_log(audit)
+        await asyncio.to_thread(self._persist_audit, audit)
+        logger.info(
+            f"[Audit] 审计记录: {request.method} {request.url.path} → {response.status_code} ({duration * 1000:.0f}ms)",
+            extra={
+                "action": "audit_recorded",
+                "method": request.method,
+                "path": str(request.url.path),
+                "status_code": response.status_code,
+                "api_key_id": api_key_id,
+                "user_id": actor_id,
+                "duration_ms": round(duration * 1000, 2),
+            }
+        )
 
-            logger.info(
-                f"[Audit] 审计记录: {request.method} {request.url.path} → {response.status_code} ({duration * 1000:.0f}ms)",
-                extra={
-                    "action": "audit_recorded",
-                    "method": request.method,
-                    "path": str(request.url.path),
-                    "status_code": response.status_code,
-                    "api_key_id": api_key_id,
-                    "duration_ms": round(duration * 1000, 2),
-                }
-            )
-        except Exception as e:
-            logger.warning(
-                f"[Audit] 审计保存失败: {type(e).__name__}: {e}",
-                extra={"action": "audit_save_error", "error": str(e)},
-                exc_info=True
-            )
+    @staticmethod
+    def _persist_audit(event) -> None:
+        from ..infrastructure.persistence.factory import build_auth_repository
+
+        asyncio.run(build_auth_repository().record_audit(event))

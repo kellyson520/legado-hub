@@ -10,11 +10,13 @@ logging.py 单元测试
 - JSONFormatter 格式化输出
 """
 
-import pytest
 import logging
 import json
 import io
+import asyncio
 from unittest.mock import patch, MagicMock
+
+import pytest
 
 
 class TestGetLogger:
@@ -72,6 +74,26 @@ class TestLogContext:
         from app.core.logging import clear_log_context, get_trace_id
         clear_log_context()
         assert get_trace_id() is None
+
+    @pytest.mark.asyncio
+    async def test_log_context_is_isolated_between_concurrent_tasks(self):
+        """并发请求的 trace 上下文不能在同一线程内相互覆盖。"""
+        from app.core.logging import clear_log_context, get_trace_id, set_log_context
+
+        async def read_own_trace(trace_id: str) -> str | None:
+            set_log_context(trace_id=trace_id)
+            await asyncio.sleep(0)
+            value = get_trace_id()
+            clear_log_context()
+            return value
+
+        first, second = await asyncio.gather(
+            read_own_trace("request-a"),
+            read_own_trace("request-b"),
+        )
+
+        assert first == "request-a"
+        assert second == "request-b"
 
 
 class TestContextAdapter:
@@ -164,6 +186,30 @@ class TestJSONFormatter:
         parsed = json.loads(output)
         assert "exception" in parsed
         assert "ValueError" in parsed["exception"]
+
+    def test_json_formatter_redacts_credentials_from_messages_and_urls(self):
+        """日志不能泄漏 Bearer、API key、Cookie 或 URL 查询令牌。"""
+        from app.core.logging import JSONFormatter
+
+        formatter = JSONFormatter()
+        record = logging.LogRecord(
+            name="test", level=logging.ERROR, pathname="test.py",
+            lineno=1,
+            msg="Authorization: Bearer lh_live_secret_token password=hunter2 cookie=session-secret",
+            args=None,
+            exc_info=None,
+        )
+        record.source_url = "https://reader:redis-secret@example.test/chapter?access_token=token-secret&chapter=1"
+
+        parsed = json.loads(formatter.format(record))
+
+        serialized = json.dumps(parsed, ensure_ascii=False)
+        assert "lh_live_secret_token" not in serialized
+        assert "hunter2" not in serialized
+        assert "session-secret" not in serialized
+        assert "token-secret" not in serialized
+        assert "redis-secret" not in serialized
+        assert "***REDACTED***" in serialized
 
 
 class TestSetupLogging:

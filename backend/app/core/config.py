@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     APP_VERSION: str = "3.0.0"
     DEBUG: bool = False
     LOG_LEVEL: str = "INFO"
+    LOG_JSON: bool = True
+    RATE_LIMIT_PER_MINUTE: int = 120
     REPO_BACKEND: str = "sqlite"
     DB_PATH: str = DEFAULT_DB_PATH
     SECRET_KEY: str | None = Field(default=None, min_length=16)

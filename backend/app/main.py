@@ -5,6 +5,8 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
+from app.core.logging import setup_logging
+from app.core.middleware import AuditLogMiddleware, RateLimitMiddleware, TraceMiddleware
 from app.infrastructure.persistence.factory import (
     build_source_runtime_service,
     close_interactive_browser_supervisor,
@@ -74,6 +76,10 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
 )
+setup_logging(level=settings.LOG_LEVEL, enable_json=settings.LOG_JSON)
+app.add_middleware(AuditLogMiddleware)
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(TraceMiddleware)
 register_exception_handlers(app)
 app.include_router(api_router)
 

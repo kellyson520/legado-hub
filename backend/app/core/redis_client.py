@@ -8,6 +8,9 @@ Redis 客户端封装 — 缓存、限流、队列、配额
 """
 
 import json
+import time
+from collections import deque
+from threading import Lock
 from typing import Optional, Any, List
 import redis.asyncio as redis
 from .config import settings
@@ -21,6 +24,9 @@ class RedisClient:
     
     _instance: Optional["RedisClient"] = None
     _redis: Optional[redis.Redis] = None
+    _memory_rate_windows: dict[str, deque[float]] = {}
+    _memory_rate_lock = Lock()
+    _memory_rate_max_keys = 10_000
     
     def __new__(cls):
         if cls._instance is None:
@@ -118,8 +124,8 @@ class RedisClient:
         Returns: (allowed, remaining, reset_after)
         """
         if not self._redis:
-            # 降级：无限制
-            return True, max_requests, 0
+            # Redis 不可用时仍提供进程内滑动窗口，避免公开 API 无限放行。
+            return self._check_memory_rate_limit(key, max_requests, window_seconds)
         
         try:
             now = await self._redis.time()
@@ -149,7 +155,29 @@ class RedisClient:
                 f"[Redis] rate limit error: {key} - {e}",
                 extra={"action": "redis_rate_limit_error", "key": key, "error": str(e)}
             )
-            return True, max_requests, 0
+            return self._check_memory_rate_limit(key, max_requests, window_seconds)
+
+    @classmethod
+    def _check_memory_rate_limit(cls, key: str, max_requests: int, window_seconds: int) -> tuple[bool, int, int]:
+        now = time.monotonic()
+        with cls._memory_rate_lock:
+            if key not in cls._memory_rate_windows and len(cls._memory_rate_windows) >= cls._memory_rate_max_keys:
+                for candidate_key, candidate_window in list(cls._memory_rate_windows.items()):
+                    while candidate_window and candidate_window[0] <= now - window_seconds:
+                        candidate_window.popleft()
+                    if not candidate_window:
+                        cls._memory_rate_windows.pop(candidate_key, None)
+                while len(cls._memory_rate_windows) >= cls._memory_rate_max_keys:
+                    cls._memory_rate_windows.pop(next(iter(cls._memory_rate_windows)), None)
+            window = cls._memory_rate_windows.setdefault(key, deque())
+            boundary = now - window_seconds
+            while window and window[0] <= boundary:
+                window.popleft()
+            if len(window) >= max_requests:
+                reset_after = max(0, int(window_seconds - (now - window[0]))) if window else window_seconds
+                return False, 0, reset_after
+            window.append(now)
+            return True, max(0, max_requests - len(window)), 0
     
     # ==================== Quota Tracking ====================
     

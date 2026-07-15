@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
 from app.infrastructure.persistence.factory import build_ai_service, build_ai_workspace_service
+from app.infrastructure.persistence.factory import build_system_settings_service
 from app.interfaces.http.deps import require_permission
 
 
@@ -23,6 +24,25 @@ class ConversationMessageRequest(BaseModel):
     mode: str = Field(default="chat", pattern="^(chat|character|storyline|world)$")
     tool_requests: list[dict] = Field(default_factory=list)
     source_version_id: str | None = Field(default=None, max_length=100)
+
+
+def _workspace_tool_names(identity) -> set[str]:
+    names = {"list_ai_analysis_results"}
+    if Permission.BOOK_SOURCES_READ.value in identity.permissions:
+        names.update({
+            "list_visible_sources",
+            "get_source_rule_summary",
+            "get_source_validation_summary",
+        })
+    source_agent_settings = build_system_settings_service().get_source_build_agent_settings()
+    if (
+        Permission.BOOK_SOURCES_READ.value in identity.permissions
+        and Permission.BOOK_SOURCES_WRITE.value in identity.permissions
+        and source_agent_settings["enabled"]
+        and source_agent_settings["provider_configured"]
+    ):
+        names.add("create_source_rule_draft")
+    return names
 
 
 @router.get("/tasks")
@@ -79,5 +99,6 @@ async def send_conversation_message(
         content=payload.content,
         tool_requests=payload.tool_requests,
         source_version_id=payload.source_version_id,
+        allowed_tool_names=_workspace_tool_names(identity),
     )
     return {"success": True, "code": "OK", "message": "ai conversation message completed", "data": data, "meta": {}, "trace_id": None}
