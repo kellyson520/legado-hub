@@ -198,7 +198,11 @@ def build_novel_analysis_pipeline_service() -> NovelAnalysisPipelineService:
 
 
 def build_novel_analysis_audit_service() -> NovelAnalysisAuditService:
-    return NovelAnalysisAuditService(build_evidence_repository(), build_narrative_knowledge_repository())
+    return NovelAnalysisAuditService(
+        build_evidence_repository(),
+        build_narrative_knowledge_repository(),
+        task_service=build_novel_analysis_task_service(),
+    )
 
 
 def build_work_ingestion_service() -> WorkIngestionService:
@@ -218,6 +222,8 @@ def build_novel_analysis_tool_executor() -> NovelAnalysisToolExecutor:
         ingestion_service=build_work_ingestion_service(),
         evidence_service=build_evidence_service(),
         agent_runtime=build_agent_runtime_service(),
+        audit_service=build_novel_analysis_audit_service(),
+        settings_service=build_system_settings_service(),
     )
 
 

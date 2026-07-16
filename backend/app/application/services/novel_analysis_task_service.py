@@ -40,6 +40,17 @@ class NovelAnalysisTaskService:
     def list_for_work(self, work_id: str, *, tenant_id: str) -> list[NovelAnalysisTask]:
         return self._repo.list_for_work(work_id, tenant_id)
 
+    def queue_reaudit(self, *, claim, tenant_id: str, policy: dict | None = None) -> NovelAnalysisTask:
+        task = self.create_task(
+            claim.work_id,
+            tenant_id,
+            f"复审因内容变更而受影响的声明 {claim.id}",
+            policy,
+            selected_evidence_ids=list(claim.evidence_ids),
+        )
+        checkpoint = {**task.checkpoint, "reaudit_claim_ids": [claim.id]}
+        return self._repo.update(NovelAnalysisTask(**{**task.__dict__, "checkpoint": checkpoint}))
+
     def record_tool_progress(self, task_id: str, evidence_ids: list[str], *, tenant_id: str = "tenant-1") -> NovelAnalysisTask:
         task = self._require(task_id, tenant_id)
         selected = list(task.checkpoint.get("selected_evidence_ids", []))

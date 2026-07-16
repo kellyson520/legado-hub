@@ -37,6 +37,14 @@ class NovelAnalysisPipelineService:
         if self._platform is None or self._evidence_service is None:
             raise RuntimeError("analysis model runtime is not configured")
 
+        reaudit_claim_ids = task.checkpoint.get("reaudit_claim_ids", [])
+        if isinstance(reaudit_claim_ids, list) and reaudit_claim_ids:
+            return await self._process_reaudit_task(
+                task,
+                tenant_id=tenant_id,
+                token_budget=self._token_budget(task),
+            )
+
         evidence = self._load_verified_evidence(
             task.checkpoint.get("selected_evidence_ids", []),
         )
@@ -70,6 +78,73 @@ class NovelAnalysisPipelineService:
                 tenant_id=tenant_id,
                 token_count=token_count,
                 token_budget=budget,
+                task_id=task.id,
+                task_policy=task.policy,
+            )
+            outcomes.append(outcome)
+        return TaskProcessingResult(
+            claim_ids=tuple(claim_ids),
+            outcomes=tuple(outcomes),
+            token_count=token_count,
+        )
+
+    async def _process_reaudit_task(self, task, *, tenant_id: str, token_budget: int) -> TaskProcessingResult:
+        claim_ids: list[str] = []
+        outcomes: list[AdjudicationOutcome] = []
+        token_count = 0
+        for claim_id in task.checkpoint.get("reaudit_claim_ids", []):
+            claim = self._knowledge_service.get_claim(str(claim_id))
+            if claim is None:
+                continue
+            claim_ids.append(claim.id)
+            evidence = self._load_verified_evidence(claim.evidence_ids)
+            if len(evidence) != len(dict.fromkeys(claim.evidence_ids)):
+                reason = "claim evidence changed or is no longer verified"
+                self._record_decision(
+                    claim=claim,
+                    tenant_id=tenant_id,
+                    role="auditor",
+                    verdict="human_review",
+                    reason=reason,
+                    evidence=evidence,
+                    invocation={"_invocation": {"provider_group": self._route_group("auditor")}},
+                    task_id=task.id,
+                    task_policy=task.policy,
+                )
+                outcomes.append(AdjudicationOutcome("human_review", "candidate", (reason,)))
+                continue
+            audit, token_count = await self._invoke_role(
+                role="auditor",
+                tenant_id=tenant_id,
+                payload={
+                    "task_goal": task.goal,
+                    "claim": self._claim_payload(claim),
+                    "evidence": evidence,
+                },
+                token_count=token_count,
+                token_budget=token_budget,
+            )
+            audit_verdict = str(audit.get("verdict") or "").strip().lower()
+            audit_reason = self._reason_from(audit, "audit requires human review")
+            self._record_decision(
+                claim=claim,
+                tenant_id=tenant_id,
+                role="auditor",
+                verdict=audit_verdict or "invalid",
+                reason=audit_reason,
+                evidence=evidence,
+                invocation=audit,
+                task_id=task.id,
+                task_policy=task.policy,
+            )
+            if audit_verdict not in {"reaffirm", "pass", "verified", "approve"}:
+                outcomes.append(AdjudicationOutcome("human_review", "candidate", (audit_reason,)))
+                continue
+            outcome, token_count = await self._process_claim(
+                claim,
+                tenant_id=tenant_id,
+                token_count=token_count,
+                token_budget=token_budget,
                 task_id=task.id,
                 task_policy=task.policy,
             )

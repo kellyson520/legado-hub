@@ -68,3 +68,46 @@ def test_factory_binds_all_novel_analysis_handlers(monkeypatch, tmp_path):
 
     assert registry.get("chapter.fetch").handler is not None
     assert registry.get("evidence.get").handler is not None
+
+
+@pytest.mark.asyncio
+async def test_changed_chapter_variant_queues_only_its_linked_claims_for_reaudit(ingestion_service):
+    from app.application.services.novel_analysis_tool_executor import NovelAnalysisToolExecutor
+    from app.infrastructure.persistence.factory import (
+        build_agent_runtime_service,
+        build_evidence_service,
+        build_narrative_knowledge_service,
+        build_novel_analysis_audit_service,
+        build_novel_analysis_task_service,
+    )
+
+    class Settings:
+        def get_section(self, _domain, tab):
+            values = {
+                "automation": {"background_incremental_enabled": True},
+                "budgets": {"max_tokens_per_task": 3000},
+            }
+            return {"value": values[tab]}
+
+    executor = NovelAnalysisToolExecutor(
+        ingestion_service=ingestion_service,
+        evidence_service=build_evidence_service(),
+        agent_runtime=build_agent_runtime_service(),
+        audit_service=build_novel_analysis_audit_service(),
+        settings_service=Settings(),
+    )
+    first = await executor.ainvoke("chapter.fetch", {
+        "tenant_id": "tenant-1", "source_id": 7, "book_url": "https://source.test/book/1", "chapter_index": 0, "book_name": "测试书",
+    })
+    claim = build_narrative_knowledge_service().create_claim(
+        first.data["canonical_work_id"], "ningyao", "alive", scalar_value=True, epistemic="explicit", evidence_ids=[first.data["evidence_span_ids"][0]],
+    )
+    ingestion_service._reader.content = "宁姚在雨中救下少年。"
+
+    second = await executor.ainvoke("chapter.fetch", {
+        "tenant_id": "tenant-1", "source_id": 7, "book_url": "https://source.test/book/1", "chapter_index": 0, "book_name": "测试书",
+    })
+
+    assert second.data["reaudit_task_ids"]
+    tasks = build_novel_analysis_task_service().list_for_work(first.data["canonical_work_id"], tenant_id="tenant-1")
+    assert tasks[0].checkpoint["reaudit_claim_ids"] == [claim.id]

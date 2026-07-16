@@ -125,3 +125,32 @@ def test_user_can_run_a_queued_analysis_task_without_enabling_background_automat
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "completed"
     assert response.json()["data"]["checkpoint"]["outcomes"][0]["reasons"] == ["safe"]
+
+
+def test_manual_task_failure_redacts_provider_credentials_from_the_checkpoint(monkeypatch, tmp_path):
+    client, headers, work_id, evidence_id = build_client_with_analysis(monkeypatch, tmp_path)
+
+    from app.infrastructure.persistence.factory import build_novel_analysis_task_service
+
+    task = build_novel_analysis_task_service().create_task(
+        work_id, "1", "分析关系", selected_evidence_ids=[evidence_id],
+    )
+
+    class Settings:
+        def get_section(self, _domain, _tab):
+            return {"value": {"enabled": True, "emergency_pause": False}}
+
+    class Pipeline:
+        async def process_task(self, _task, *, tenant_id):
+            assert tenant_id == "1"
+            raise RuntimeError("provider rejected Authorization: Bearer super-secret-token")
+
+    monkeypatch.setattr("app.interfaces.http.novel_analysis.build_system_settings_service", lambda: Settings())
+    monkeypatch.setattr("app.interfaces.http.novel_analysis.build_novel_analysis_pipeline_service", lambda: Pipeline())
+
+    response = client.post(f"/api/novel-analysis/tasks/{task.id}/run", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "blocked"
+    assert "super-secret-token" not in response.text
+    assert "[redacted]" in response.json()["data"]["checkpoint"]["blocked_reason"]

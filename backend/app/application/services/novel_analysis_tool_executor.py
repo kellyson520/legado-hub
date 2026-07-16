@@ -11,10 +11,20 @@ class NovelAnalysisToolExecutor:
         "evidence.get": "read",
     }
 
-    def __init__(self, *, ingestion_service, evidence_service, agent_runtime):
+    def __init__(
+        self,
+        *,
+        ingestion_service,
+        evidence_service,
+        agent_runtime,
+        audit_service=None,
+        settings_service=None,
+    ):
         self._ingestion_service = ingestion_service
         self._evidence_service = evidence_service
         self._agent_runtime = agent_runtime
+        self._audit_service = audit_service
+        self._settings_service = settings_service
 
     def handlers(self) -> dict:
         return {
@@ -91,6 +101,10 @@ class NovelAnalysisToolExecutor:
                     "content_variant_id": ingested.content_variant_id,
                     "evidence_span_ids": ingested.evidence_span_ids,
                     "content_preview": ingested.content[:1200],
+                    "reaudit_task_ids": await self._queue_changed_variant_reaudits(
+                        ingested,
+                        tenant_id=tenant_id,
+                    ),
                 }
                 evidence_ids = ingested.evidence_span_ids
             elif tool_name == "evidence.search":
@@ -150,6 +164,30 @@ class NovelAnalysisToolExecutor:
                     "content_sha256": span.content_sha256,
                 },
             )
+
+    async def _queue_changed_variant_reaudits(self, ingested, *, tenant_id: str) -> list[str]:
+        if self._audit_service is None or self._settings_service is None:
+            return []
+        changed_variant_ids = list(getattr(ingested, "changed_prior_variant_ids", []) or [])
+        if not changed_variant_ids:
+            return []
+        automation = self._settings_service.get_section("agents", "automation").get("value", {})
+        if not (
+            bool(automation.get("enabled", True))
+            and bool(automation.get("background_incremental_enabled", False))
+            and not bool(automation.get("emergency_pause", False))
+        ):
+            return []
+        budgets = self._settings_service.get_section("agents", "budgets").get("value", {})
+        task_ids: list[str] = []
+        for variant_id in changed_variant_ids:
+            result = await self._audit_service.queue_reaudit_content_variant(
+                variant_id,
+                tenant_id=tenant_id,
+                policy=budgets,
+            )
+            task_ids.extend(result.task_ids or [])
+        return list(dict.fromkeys(task_ids))
 
     @staticmethod
     def _serialize_span(span) -> dict:

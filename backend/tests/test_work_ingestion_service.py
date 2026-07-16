@@ -4,6 +4,8 @@ import pytest
 
 
 class FakeReader:
+    content = "宁姚看向少年。山门外下起了雨。"
+
     async def search_books(self, keyword, source_ids=None, limit_per_source=3, author_hint=None):
         return {
             "keyword": keyword,
@@ -29,7 +31,7 @@ class FakeReader:
             "source_id": source_id,
             "resolved_source_id": source_id,
             "chapter_url": chapter_url,
-            "content": "宁姚看向少年。山门外下起了雨。",
+            "content": self.content,
             "title": chapter_title,
             "fallback_used": False,
         }
@@ -96,3 +98,17 @@ async def test_selected_source_chapter_becomes_canonical_evidence(ingestion_serv
     assert result.canonical_work_id
     assert result.content_variant_id
     assert result.evidence_span_ids
+
+
+@pytest.mark.asyncio
+async def test_refetched_source_chapter_reports_only_changed_prior_variants(ingestion_service):
+    first = await ingestion_service.fetch_and_ingest_chapter(
+        source_id=7, book_url="https://source.test/book/1", chapter_index=0, book_name="测试书", author_hint="作者",
+    )
+    ingestion_service._reader.content = "宁姚在雨中救下少年。"
+
+    second = await ingestion_service.fetch_and_ingest_chapter(
+        source_id=7, book_url="https://source.test/book/1", chapter_index=0, book_name="测试书", author_hint="作者",
+    )
+
+    assert second.changed_prior_variant_ids == [first.content_variant_id]

@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from hashlib import sha256
 from urllib.parse import urlparse
 
 
@@ -11,6 +12,7 @@ class IngestedChapter:
     evidence_span_ids: list[str]
     title: str
     content: str
+    changed_prior_variant_ids: list[str] = field(default_factory=list)
 
 
 class WorkIngestionService:
@@ -82,6 +84,12 @@ class WorkIngestionService:
             author=(author_hint or "").strip(),
         )
         canonical_chapter = self._canonical_chapter(work.id, chapter_index, title)
+        changed_prior_variant_ids = [
+            variant.id
+            for variant in self._canonical_repo.list_content_variants(canonical_chapter.id)
+            if variant.source_id == str(source_id)
+            and self._content_fingerprint(variant.content) != self._content_fingerprint(content)
+        ]
         source_work = self._canonical_repo.create_source_work(
             canonical_work_id=work.id,
             source_id=str(source_id),
@@ -121,6 +129,7 @@ class WorkIngestionService:
             evidence_span_ids=[span.id for span in spans],
             title=title,
             content=content,
+            changed_prior_variant_ids=changed_prior_variant_ids,
         )
 
     async def search_sources(
@@ -228,3 +237,8 @@ class WorkIngestionService:
         book_host = urlparse(book_url).netloc.lower()
         if not source_host or source_host != book_host or urlparse(book_url).scheme not in {"http", "https"}:
             raise PermissionError("book_url must belong to the selected source")
+
+    @staticmethod
+    def _content_fingerprint(content: str) -> str:
+        normalized = content.replace("\r\n", "\n").replace("\r", "\n").strip()
+        return sha256(normalized.encode("utf-8")).hexdigest()

@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
@@ -70,6 +72,16 @@ def _task_data(task) -> dict:
     }
 
 
+def _safe_task_error(exc: Exception) -> str:
+    message = str(exc)
+    message = re.sub(
+        r"(?i)(authorization\s*:\s*bearer|bearer|api[_ -]?key)\s*[:=]?\s*[^\s,;]+",
+        r"\1 [redacted]",
+        message,
+    )
+    return message[:500] or exc.__class__.__name__
+
+
 @router.get("/works/{work_id}/tasks")
 async def list_work_tasks(
     work_id: str,
@@ -135,7 +147,7 @@ async def run_task_now(
         else:
             task = task_service.complete(task.id, tenant_id=str(identity.user_id), result=result)
     except Exception as exc:
-        task = task_service.block(task.id, tenant_id=str(identity.user_id), reason=str(exc)[:500])
+        task = task_service.block(task.id, tenant_id=str(identity.user_id), reason=_safe_task_error(exc))
     return _envelope("analysis task processed", _task_data(task))
 
 
