@@ -772,6 +772,41 @@ class KnowledgeConflictModel(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class AgentAnalysisTaskModel(Base):
+    __tablename__ = "agent_analysis_tasks"
+
+    id = Column(String, primary_key=True)
+    work_id = Column(String, ForeignKey("canonical_works.id"), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    goal = Column(Text, nullable=False, default="")
+    status = Column(String, nullable=False, default="queued", index=True)
+    policy_json = Column(Text, nullable=False, default="{}")
+    checkpoint_json = Column(Text, nullable=False, default="{}")
+    tool_call_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AgentTaskCheckpointModel(Base):
+    __tablename__ = "agent_task_checkpoints"
+
+    id = Column(String, primary_key=True)
+    task_id = Column(String, ForeignKey("agent_analysis_tasks.id"), nullable=False, index=True)
+    checkpoint_json = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class KnowledgeAdjudicationModel(Base):
+    __tablename__ = "knowledge_adjudications"
+
+    id = Column(String, primary_key=True)
+    claim_id = Column(String, ForeignKey("knowledge_claims.id"), nullable=False, index=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    verdict = Column(String, nullable=False, index=True)
+    reasons_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class SourceReviewItemModel(Base):
     __tablename__ = "source_review_items"
 

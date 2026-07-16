@@ -14,6 +14,8 @@ from app.application.services.job_service import JobService
 from app.application.services.interactive_browser_service import InteractiveBrowserService
 from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
 from app.application.services.novel_agent_service import NovelAgentService
+from app.application.services.novel_analysis_pipeline_service import NovelAnalysisPipelineService
+from app.application.services.novel_analysis_task_service import NovelAnalysisTaskService
 from app.application.services.narrative_knowledge_service import NarrativeKnowledgeService
 from app.application.services.novel_app_service import NovelAppService
 from app.application.services.provider_platform_service import (
@@ -47,6 +49,7 @@ from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIR
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_runtime_repo_impl import SQLiteNovelRuntimeRepository
+from app.infrastructure.persistence.sqlite.novel_analysis_task_repo_impl import SQLiteNovelAnalysisTaskRepository
 from app.infrastructure.persistence.sqlite.narrative_knowledge_repo_impl import SQLiteNarrativeKnowledgeRepository
 from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLiteEventDeliveryRepository
 from app.infrastructure.persistence.sqlite.evidence_repo_impl import SQLiteEvidenceRepository
@@ -128,6 +131,11 @@ def build_narrative_knowledge_repository() -> SQLiteNarrativeKnowledgeRepository
     return SQLiteNarrativeKnowledgeRepository()
 
 
+def build_novel_analysis_task_repository() -> SQLiteNovelAnalysisTaskRepository:
+    bootstrap_sqlite()
+    return SQLiteNovelAnalysisTaskRepository()
+
+
 def build_provider_repository() -> SQLiteProviderRepository:
     bootstrap_sqlite()
     return SQLiteProviderRepository()
@@ -172,6 +180,14 @@ def build_narrative_knowledge_service() -> NarrativeKnowledgeService:
         repo=build_narrative_knowledge_repository(),
         evidence_service=build_evidence_service(),
     )
+
+
+def build_novel_analysis_task_service() -> NovelAnalysisTaskService:
+    return NovelAnalysisTaskService(build_novel_analysis_task_repository())
+
+
+def build_novel_analysis_pipeline_service() -> NovelAnalysisPipelineService:
+    return NovelAnalysisPipelineService(knowledge_service=build_narrative_knowledge_service())
 
 
 def build_work_ingestion_service() -> WorkIngestionService:
