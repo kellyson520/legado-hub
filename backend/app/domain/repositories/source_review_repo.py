@@ -20,3 +20,15 @@ class SourceReviewRepository(ABC):
         review_type: str | None = None,
     ) -> list[SourceReviewItem]:
         raise NotImplementedError
+
+    @abstractmethod
+    def list_items_page(
+        self,
+        *,
+        status: str | None = None,
+        review_type: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> tuple[list[SourceReviewItem], int]:
+        raise NotImplementedError

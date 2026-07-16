@@ -8,7 +8,10 @@ import {
   type OperationDeliveryRow,
   type OperationStreamEvent,
 } from '@/api/modules/operations'
+import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { Card } from '@/components/ui/card'
+import { useServerPagination } from '@/hooks/useServerPagination'
 
 const STREAM_RETRY_DELAY_MS = 2_000
 
@@ -43,21 +46,21 @@ function getAttemptError(attempt: OperationDeliveryAttemptRow) {
 function mergeDeliveryRow(current: OperationDeliveryRow[], event: OperationStreamEvent) {
   if (event.event !== 'event.delivery') return current
   const payload = event.data as Record<string, unknown>
-  const eventId = String(payload.event_id ?? '')
+  const eventId = String(payload.event_id ?? payload.eventId ?? '')
   if (!eventId) return current
 
   const nextRow: OperationDeliveryRow = {
     eventId,
-    eventType: typeof payload.event_type === 'string' ? payload.event_type : undefined,
-    tenantId: typeof payload.tenant_id === 'string' ? payload.tenant_id : undefined,
-    targetUrl: typeof payload.target_url === 'string' ? payload.target_url : undefined,
-    dedupeKey: typeof payload.dedupe_key === 'string' ? payload.dedupe_key : null,
+    eventType: typeof (payload.event_type ?? payload.eventType) === 'string' ? String(payload.event_type ?? payload.eventType) : undefined,
+    tenantId: typeof (payload.tenant_id ?? payload.tenantId) === 'string' ? String(payload.tenant_id ?? payload.tenantId) : undefined,
+    targetUrl: typeof (payload.target_url ?? payload.targetUrl) === 'string' ? String(payload.target_url ?? payload.targetUrl) : undefined,
+    dedupeKey: typeof (payload.dedupe_key ?? payload.dedupeKey) === 'string' ? String(payload.dedupe_key ?? payload.dedupeKey) : null,
     status: String(payload.status ?? 'pending'),
-    attemptCount: Number(payload.attempt_count ?? 0),
-    lastError: typeof payload.last_error === 'string' ? payload.last_error : null,
-    nextAttemptAt: typeof payload.next_attempt_at === 'string' ? payload.next_attempt_at : null,
-    deliveredAt: typeof payload.delivered_at === 'string' ? payload.delivered_at : null,
-    createdAt: typeof payload.created_at === 'string' ? payload.created_at : null,
+    attemptCount: Number(payload.attempt_count ?? payload.attemptCount ?? 0),
+    lastError: typeof (payload.last_error ?? payload.lastError) === 'string' ? String(payload.last_error ?? payload.lastError) : null,
+    nextAttemptAt: typeof (payload.next_attempt_at ?? payload.nextAttemptAt) === 'string' ? String(payload.next_attempt_at ?? payload.nextAttemptAt) : null,
+    deliveredAt: typeof (payload.delivered_at ?? payload.deliveredAt) === 'string' ? String(payload.delivered_at ?? payload.deliveredAt) : null,
+    createdAt: typeof (payload.created_at ?? payload.createdAt) === 'string' ? String(payload.created_at ?? payload.createdAt) : null,
   }
 
   const index = current.findIndex((item) => getDeliveryId(item) === eventId)
@@ -69,7 +72,12 @@ function mergeDeliveryRow(current: OperationDeliveryRow[], event: OperationStrea
 }
 
 export function EventDeliveriesPage() {
-  const [deliveries, setDeliveries] = useState<OperationDeliveryRow[]>([])
+  const pagination = useServerPagination<OperationDeliveryRow>({
+    pageSize: 20,
+    load: ({ page, pageSize, search }) => listEventDeliveries({ page, page_size: pageSize, search }),
+  })
+  const { rows, meta, loading, error: loadError } = pagination
+  const [streamRows, setStreamRows] = useState<OperationDeliveryRow[]>([])
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
   const [attempts, setAttempts] = useState<OperationDeliveryAttemptRow[]>([])
   const [streamState, setStreamState] = useState<'connecting' | 'live' | 'offline'>('connecting')
@@ -78,13 +86,6 @@ export function EventDeliveriesPage() {
     let mounted = true
     let unsubscribe = () => {}
     let retryTimer: number | null = null
-
-    async function load() {
-      const response = await listEventDeliveries()
-      if (!mounted) return
-      setDeliveries(response.data)
-      setSelectedEventId((current) => current ?? getDeliveryId(response.data[0] ?? {}))
-    }
 
     function scheduleReconnect() {
       if (!mounted || retryTimer !== null) return
@@ -102,7 +103,7 @@ export function EventDeliveriesPage() {
           onEvent: (event) => {
             if (!mounted) return
             setStreamState('live')
-            setDeliveries((current) => mergeDeliveryRow(current, event))
+            setStreamRows((current) => mergeDeliveryRow(current, event))
           },
           onDisconnect: () => {
             if (!mounted) return
@@ -119,7 +120,6 @@ export function EventDeliveriesPage() {
       }
     }
 
-    void load()
     void connect()
 
     return () => {
@@ -130,6 +130,20 @@ export function EventDeliveriesPage() {
       unsubscribe()
     }
   }, [])
+
+  const deliveries = useMemo(() => {
+    return streamRows.reduce((current, event) => {
+      const streamEvent: OperationStreamEvent = {
+        event: 'event.delivery',
+        data: event as unknown as Record<string, unknown>,
+      }
+      return mergeDeliveryRow(current, streamEvent)
+    }, rows)
+  }, [rows, streamRows])
+
+  useEffect(() => {
+    setSelectedEventId((current) => current ?? getDeliveryId(deliveries[0] ?? {}))
+  }, [deliveries])
 
   useEffect(() => {
     let mounted = true
@@ -169,6 +183,25 @@ export function EventDeliveriesPage() {
     >
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
+          <PaginationToolbar
+            page={meta.page}
+            totalPages={meta.total_pages}
+            total={meta.total}
+            searchInput={pagination.searchInput}
+            appliedSearch={pagination.appliedSearch}
+            loading={loading}
+            searchLabel="搜索事件投递"
+            onSearchInput={pagination.setSearchInput}
+            onSearch={() => pagination.submitSearch()}
+            onClearSearch={pagination.clearSearch}
+            onPageChange={pagination.goToPage}
+          />
+          {loadError ? (
+            <Card className="m-4 flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
+              <span>Failed to load event deliveries.</span>
+              <button type="button" className="underline" onClick={() => pagination.retry()}>重试</button>
+            </Card>
+          ) : null}
           <table className="min-w-full divide-y divide-border text-sm">
             <thead className="bg-muted/40 text-left text-muted-foreground">
               <tr>
@@ -203,7 +236,7 @@ export function EventDeliveriesPage() {
                   </tr>
                 )
               })}
-              {deliveries.length === 0 ? (
+              {!loading && deliveries.length === 0 ? (
                 <tr>
                   <td className="px-4 py-6 text-muted-foreground" colSpan={5}>
                     No event deliveries yet

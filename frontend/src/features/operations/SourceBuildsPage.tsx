@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import {
   listSourceBuildCandidates,
@@ -6,6 +6,9 @@ import {
   type OperationSourceBuildRow,
 } from '@/api/modules/operations'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { PaginationToolbar } from '@/components/data/PaginationToolbar'
+import { Card } from '@/components/ui/card'
+import { useServerPagination } from '@/hooks/useServerPagination'
 import { ManualVerificationPanel } from './ManualVerificationPanel'
 
 function getSourceId(row: OperationSourceBuildRow) {
@@ -82,23 +85,12 @@ export function SourceAuditSummary({ audit }: { audit?: OperationSourceBuildAudi
 }
 
 export function SourceBuildsPage() {
-  const [rows, setRows] = useState<OperationSourceBuildRow[]>([])
+  const pagination = useServerPagination<OperationSourceBuildRow>({
+    pageSize: 20,
+    load: ({ page, pageSize, search }) => listSourceBuildCandidates({ page, page_size: pageSize, search }),
+  })
+  const { rows, meta, loading, error } = pagination
   const [verificationSessionId, setVerificationSessionId] = useState<string | null>(null)
-
-  useEffect(() => {
-    let mounted = true
-
-    async function load() {
-      const response = await listSourceBuildCandidates()
-      if (!mounted) return
-      setRows(response.data)
-    }
-
-    void load()
-    return () => {
-      mounted = false
-    }
-  }, [])
 
   return (
     <ConsoleLayout
@@ -106,6 +98,25 @@ export function SourceBuildsPage() {
       title="Source build candidates"
       description="查看候选 source build、最近验证结果与自动修补探针摘要。"
     >
+      <PaginationToolbar
+        page={meta.page}
+        totalPages={meta.total_pages}
+        total={meta.total}
+        searchInput={pagination.searchInput}
+        appliedSearch={pagination.appliedSearch}
+        loading={loading}
+        searchLabel="搜索构建候选"
+        onSearchInput={pagination.setSearchInput}
+        onSearch={() => pagination.submitSearch()}
+        onClearSearch={pagination.clearSearch}
+        onPageChange={pagination.goToPage}
+      />
+      {error ? (
+        <Card className="flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
+          <span>Failed to load source build candidates.</span>
+          <button type="button" className="underline" onClick={() => pagination.retry()}>重试</button>
+        </Card>
+      ) : null}
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
         <table className="min-w-full divide-y divide-border text-sm">
           <thead className="bg-muted/40 text-left text-muted-foreground">
@@ -182,7 +193,7 @@ export function SourceBuildsPage() {
                 </tr>
               )
             })}
-            {rows.length === 0 ? (
+            {!loading && rows.length === 0 ? (
               <tr>
                 <td className="px-4 py-6 text-muted-foreground" colSpan={7}>
                   No source build candidates yet

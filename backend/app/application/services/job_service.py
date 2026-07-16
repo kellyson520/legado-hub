@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from uuid import uuid4
 
 from app.domain.entities.job import Job
@@ -65,6 +66,32 @@ class JobService:
 
     def list_jobs(self) -> list[Job]:
         return self._repo.list_jobs()
+
+    def list_jobs_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> dict:
+        rows, total = self._repo.list_jobs_page(
+            page=page,
+            page_size=page_size,
+            search=search,
+            status=status,
+        )
+        return {
+            "items": rows,
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
 
     def list_events(self, job_id: str, *, tenant_id: str):
         if self.get(job_id, tenant_id=tenant_id) is None:

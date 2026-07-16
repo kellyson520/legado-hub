@@ -80,7 +80,7 @@ test('event deliveries page shows initial rows and applies stream updates', asyn
   render(<EventDeliveriesPage />)
 
   expect(await screen.findByRole('heading', { name: 'Event deliveries' })).toBeInTheDocument()
-  expect(screen.getByText('chapter.ready')).toBeInTheDocument()
+  expect(await screen.findByText('chapter.ready')).toBeInTheDocument()
   expect(screen.getByText('pending')).toBeInTheDocument()
 
   await waitFor(() => expect(operationsMocks.state.streamHandler).not.toBeNull())

@@ -1,4 +1,5 @@
 import json
+from math import ceil
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
@@ -77,6 +78,41 @@ class AIWorkspaceService:
 
     async def list_conversations(self, actor_id: str) -> list[dict]:
         return [self._serialize_conversation(item) for item in self._conversations.list_conversations(str(actor_id))]
+
+    async def list_conversations_page(
+        self,
+        actor_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> dict:
+        if hasattr(self._conversations, "list_conversations_page"):
+            rows, total = self._conversations.list_conversations_page(
+                str(actor_id),
+                page=page,
+                page_size=page_size,
+                search=search,
+            )
+        else:
+            all_rows = self._conversations.list_conversations(str(actor_id))
+            normalized = search.strip().lower()
+            filtered = [
+                item for item in all_rows
+                if not normalized or normalized in f"{item.id} {item.title}".lower()
+            ]
+            total = len(filtered)
+            rows = filtered[(page - 1) * page_size : page * page_size]
+        return {
+            "items": [self._serialize_conversation(item) for item in rows],
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+            },
+        }
 
     def get_conversation(self, conversation_id: str, actor_id: str) -> dict:
         conversation = self._conversations.get_conversation(conversation_id, str(actor_id))

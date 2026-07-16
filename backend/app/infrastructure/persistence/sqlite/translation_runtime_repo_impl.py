@@ -1,6 +1,8 @@
 import json
 from uuid import uuid4
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.domain.entities.translation_runtime import TranslationChunk, TranslationJob
 from app.domain.repositories.translation_runtime_repo import TranslationRuntimeRepository
@@ -64,6 +66,43 @@ class SQLiteTranslationRuntimeRepository(TranslationRuntimeRepository):
         try:
             tasks = db.query(TranslationTaskModel).order_by(TranslationTaskModel.created_at.desc()).all()
             return [self._load_job(db, task) for task in tasks]
+        finally:
+            self._close(db)
+
+    def list_jobs_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[TranslationJob], int]:
+        db = self._db()
+        try:
+            query = db.query(TranslationTaskModel)
+            if status:
+                query = query.filter(TranslationTaskModel.status == status)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        TranslationTaskModel.id.ilike(pattern),
+                        TranslationTaskModel.source_language.ilike(pattern),
+                        TranslationTaskModel.target_language.ilike(pattern),
+                        TranslationTaskModel.provider_name.ilike(pattern),
+                        TranslationTaskModel.model_name.ilike(pattern),
+                        TranslationTaskModel.content_variant_id.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            tasks = (
+                query.order_by(TranslationTaskModel.created_at.desc(), TranslationTaskModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._load_job(db, task) for task in tasks], total
         finally:
             self._close(db)
 

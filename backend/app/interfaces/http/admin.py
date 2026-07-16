@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.application.services.auth_service import AuthAppService
@@ -32,16 +32,20 @@ class ResetPasswordRequest(BaseModel):
 
 @router.get("/users")
 async def list_users(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=20),
     _=Depends(require_permission(Permission.USERS_READ)),
     service: AuthAppService = Depends(get_auth_service),
 ):
-    users = await service.list_users()
+    result = await service.list_users_page(page=page, page_size=page_size, search=search, status=status)
     return {
         "success": True,
         "code": "OK",
         "message": "users listed",
-        "data": users,
-        "meta": {"total": len(users)},
+        "data": result["items"],
+        "meta": result["meta"],
         "trace_id": None,
     }
 
@@ -139,16 +143,20 @@ async def list_permissions(
 
 @router.get("/api-keys")
 async def list_api_keys(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=20),
     _=Depends(require_permission(Permission.API_KEYS_READ)),
     service: AuthAppService = Depends(get_auth_service),
 ):
-    keys = await service.list_api_keys()
+    result = await service.list_api_keys_page(page=page, page_size=page_size, search=search, status=status)
     return {
         "success": True,
         "code": "OK",
         "message": "api keys listed",
-        "data": keys,
-        "meta": {"total": len(keys)},
+        "data": result["items"],
+        "meta": result["meta"],
         "trace_id": None,
     }
 
@@ -209,16 +217,19 @@ async def delete_api_key(
 
 @router.get("/audit")
 async def list_audit(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
     _=Depends(require_permission(Permission.SYSTEM_AUDIT_READ)),
     service: AuthAppService = Depends(get_auth_service),
 ):
-    items = await service.list_audit_events(limit=100)
+    result = await service.list_audit_events_page(page=page, page_size=page_size, search=search)
     return {
         "success": True,
         "code": "OK",
         "message": "audit listed",
-        "data": items,
-        "meta": {"total": len(items)},
+        "data": result["items"],
+        "meta": result["meta"],
         "trace_id": None,
     }
 

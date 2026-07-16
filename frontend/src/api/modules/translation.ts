@@ -1,6 +1,13 @@
 import { apiClient } from '@/api/client'
 import type { ApiEnvelope } from '@/api/types'
 
+export interface TranslationListParams {
+  page?: number
+  page_size?: number
+  search?: string
+  status?: string
+}
+
 export interface TranslationJobRow {
   id: string
   name: string
@@ -21,8 +28,8 @@ interface BackendTranslationJobRow {
   progress?: string
 }
 
-export async function listTranslationJobs() {
-  const response = (await apiClient.get<BackendTranslationJobRow[]>('/translation/jobs')) as ApiEnvelope<
+export async function listTranslationJobs(params: TranslationListParams = {}) {
+  const response = (await apiClient.get<BackendTranslationJobRow[]>('/translation/jobs', { params })) as ApiEnvelope<
     BackendTranslationJobRow[]
   >
   return {

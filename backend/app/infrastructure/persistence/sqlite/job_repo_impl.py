@@ -2,6 +2,8 @@ import json
 from datetime import timedelta, timezone
 from uuid import uuid4
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.domain.entities.job import Job, JobEvent
 
@@ -63,6 +65,40 @@ class SQLiteJobRepository:
         try:
             models = db.query(JobModel).order_by(JobModel.created_at.desc(), JobModel.id.desc()).all()
             return [self._entity(model) for model in models]
+        finally:
+            db.close()
+
+    def list_jobs_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[Job], int]:
+        db = SessionLocal()
+        try:
+            query = db.query(JobModel)
+            if status:
+                query = query.filter(JobModel.status == status)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        JobModel.id.ilike(pattern),
+                        JobModel.kind.ilike(pattern),
+                        JobModel.tenant_id.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            models = (
+                query.order_by(JobModel.created_at.desc(), JobModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._entity(model) for model in models], total
         finally:
             db.close()
 

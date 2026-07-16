@@ -1,6 +1,6 @@
 import re
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
@@ -175,34 +175,52 @@ async def submit_console_source_build(
 
 
 @router.get("/source-builds")
-async def list_console_source_builds(_=Depends(require_permission(Permission.ENGINE_TEST))):
-    data = await build_source_runtime_service().list_recent_versions(status="candidate", limit=50)
+async def list_console_source_builds(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    _=Depends(require_permission(Permission.ENGINE_TEST)),
+):
+    result = await build_source_runtime_service().list_recent_versions_page(
+        status="candidate", page=page, page_size=page_size, search=search
+    )
     return {
         "success": True,
         "code": "OK",
         "message": "engine source builds listed",
-        "data": data,
-        "meta": {"total": len(data)},
+        "data": result["items"],
+        "meta": result["meta"],
         "trace_id": None,
     }
 
 
 @router.get("/runs")
-async def list_runs(_=Depends(require_permission(Permission.ENGINE_TEST))):
+async def list_runs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    _=Depends(require_permission(Permission.ENGINE_TEST)),
+):
     service = build_source_runtime_service()
-    data = await service.list_runs()
-    return {"success": True, "code": "OK", "message": "engine runs listed", "data": data, "meta": {"total": len(data)}, "trace_id": None}
+    result = await service.list_runs_page(page=page, page_size=page_size, search=search)
+    return {"success": True, "code": "OK", "message": "engine runs listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
 
 
 @router.get("/deployments")
-async def list_deployments(_=Depends(require_permission(Permission.ENGINE_DEPLOY))):
+async def list_deployments(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=50),
+    _=Depends(require_permission(Permission.ENGINE_DEPLOY)),
+):
     service = build_source_runtime_service()
-    data = await service.list_deployments()
+    result = await service.list_deployments_page(page=page, page_size=page_size, search=search, status=status)
     return {
         "success": True,
         "code": "OK",
         "message": "engine deployments listed",
-        "data": data,
-        "meta": {"total": len(data)},
+        "data": result["items"],
+        "meta": result["meta"],
         "trace_id": None,
     }

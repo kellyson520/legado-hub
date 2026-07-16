@@ -1,4 +1,5 @@
 from dataclasses import replace
+from math import ceil
 from uuid import uuid4
 
 from app.core.exceptions import NotFoundException, ValidationException
@@ -93,6 +94,24 @@ class SourceReviewService:
 
     def list_review_queue(self) -> list[SourceReviewItem]:
         return self._repo.list_items(status='candidate')
+
+    def list_review_queue_page(self, *, page: int = 1, page_size: int = 50, search: str = "") -> dict:
+        rows, total = self._repo.list_items_page(
+            status='candidate',
+            page=page,
+            page_size=page_size,
+            search=search,
+        )
+        return {
+            "items": rows,
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+            },
+        }
 
     def list_items(
         self,

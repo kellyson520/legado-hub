@@ -1,5 +1,7 @@
 import json
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 from app.domain.repositories.ai_conversation_repo import AIConversationRepository
@@ -39,6 +41,37 @@ class SQLiteAIConversationRepository(AIConversationRepository):
         try:
             rows = db.query(AIConversationModel).filter(AIConversationModel.actor_id == actor_id).order_by(AIConversationModel.created_at.desc()).all()
             return [self._conversation(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def list_conversations_page(
+        self,
+        actor_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> tuple[list[AIConversation], int]:
+        db = self._db()
+        try:
+            query = db.query(AIConversationModel).filter(AIConversationModel.actor_id == actor_id)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        AIConversationModel.id.ilike(pattern),
+                        AIConversationModel.title.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(AIConversationModel.created_at.desc(), AIConversationModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._conversation(row) for row in rows], total
         finally:
             self._close(db)
 

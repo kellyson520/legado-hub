@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
@@ -46,10 +46,16 @@ def _workspace_tool_names(identity) -> set[str]:
 
 
 @router.get("/tasks")
-async def list_ai_tasks(_=Depends(require_permission(Permission.AI_RUN))):
+async def list_ai_tasks(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=50),
+    _=Depends(require_permission(Permission.AI_RUN)),
+):
     service = build_ai_service()
-    tasks = await service.list_tasks()
-    return {"success": True, "code": "OK", "message": "ai tasks listed", "data": tasks, "meta": {"total": len(tasks)}, "trace_id": None}
+    result = await service.list_tasks_page(page=page, page_size=page_size, search=search, status=status)
+    return {"success": True, "code": "OK", "message": "ai tasks listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
 
 
 @router.post("/tasks/character")
@@ -63,9 +69,19 @@ async def run_character_analysis(
 
 
 @router.get("/conversations")
-async def list_conversations(identity=Depends(require_permission(Permission.AI_RUN))):
-    data = await build_ai_workspace_service().list_conversations(str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "ai conversations listed", "data": data, "meta": {"total": len(data)}, "trace_id": None}
+async def list_conversations(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    identity=Depends(require_permission(Permission.AI_RUN)),
+):
+    result = await build_ai_workspace_service().list_conversations_page(
+        str(identity.user_id),
+        page=page,
+        page_size=page_size,
+        search=search,
+    )
+    return {"success": True, "code": "OK", "message": "ai conversations listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
 
 
 @router.post("/conversations")

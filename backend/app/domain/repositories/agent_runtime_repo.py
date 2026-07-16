@@ -21,6 +21,18 @@ class AgentRuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_runs_page(
+        self,
+        *,
+        tenant_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[AgentRun], int]:
+        raise NotImplementedError
+
+    @abstractmethod
     def create_invocation(self, invocation: ToolInvocation) -> ToolInvocation:
         raise NotImplementedError
 

@@ -1,6 +1,8 @@
 import json
 from uuid import uuid4
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.domain.entities.novel_runtime import NovelAnalysisTask, NovelIngestion
 from app.domain.repositories.novel_runtime_repo import NovelRuntimeRepository
@@ -42,6 +44,41 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
         try:
             rows = db.query(NovelIngestionModel).order_by(NovelIngestionModel.created_at.desc()).all()
             return [self._to_ingestion(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def list_ingestions_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[NovelIngestion], int]:
+        db = self._db()
+        try:
+            query = db.query(NovelIngestionModel)
+            if status:
+                query = query.filter(NovelIngestionModel.status == status)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        NovelIngestionModel.id.ilike(pattern),
+                        NovelIngestionModel.title.ilike(pattern),
+                        NovelIngestionModel.provider.ilike(pattern),
+                        NovelIngestionModel.pipeline.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(NovelIngestionModel.created_at.desc(), NovelIngestionModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._to_ingestion(row) for row in rows], total
         finally:
             self._close(db)
 

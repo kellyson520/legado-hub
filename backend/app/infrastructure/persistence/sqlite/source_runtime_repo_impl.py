@@ -268,18 +268,57 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
         finally:
             self._close(db)
 
-    def list_recent_versions(self, *, status: str | None = None, limit: int = 50) -> list[SourceVersion]:
+    def list_recent_versions(self, *, status: str | list[str] | None = None, limit: int = 50) -> list[SourceVersion]:
         db = self._db()
         try:
             query = db.query(SourceVersionModel)
             if status is not None:
-                query = query.filter(SourceVersionModel.status == status)
+                query = query.filter(
+                    SourceVersionModel.status.in_(status) if isinstance(status, list) else SourceVersionModel.status == status
+                )
             rows = (
                 query.order_by(SourceVersionModel.created_at.desc(), SourceVersionModel.id.desc())
                 .limit(limit)
                 .all()
             )
             return [self._version_to_entity(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def list_recent_versions_page(
+        self,
+        *,
+        status: str | list[str] | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> tuple[list[SourceVersion], int]:
+        db = self._db()
+        try:
+            query = db.query(SourceVersionModel)
+            if status is not None:
+                query = query.filter(
+                    SourceVersionModel.status.in_(status) if isinstance(status, list) else SourceVersionModel.status == status
+                )
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        SourceVersionModel.id.ilike(pattern),
+                        SourceVersionModel.source_id.ilike(pattern),
+                        SourceVersionModel.created_by.ilike(pattern),
+                        SourceVersionModel.payload.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(SourceVersionModel.created_at.desc(), SourceVersionModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._version_to_entity(row) for row in rows], total
         finally:
             self._close(db)
 
@@ -389,6 +428,41 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
         finally:
             self._close(db)
 
+    def list_test_runs_page(
+        self,
+        *,
+        source_version_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> tuple[list[SourceTestRun], int]:
+        db = self._db()
+        try:
+            query = db.query(SourceTestRunModel)
+            if source_version_id:
+                query = query.filter(SourceTestRunModel.source_version_id == source_version_id)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        SourceTestRunModel.id.ilike(pattern),
+                        SourceTestRunModel.source_version_id.ilike(pattern),
+                        SourceTestRunModel.trigger.ilike(pattern),
+                        SourceTestRunModel.grade.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(SourceTestRunModel.created_at.desc(), SourceTestRunModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._run_to_entity(row) for row in rows], total
+        finally:
+            self._close(db)
+
     def list_latest_test_runs(self, source_version_ids: list[str]) -> dict[str, SourceTestRun]:
         if not source_version_ids:
             return {}
@@ -488,5 +562,43 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
                 query = query.filter(SourceDeploymentModel.source_version_id == source_version_id)
             rows = query.order_by(SourceDeploymentModel.created_at.desc()).all()
             return [self._deployment_to_entity(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def list_deployments_page(
+        self,
+        *,
+        source_version_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[SourceDeployment], int]:
+        db = self._db()
+        try:
+            query = db.query(SourceDeploymentModel)
+            if source_version_id:
+                query = query.filter(SourceDeploymentModel.source_version_id == source_version_id)
+            if status:
+                query = query.filter(SourceDeploymentModel.status == status)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        SourceDeploymentModel.id.ilike(pattern),
+                        SourceDeploymentModel.source_version_id.ilike(pattern),
+                        SourceDeploymentModel.action.ilike(pattern),
+                        SourceDeploymentModel.actor_id.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(SourceDeploymentModel.created_at.desc(), SourceDeploymentModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._deployment_to_entity(row) for row in rows], total
         finally:
             self._close(db)

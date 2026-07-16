@@ -1,5 +1,7 @@
 import json
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.domain.entities.agent_runtime import AgentRun, ToolEvidence, ToolInvocation, ToolResult
 from app.domain.repositories.agent_runtime_repo import AgentRuntimeRepository
@@ -120,6 +122,43 @@ class SQLiteAgentRuntimeRepository(AgentRuntimeRepository):
                 .all()
             )
             return [self._run_entity(model) for model in models]
+        finally:
+            db.close()
+
+    def list_runs_page(
+        self,
+        *,
+        tenant_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[AgentRun], int]:
+        db = SessionLocal()
+        try:
+            query = db.query(AgentRunModel)
+            if tenant_id is not None:
+                query = query.filter(AgentRunModel.tenant_id == tenant_id)
+            if status:
+                query = query.filter(AgentRunModel.status == status)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        AgentRunModel.id.ilike(pattern),
+                        AgentRunModel.agent_kind.ilike(pattern),
+                        AgentRunModel.tenant_id.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            models = (
+                query.order_by(AgentRunModel.created_at.desc(), AgentRunModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._run_entity(model) for model in models], total
         finally:
             db.close()
 

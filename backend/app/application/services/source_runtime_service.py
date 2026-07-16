@@ -636,6 +636,31 @@ class SourceRuntimeService:
             for item in self._repo.list_test_runs()
         ]
 
+    async def list_runs_page(self, *, page: int = 1, page_size: int = 50, search: str = "") -> dict:
+        rows, total = self._repo.list_test_runs_page(page=page, page_size=page_size, search=search)
+        return {
+            "items": [
+                {
+                    "id": item.id,
+                    "source_version_id": item.source_version_id,
+                    "trigger": item.trigger,
+                    "score": item.score,
+                    "grade": item.grade,
+                    "step_results": item.step_results,
+                    "diagnostics": item.diagnostics,
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                }
+                for item in rows
+            ],
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+            },
+        }
+
     async def list_deployments(self) -> list[dict]:
         return [
             {
@@ -649,6 +674,43 @@ class SourceRuntimeService:
             }
             for item in self._repo.list_deployments()
         ]
+
+    async def list_deployments_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> dict:
+        rows, total = self._repo.list_deployments_page(
+            page=page,
+            page_size=page_size,
+            search=search,
+            status=status,
+        )
+        return {
+            "items": [
+                {
+                    "id": item.id,
+                    "source_version_id": item.source_version_id,
+                    "action": item.action,
+                    "status": item.status,
+                    "quality_gate": item.quality_gate,
+                    "actor_id": item.actor_id,
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                }
+                for item in rows
+            ],
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
 
     async def list_versions(self, source_type: str, source_id: str) -> list[dict]:
         return [
@@ -665,7 +727,7 @@ class SourceRuntimeService:
             for item in self._repo.list_versions(source_type, source_id)
         ]
 
-    async def list_recent_versions(self, *, status: str | None = None, limit: int = 50) -> list[dict]:
+    async def list_recent_versions(self, *, status: str | list[str] | None = None, limit: int = 50) -> list[dict]:
         rows: list[dict] = []
         versions = self._repo.list_recent_versions(status=status, limit=limit)
         latest_runs = self._repo.list_latest_test_runs([item.id for item in versions])
@@ -695,6 +757,59 @@ class SourceRuntimeService:
                 }
             )
         return rows
+
+    async def list_recent_versions_page(
+        self,
+        *,
+        status: str | list[str] | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> dict:
+        versions, total = self._repo.list_recent_versions_page(
+            status=status,
+            page=page,
+            page_size=page_size,
+            search=search,
+        )
+        latest_runs = self._repo.list_latest_test_runs([item.id for item in versions])
+        rows: list[dict] = []
+        for item in versions:
+            latest_run = latest_runs.get(item.id)
+            rows.append(
+                {
+                    "id": item.id,
+                    "source_definition_id": item.source_definition_id,
+                    "source_type": item.source_type,
+                    "source_id": item.source_id,
+                    "status": item.status,
+                    "payload": item.payload,
+                    "created_by": item.created_by,
+                    "created_at": item.created_at.isoformat() if item.created_at else None,
+                    "latest_run": (
+                        {
+                            "id": latest_run.id,
+                            "trigger": latest_run.trigger,
+                            "score": latest_run.score,
+                            "grade": latest_run.grade,
+                            "created_at": latest_run.created_at.isoformat() if latest_run.created_at else None,
+                        }
+                        if latest_run is not None
+                        else None
+                    ),
+                }
+            )
+        return {
+            "items": rows,
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
 
     @staticmethod
     def _validate_rule_payload(payload: dict) -> None:

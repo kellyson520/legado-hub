@@ -21,7 +21,7 @@ function row(id: string) {
 describe('useServerPagination', () => {
   test('loads the first page and exposes normalized rows', async () => {
     const load = vi.fn().mockResolvedValue(envelope([row('one')], { page: 1, page_size: 2, total: 1, total_pages: 1 }))
-    const { result } = renderHook(() => useServerPagination({ pageSize: 2, load }))
+    const { result } = renderHook(() => useServerPagination<{ id: string }>({ pageSize: 2, load }))
 
     await waitFor(() => expect(load).toHaveBeenCalledWith({ page: 1, pageSize: 2, search: '' }))
     await waitFor(() => expect(result.current.rows).toEqual([row('one')]))
@@ -32,7 +32,7 @@ describe('useServerPagination', () => {
     const load = vi.fn().mockImplementation(({ page }: { page: number }) => (
       Promise.resolve(envelope([row(page === 1 ? 'one' : 'two')], { page, page_size: 1, total: 2, total_pages: 2 }))
     ))
-    const { result } = renderHook(() => useServerPagination({ pageSize: 1, load }))
+    const { result } = renderHook(() => useServerPagination<{ id: string }>({ pageSize: 1, load }))
 
     await waitFor(() => expect(result.current.rows).toEqual([row('one')]))
     act(() => result.current.goToPage(2))
@@ -43,7 +43,7 @@ describe('useServerPagination', () => {
 
   test('trims search and resets to page one', async () => {
     const load = vi.fn().mockResolvedValue(envelope([row('beta')], { page: 1, page_size: 2, total: 1, total_pages: 1 }))
-    const { result } = renderHook(() => useServerPagination({ pageSize: 2, load }))
+    const { result } = renderHook(() => useServerPagination<{ id: string }>({ pageSize: 2, load }))
 
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1))
     act(() => result.current.submitSearch(' beta '))
@@ -56,7 +56,7 @@ describe('useServerPagination', () => {
       .mockResolvedValueOnce(envelope([row('one')], { page: 1, page_size: 1, total: 2, total_pages: 2 }))
       .mockRejectedValueOnce(new Error('page unavailable'))
       .mockResolvedValueOnce(envelope([row('two')], { page: 2, page_size: 1, total: 2, total_pages: 2 }))
-    const { result } = renderHook(() => useServerPagination({ pageSize: 1, load }))
+    const { result } = renderHook(() => useServerPagination<{ id: string }>({ pageSize: 1, load }))
 
     await waitFor(() => expect(result.current.rows).toEqual([row('one')]))
     act(() => result.current.goToPage(2))
@@ -67,12 +67,12 @@ describe('useServerPagination', () => {
   })
 
   test('ignores a stale response after a newer request resolves', async () => {
-    let resolveFirst!: (value: ReturnType<typeof envelope<typeof row>> | PromiseLike<ReturnType<typeof envelope<typeof row>>>) => void
+    let resolveFirst!: (value: ReturnType<typeof envelope<{ id: string }>> | PromiseLike<ReturnType<typeof envelope<{ id: string }>>>) => void
     const first = new Promise((resolve) => { resolveFirst = resolve })
     const load = vi.fn()
       .mockReturnValueOnce(first)
       .mockResolvedValueOnce(envelope([row('new')], { page: 1, page_size: 1, total: 1, total_pages: 1 }))
-    const { result } = renderHook(() => useServerPagination({ pageSize: 1, load }))
+    const { result } = renderHook(() => useServerPagination<{ id: string }>({ pageSize: 1, load }))
 
     act(() => result.current.submitSearch('new'))
     await waitFor(() => expect(result.current.rows).toEqual([row('new')]))
@@ -82,9 +82,9 @@ describe('useServerPagination', () => {
   })
 
   test('does not update state after unmount', async () => {
-    let resolve!: (value: ReturnType<typeof envelope<typeof row>> | PromiseLike<ReturnType<typeof envelope<typeof row>>>) => void
+    let resolve!: (value: ReturnType<typeof envelope<{ id: string }>> | PromiseLike<ReturnType<typeof envelope<{ id: string }>>>) => void
     const load = vi.fn().mockReturnValue(new Promise((nextResolve) => { resolve = nextResolve }))
-    const { unmount } = renderHook(() => useServerPagination({ pageSize: 1, load }))
+    const { unmount } = renderHook(() => useServerPagination<{ id: string }>({ pageSize: 1, load }))
 
     unmount()
     resolve(envelope([row('late')], { page: 1, page_size: 1, total: 1, total_pages: 1 }))

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.core.permissions import Permission
 from app.infrastructure.persistence.factory import build_novel_agent_service, build_novel_app_service
@@ -9,10 +9,16 @@ router = APIRouter()
 
 
 @router.get("/books")
-async def list_books(_=Depends(require_permission(Permission.NOVEL_MANAGE))):
+async def list_books(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=50),
+    _=Depends(require_permission(Permission.NOVEL_MANAGE)),
+):
     service = build_novel_app_service()
-    books = await service.list_books()
-    return {"success": True, "code": "OK", "message": "novels listed", "data": books, "meta": {"total": len(books)}, "trace_id": None}
+    result = await service.list_books_page(page=page, page_size=page_size, search=search, status=status)
+    return {"success": True, "code": "OK", "message": "novels listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
 
 
 @router.post("/books/{novel_id}/analysis")

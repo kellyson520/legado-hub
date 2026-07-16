@@ -13,6 +13,17 @@ class AIConversationRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_conversations_page(
+        self,
+        actor_id: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> tuple[list[AIConversation], int]:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_conversation(self, conversation_id: str, actor_id: str) -> AIConversation | None:
         raise NotImplementedError
 

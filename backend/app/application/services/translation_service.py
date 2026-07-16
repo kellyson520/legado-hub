@@ -1,4 +1,5 @@
 from uuid import uuid4
+from math import ceil
 
 import httpx
 
@@ -18,6 +19,43 @@ class TranslationService:
         if self._repo is None:
             return []
         return [self._serialize_job(job) for job in self._repo.list_jobs()]
+
+    async def list_jobs_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> dict:
+        if hasattr(self._repo, "list_jobs_page"):
+            rows, total = self._repo.list_jobs_page(
+                page=page,
+                page_size=page_size,
+                search=search,
+                status=status,
+            )
+        else:
+            all_rows = self._repo.list_jobs()
+            normalized = search.strip().lower()
+            filtered = [
+                item for item in all_rows
+                if (not normalized or normalized in f"{item.id} {item.source_language} {item.target_language} {item.provider}".lower())
+                and (not status or item.status == status)
+            ]
+            total = len(filtered)
+            rows = filtered[(page - 1) * page_size : page * page_size]
+        return {
+            "items": [self._serialize_job(item) for item in rows],
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
 
     async def review_job(self, job_id: str, *, reviewer_id: str, memory_note: dict) -> dict:
         if self._repo is None:

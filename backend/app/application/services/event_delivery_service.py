@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import asyncio
+from math import ceil
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -200,6 +201,32 @@ class EventDeliveryService:
         if self._repo is None:
             raise RuntimeError('event delivery repository is not configured')
         return self._repo.list_deliveries(limit=limit)
+
+    def list_deliveries_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> dict:
+        rows, total = self._repo.list_deliveries_page(
+            page=page,
+            page_size=page_size,
+            search=search,
+            status=status,
+        )
+        return {
+            "items": rows,
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
 
     def list_stream_events(self, tenant_id: str | None = None, limit: int = 20) -> list[EventDeliveryStreamEvent]:
         return self._stream_broker.recent_events(tenant_id=tenant_id, limit=limit)

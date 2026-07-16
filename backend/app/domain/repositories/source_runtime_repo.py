@@ -51,7 +51,18 @@ class SourceRuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_recent_versions(self, *, status: str | None = None, limit: int = 50) -> list[SourceVersion]:
+    def list_recent_versions(self, *, status: str | list[str] | None = None, limit: int = 50) -> list[SourceVersion]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_recent_versions_page(
+        self,
+        *,
+        status: str | list[str] | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> tuple[list[SourceVersion], int]:
         raise NotImplementedError
 
     @abstractmethod
@@ -83,6 +94,17 @@ class SourceRuntimeRepository(ABC):
 
     @abstractmethod
     def list_test_runs(self, source_version_id: str | None = None) -> list[SourceTestRun]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_test_runs_page(
+        self,
+        *,
+        source_version_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> tuple[list[SourceTestRun], int]:
         raise NotImplementedError
 
     @abstractmethod
@@ -119,4 +141,16 @@ class SourceRuntimeRepository(ABC):
 
     @abstractmethod
     def list_deployments(self, source_version_id: str | None = None) -> list[SourceDeployment]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_deployments_page(
+        self,
+        *,
+        source_version_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[SourceDeployment], int]:
         raise NotImplementedError

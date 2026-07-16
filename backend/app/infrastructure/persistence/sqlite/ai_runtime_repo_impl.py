@@ -1,6 +1,8 @@
 import json
 from uuid import uuid4
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.domain.entities.ai_runtime import AITask
 from app.domain.repositories.ai_runtime_repo import AIRuntimeRepository
@@ -46,6 +48,42 @@ class SQLiteAIRuntimeRepository(AIRuntimeRepository):
         try:
             rows = db.query(AITaskModel).order_by(AITaskModel.created_at.desc()).all()
             return [self._to_entity(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def list_tasks_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[AITask], int]:
+        db = self._db()
+        try:
+            query = db.query(AITaskModel)
+            if status:
+                query = query.filter(AITaskModel.status == status)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        AITaskModel.id.ilike(pattern),
+                        AITaskModel.task_type.ilike(pattern),
+                        AITaskModel.actor_id.ilike(pattern),
+                        AITaskModel.provider_name.ilike(pattern),
+                        AITaskModel.model_name.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(AITaskModel.created_at.desc(), AITaskModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._to_entity(row) for row in rows], total
         finally:
             self._close(db)
 

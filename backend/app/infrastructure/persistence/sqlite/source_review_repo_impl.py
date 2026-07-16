@@ -1,5 +1,6 @@
 import json
 
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
@@ -94,5 +95,43 @@ class SQLiteSourceReviewRepository(SourceReviewRepository):
                 .all()
             )
             return [self._entity(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def list_items_page(
+        self,
+        *,
+        status: str | None = None,
+        review_type: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+    ) -> tuple[list[SourceReviewItem], int]:
+        db = self._db()
+        try:
+            query = db.query(SourceReviewItemModel)
+            if status is not None:
+                query = query.filter(SourceReviewItemModel.status == status)
+            if review_type is not None:
+                query = query.filter(SourceReviewItemModel.review_type == review_type)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        SourceReviewItemModel.id.ilike(pattern),
+                        SourceReviewItemModel.review_type.ilike(pattern),
+                        SourceReviewItemModel.source_url.ilike(pattern),
+                        SourceReviewItemModel.summary.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(SourceReviewItemModel.created_at.desc(), SourceReviewItemModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._entity(row) for row in rows], total
         finally:
             self._close(db)

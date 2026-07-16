@@ -1,5 +1,6 @@
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from uuid import uuid4
 
 from app.core.exceptions import AuthenticationException, NotFoundException, ValidationException
@@ -99,6 +100,43 @@ class AuthAppService:
     async def list_users(self) -> list[dict]:
         return [self._serialize_user(item) for item in await self._repo.list_users()]
 
+    async def list_users_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> dict:
+        if hasattr(self._repo, "list_users_page"):
+            rows, total = await self._repo.list_users_page(
+                page=page,
+                page_size=page_size,
+                search=search,
+                status=status,
+            )
+        else:
+            all_rows = await self._repo.list_users()
+            normalized = search.strip().lower()
+            filtered = [
+                item for item in all_rows
+                if (not normalized or normalized in f"{item.username} {item.display_name}".lower())
+                and (not status or ("enabled" if item.is_active else "disabled") == status)
+            ]
+            total = len(filtered)
+            rows = filtered[(page - 1) * page_size : page * page_size]
+        return {
+            "items": [self._serialize_user(item) for item in rows],
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
+
     @staticmethod
     def _serialize_user(user: User) -> dict:
         role = "admin" if "admin" in user.role_names else (user.role_names[0] if user.role_names else "user")
@@ -178,6 +216,42 @@ class AuthAppService:
     async def list_api_keys(self) -> list[dict]:
         return [asdict(item) for item in await self._repo.list_api_keys()]
 
+    async def list_api_keys_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> dict:
+        if hasattr(self._repo, "list_api_keys_page"):
+            rows, total = await self._repo.list_api_keys_page(
+                page=page,
+                page_size=page_size,
+                search=search,
+                status=status,
+            )
+        else:
+            all_rows = await self._repo.list_api_keys()
+            normalized = search.strip().lower()
+            filtered = [
+                item for item in all_rows
+                if not normalized or normalized in item.name.lower()
+            ]
+            total = len(filtered)
+            rows = filtered[(page - 1) * page_size : page * page_size]
+        return {
+            "items": [asdict(item) for item in rows],
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
+
     async def create_api_key(self, name: str, permissions: list[str], actor_id: int) -> dict:
         raw_key = generate_api_key()
         saved = await self._repo.save_api_key(
@@ -209,6 +283,29 @@ class AuthAppService:
 
     async def list_audit_events(self, limit: int = 100) -> list[dict]:
         return [asdict(item) for item in await self._repo.list_audit_events(limit=limit)]
+
+    async def list_audit_events_page(self, *, page: int = 1, page_size: int = 100, search: str = "") -> dict:
+        if hasattr(self._repo, "list_audit_events_page"):
+            rows, total = await self._repo.list_audit_events_page(page=page, page_size=page_size, search=search)
+        else:
+            all_rows = await self._repo.list_audit_events(limit=10_000)
+            normalized = search.strip().lower()
+            filtered = [
+                item for item in all_rows
+                if not normalized or normalized in f"{item.action} {item.resource} {item.detail}".lower()
+            ]
+            total = len(filtered)
+            rows = filtered[(page - 1) * page_size : page * page_size]
+        return {
+            "items": [asdict(item) for item in rows],
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+            },
+        }
 
     async def revoke_user_sessions(self, target_user_id: int, actor_id: int) -> None:
         await self._repo.revoke_all_refresh_sessions(target_user_id)

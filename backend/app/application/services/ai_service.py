@@ -1,5 +1,6 @@
 from uuid import uuid4
 import re
+from math import ceil
 from collections.abc import Awaitable, Callable
 
 from app.domain.entities.ai_runtime import AITask
@@ -14,6 +15,45 @@ class AIService:
         if self._repo is None:
             return []
         return [self._serialize(task) for task in self._repo.list_tasks()]
+
+    async def list_tasks_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> dict:
+        if self._repo is None:
+            rows, total = [], 0
+        elif hasattr(self._repo, "list_tasks_page"):
+            rows, total = self._repo.list_tasks_page(
+                page=page,
+                page_size=page_size,
+                search=search,
+                status=status,
+            )
+        else:
+            all_rows = self._repo.list_tasks()
+            normalized = search.strip().lower()
+            filtered = [
+                item for item in all_rows
+                if (not normalized or normalized in f"{item.kind} {item.actor_id} {item.provider} {item.model}".lower())
+                and (not status or item.status == status)
+            ]
+            total = len(filtered)
+            rows = filtered[(page - 1) * page_size : page * page_size]
+        return {
+            "items": [self._serialize(task) for task in rows],
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
 
     async def run_character_analysis(self, payload: dict, actor_id: str = "system") -> dict:
         invocation = await self._platform.invoke_chat(

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, model_validator
 
 from app.core.permissions import Permission
@@ -23,10 +23,16 @@ class TranslationRequest(BaseModel):
 
 
 @router.get("/jobs")
-async def list_jobs(_=Depends(require_permission(Permission.TRANSLATION_RUN))):
+async def list_jobs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=50),
+    _=Depends(require_permission(Permission.TRANSLATION_RUN)),
+):
     service = build_translation_service()
-    jobs = await service.list_jobs()
-    return {"success": True, "code": "OK", "message": "translation jobs listed", "data": jobs, "meta": {"total": len(jobs)}, "trace_id": None}
+    result = await service.list_jobs_page(page=page, page_size=page_size, search=search, status=status)
+    return {"success": True, "code": "OK", "message": "translation jobs listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
 
 
 @router.post("/jobs")

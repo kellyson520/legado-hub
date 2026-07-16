@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import {
@@ -8,6 +8,9 @@ import {
   type OperationReviewQueueRow,
 } from '@/api/modules/operations'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { PaginationToolbar } from '@/components/data/PaginationToolbar'
+import { Card } from '@/components/ui/card'
+import { useServerPagination } from '@/hooks/useServerPagination'
 import { SourceAuditSummary } from './SourceBuildsPage'
 
 function getProposalType(row: OperationReviewQueueRow) {
@@ -75,25 +78,20 @@ function canResolve(row: OperationReviewQueueRow) {
 }
 
 export function ReviewQueuePage() {
-  const [rows, setRows] = useState<OperationReviewQueueRow[]>([])
+  const pagination = useServerPagination<OperationReviewQueueRow>({
+    pageSize: 20,
+    load: ({ page, pageSize, search }) => listReviewQueueCandidates({ page, page_size: pageSize, search }),
+  })
+  const { rows, meta, loading, error: loadError } = pagination
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(() => new Set())
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    let mounted = true
-
-    async function load() {
-      const response = await listReviewQueueCandidates()
-      if (!mounted) return
-      setRows(response.data)
-    }
-
-    void load()
-    return () => {
-      mounted = false
-    }
-  }, [])
+  const visibleRows = useMemo(
+    () => rows.filter((row) => !resolvedIds.has(row.id)),
+    [resolvedIds, rows],
+  )
 
   async function handleResolve(row: OperationReviewQueueRow) {
     const itemType = getItemType(row)
@@ -118,7 +116,11 @@ export function ReviewQueuePage() {
             : undefined,
       })
       const queueItemId = response.data.queueItemId ?? response.data.queue_item_id ?? row.id
-      setRows((current) => current.filter((item) => item.id !== queueItemId))
+      setResolvedIds((current) => {
+        const next = new Set(current)
+        next.add(queueItemId)
+        return next
+      })
       setFeedback(`${getActionLabel(row)} completed for ${getProposalType(row)}`)
     } catch (resolveError) {
       const message = resolveError instanceof Error ? resolveError.message : 'Failed to resolve review item'
@@ -137,6 +139,25 @@ export function ReviewQueuePage() {
       <div className="space-y-3">
         {feedback ? <p className="text-sm text-emerald-600">{feedback}</p> : null}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <PaginationToolbar
+          page={meta.page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          searchInput={pagination.searchInput}
+          appliedSearch={pagination.appliedSearch}
+          loading={loading}
+          searchLabel="搜索审核项"
+          onSearchInput={pagination.setSearchInput}
+          onSearch={() => pagination.submitSearch()}
+          onClearSearch={pagination.clearSearch}
+          onPageChange={pagination.goToPage}
+        />
+        {loadError ? (
+          <Card className="flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
+            <span>Failed to load review queue.</span>
+            <button type="button" className="underline" onClick={() => pagination.retry()}>重试</button>
+          </Card>
+        ) : null}
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
           <table className="min-w-full divide-y divide-border text-sm">
             <thead className="bg-muted/40 text-left text-muted-foreground">
@@ -150,7 +171,7 @@ export function ReviewQueuePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {rows.map((row) => {
+              {visibleRows.map((row) => {
                 const itemType = getItemType(row)
                 const actionLabel = getActionLabel(row)
                 const resolving = pendingId === row.id
@@ -209,7 +230,7 @@ export function ReviewQueuePage() {
                   </tr>
                 )
               })}
-              {rows.length === 0 ? (
+              {!loading && visibleRows.length === 0 ? (
                 <tr>
                   <td className="px-4 py-6 text-muted-foreground" colSpan={6}>
                     No review candidates yet

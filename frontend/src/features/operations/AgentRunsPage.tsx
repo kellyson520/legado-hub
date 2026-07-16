@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import {
   getOperationAgentRun,
@@ -8,6 +8,9 @@ import {
   type OperationAgentToolInvocationRow,
 } from '@/api/modules/operations'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { PaginationToolbar } from '@/components/data/PaginationToolbar'
+import { Card } from '@/components/ui/card'
+import { useServerPagination } from '@/hooks/useServerPagination'
 
 function getAgentKind(row: OperationAgentRunRow | OperationAgentRunDetail) {
   return row.agentKind ?? row.agent_kind ?? 'agent'
@@ -58,31 +61,15 @@ function formatPayload(value: unknown) {
 }
 
 export function AgentRunsPage() {
-  const [rows, setRows] = useState<OperationAgentRunRow[]>([])
+  const pagination = useServerPagination<OperationAgentRunRow>({
+    pageSize: 20,
+    load: ({ page, pageSize, search }) => listOperationAgentRuns({ page, page_size: pageSize, search }),
+  })
+  const { rows, meta, loading, error: listError } = pagination
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<OperationAgentRunDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let mounted = true
-
-    async function load() {
-      try {
-        const response = await listOperationAgentRuns()
-        if (!mounted) return
-        setRows(response.data)
-      } catch (loadError) {
-        if (!mounted) return
-        setError(loadError instanceof Error ? loadError.message : 'Failed to load agent runs')
-      }
-    }
-
-    void load()
-    return () => {
-      mounted = false
-    }
-  }, [])
 
   async function inspect(runId: string) {
     setSelectedId(runId)
@@ -106,6 +93,25 @@ export function AgentRunsPage() {
     >
       <div className="space-y-4">
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <PaginationToolbar
+          page={meta.page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          searchInput={pagination.searchInput}
+          appliedSearch={pagination.appliedSearch}
+          loading={loading}
+          searchLabel="搜索 Agent run"
+          onSearchInput={pagination.setSearchInput}
+          onSearch={() => pagination.submitSearch()}
+          onClearSearch={pagination.clearSearch}
+          onPageChange={pagination.goToPage}
+        />
+        {listError ? (
+          <Card className="flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
+            <span>Failed to load agent runs.</span>
+            <button type="button" className="underline" onClick={() => pagination.retry()}>重试</button>
+          </Card>
+        ) : null}
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
           <table className="min-w-full divide-y divide-border text-sm">
             <thead className="bg-muted/40 text-left text-muted-foreground">
@@ -150,7 +156,7 @@ export function AgentRunsPage() {
                   </tr>
                 )
               })}
-              {rows.length === 0 ? (
+              {!loading && rows.length === 0 ? (
                 <tr>
                   <td className="px-4 py-6 text-muted-foreground" colSpan={5}>
                     No agent runs yet

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useState } from 'react'
 
 import {
   listEngineDeployments,
@@ -14,10 +14,13 @@ import {
 } from '@/api/modules/engine'
 import { RunTimeline } from '@/components/diagnostics/RunTimeline'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { useServerPagination } from '@/hooks/useServerPagination'
 
 function getSourceId(row: EngineSourceBuildRow) {
   return row.sourceId ?? row.source_id ?? row.payload.canonical_url ?? row.id
@@ -51,9 +54,21 @@ function getProbeSummary(autonomousBuild: EngineSourceBuildAutonomousBuild | und
 }
 
 export function EngineRunsPage() {
-  const [runs, setRuns] = useState<EngineRunRow[]>([])
-  const [deployments, setDeployments] = useState<EngineDeploymentRow[]>([])
-  const [sourceBuilds, setSourceBuilds] = useState<EngineSourceBuildRow[]>([])
+  const runsPagination = useServerPagination<EngineRunRow>({
+    pageSize: 20,
+    load: ({ page, pageSize, search }) => listEngineRuns({ page, page_size: pageSize, search }),
+  })
+  const deploymentsPagination = useServerPagination<EngineDeploymentRow>({
+    pageSize: 20,
+    load: ({ page, pageSize, search }) => listEngineDeployments({ page, page_size: pageSize, search }),
+  })
+  const sourceBuildsPagination = useServerPagination<EngineSourceBuildRow>({
+    pageSize: 20,
+    load: ({ page, pageSize, search }) => listEngineSourceBuilds({ page, page_size: pageSize, search }),
+  })
+  const { rows: runs, meta: runsMeta, loading: runsLoading, error: runsError } = runsPagination
+  const { rows: deployments, meta: deploymentsMeta, loading: deploymentsLoading, error: deploymentsError } = deploymentsPagination
+  const { rows: sourceBuilds, meta: sourceBuildsMeta, loading: sourceBuildsLoading, error: sourceBuildsError } = sourceBuildsPagination
   const [sourceUrl, setSourceUrl] = useState('')
   const [keyword, setKeyword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -64,34 +79,8 @@ export function EngineRunsPage() {
   const [regexText, setRegexText] = useState('第12章：开始')
   const [regexResult, setRegexResult] = useState<RegexTestResult | null>(null)
 
-  useEffect(() => {
-    let mounted = true
-
-    async function load() {
-      const [runsResponse, deploymentsResponse, sourceBuildsResponse] = await Promise.all([
-        listEngineRuns(),
-        listEngineDeployments(),
-        listEngineSourceBuilds(),
-      ])
-      if (!mounted) return
-      setRuns(runsResponse.data)
-      setDeployments(deploymentsResponse.data)
-      setSourceBuilds(sourceBuildsResponse.data)
-    }
-
-    void load().catch(() => {
-      if (mounted) {
-        setError('Failed to load engine diagnostics')
-      }
-    })
-    return () => {
-      mounted = false
-    }
-  }, [])
-
   async function refreshSourceBuilds() {
-    const sourceBuildsResponse = await listEngineSourceBuilds()
-    setSourceBuilds(sourceBuildsResponse.data)
+    sourceBuildsPagination.reload()
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -193,6 +182,20 @@ export function EngineRunsPage() {
         </section>
 
         <section className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-2">
+          <PaginationToolbar
+            page={sourceBuildsMeta.page}
+            totalPages={sourceBuildsMeta.total_pages}
+            total={sourceBuildsMeta.total}
+            searchInput={sourceBuildsPagination.searchInput}
+            appliedSearch={sourceBuildsPagination.appliedSearch}
+            loading={sourceBuildsLoading}
+            searchLabel="搜索规则候选"
+            onSearchInput={sourceBuildsPagination.setSearchInput}
+            onSearch={() => sourceBuildsPagination.submitSearch()}
+            onClearSearch={sourceBuildsPagination.clearSearch}
+            onPageChange={sourceBuildsPagination.goToPage}
+          />
+          {sourceBuildsError ? <Card className="mt-3 flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>Failed to load source builds.</span><button type="button" className="underline" onClick={() => sourceBuildsPagination.retry()}>重试</button></Card> : null}
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
@@ -248,7 +251,7 @@ export function EngineRunsPage() {
                 </article>
               )
             })}
-            {sourceBuilds.length === 0 ? (
+            {!sourceBuildsLoading && sourceBuilds.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
                 No console source build candidates yet
               </div>
@@ -264,6 +267,41 @@ export function EngineRunsPage() {
           </p>
           <h2 className="mt-2 text-xl font-semibold text-foreground">Engine runs and deployment decisions</h2>
         </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Engine runs</p>
+            <PaginationToolbar
+              page={runsMeta.page}
+              totalPages={runsMeta.total_pages}
+              total={runsMeta.total}
+              searchInput={runsPagination.searchInput}
+              appliedSearch={runsPagination.appliedSearch}
+              loading={runsLoading}
+              searchLabel="搜索运行"
+              onSearchInput={runsPagination.setSearchInput}
+              onSearch={() => runsPagination.submitSearch()}
+              onClearSearch={runsPagination.clearSearch}
+              onPageChange={runsPagination.goToPage}
+            />
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Deployments</p>
+            <PaginationToolbar
+              page={deploymentsMeta.page}
+              totalPages={deploymentsMeta.total_pages}
+              total={deploymentsMeta.total}
+              searchInput={deploymentsPagination.searchInput}
+              appliedSearch={deploymentsPagination.appliedSearch}
+              loading={deploymentsLoading}
+              searchLabel="搜索部署"
+              onSearchInput={deploymentsPagination.setSearchInput}
+              onSearch={() => deploymentsPagination.submitSearch()}
+              onClearSearch={deploymentsPagination.clearSearch}
+              onPageChange={deploymentsPagination.goToPage}
+            />
+          </div>
+        </div>
+        {runsError || deploymentsError ? <Card className="flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>Failed to load engine diagnostics.</span><button type="button" className="underline" onClick={() => { runsPagination.retry(); deploymentsPagination.retry() }}>重试</button></Card> : null}
         <RunTimeline runs={runs} deployments={deployments} />
       </section>
     </ConsoleLayout>

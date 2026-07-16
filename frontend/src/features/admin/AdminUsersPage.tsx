@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   createUser,
   listUsers,
@@ -10,7 +10,10 @@ import {
 } from '@/api/modules/admin'
 import { useAuth } from '@/app/providers/AuthProvider'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { useServerPagination } from '@/hooks/useServerPagination'
 import { roleText, statusText } from '@/lib/i18n'
 
 type UserRole = 'admin' | 'user'
@@ -31,7 +34,11 @@ const emptyForm: UserForm = {
 
 export function AdminUsersPage() {
   const { hasPermission } = useAuth()
-  const [users, setUsers] = useState<AdminUserRow[]>([])
+  const pagination = useServerPagination<AdminUserRow>({
+    pageSize: 20,
+    load: ({ page, pageSize, search }) => listUsers({ page, page_size: pageSize, search }),
+  })
+  const { rows: users, meta, loading, error: loadError } = pagination
   const [error, setError] = useState('')
   const [formMode, setFormMode] = useState<'create' | 'edit' | null>(null)
   const [editingUser, setEditingUser] = useState<AdminUserRow | null>(null)
@@ -41,16 +48,7 @@ export function AdminUsersPage() {
   const [busy, setBusy] = useState(false)
   const canWrite = hasPermission('users.write')
 
-  const load = async () => {
-    try {
-      setUsers((await listUsers()).data)
-      setError('')
-    } catch {
-      setError('加载用户失败，请稍后重试')
-    }
-  }
-
-  useEffect(() => { void load() }, [])
+  const load = () => pagination.reload()
 
   const openCreate = () => {
     setEditingUser(null)
@@ -145,9 +143,22 @@ export function AdminUsersPage() {
   return (
     <ConsoleLayout eyebrow="系统管理" title="用户管理" description="集中维护账户、权限角色与登录会话。密码仅能写入，不会在界面或接口响应中回显。">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-sm">
-        <p className="text-sm text-muted-foreground">共 {users.length} 名用户 · 可通过撤销会话即时收回访问权限</p>
+        <p className="text-sm text-muted-foreground">共 {meta.total} 名用户 · 可通过撤销会话即时收回访问权限</p>
         {canWrite ? <Button onClick={openCreate}>创建用户</Button> : null}
       </div>
+      <PaginationToolbar
+        page={meta.page}
+        totalPages={meta.total_pages}
+        total={meta.total}
+        searchInput={pagination.searchInput}
+        appliedSearch={pagination.appliedSearch}
+        loading={loading}
+        searchLabel="搜索用户"
+        onSearchInput={pagination.setSearchInput}
+        onSearch={() => pagination.submitSearch()}
+        onClearSearch={pagination.clearSearch}
+        onPageChange={pagination.goToPage}
+      />
 
       {formMode ? (
         <section className="rounded-lg border border-primary/25 bg-accent/30 p-5 shadow-sm">
@@ -244,7 +255,8 @@ export function AdminUsersPage() {
       ) : null}
 
       {error ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p> : null}
-      {!error && users.length === 0 ? <p className="rounded-md border border-dashed p-5 text-sm text-muted-foreground">暂无用户</p> : null}
+      {loadError ? <Card className="flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>加载用户失败，请稍后重试</span><button type="button" className="underline" onClick={() => pagination.retry()}>重试</button></Card> : null}
+      {!loading && !error && !loadError && users.length === 0 ? <p className="rounded-md border border-dashed p-5 text-sm text-muted-foreground">暂无用户</p> : null}
 
       <div className="space-y-3">
         {users.map((user) => (

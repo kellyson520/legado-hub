@@ -111,6 +111,41 @@ class SQLiteEventDeliveryRepository(EventDeliveryRepository):
         finally:
             self._close(db)
 
+    def list_deliveries_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[EventDelivery], int]:
+        db = self._db()
+        try:
+            query = db.query(EventDeliveryModel)
+            if status:
+                query = query.filter(EventDeliveryModel.status == status)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        EventDeliveryModel.event_id.ilike(pattern),
+                        EventDeliveryModel.event_type.ilike(pattern),
+                        EventDeliveryModel.tenant_id.ilike(pattern),
+                        EventDeliveryModel.target_url.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            models = (
+                query.order_by(EventDeliveryModel.created_at.desc(), EventDeliveryModel.event_id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._entity(model) for model in models], total
+        finally:
+            self._close(db)
+
     def save(self, delivery: EventDelivery) -> EventDelivery:
         db = self._db()
         try:

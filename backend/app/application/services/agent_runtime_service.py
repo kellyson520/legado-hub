@@ -1,4 +1,5 @@
 from uuid import uuid4
+from math import ceil
 
 from app.domain.entities.agent_runtime import AgentRun, ToolEvidence, ToolInvocation, ToolResult
 
@@ -30,6 +31,34 @@ class AgentRuntimeService:
 
     def list_runs(self, *, tenant_id: str | None = None, limit: int = 50) -> list[AgentRun]:
         return self._repo.list_runs(tenant_id=tenant_id, limit=limit)
+
+    def list_runs_page(
+        self,
+        *,
+        tenant_id: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> dict:
+        rows, total = self._repo.list_runs_page(
+            tenant_id=tenant_id,
+            page=page,
+            page_size=page_size,
+            search=search,
+            status=status,
+        )
+        return {
+            "items": rows,
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+                **({"status": status} if status else {}),
+            },
+        }
 
     def record_tool_invocation(
         self,

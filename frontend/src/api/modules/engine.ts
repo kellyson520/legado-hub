@@ -78,16 +78,23 @@ export interface RegexTestResult {
   error: string | null
 }
 
-export async function listEngineRuns() {
-  return apiClient.get<EngineRunRow[]>('/engine/runs') as Promise<ApiEnvelope<EngineRunRow[]>>
+export interface EngineListParams {
+  page?: number
+  page_size?: number
+  search?: string
+  status?: string
 }
 
-export async function listEngineDeployments() {
-  return apiClient.get<EngineDeploymentRow[]>('/engine/deployments') as Promise<ApiEnvelope<EngineDeploymentRow[]>>
+export async function listEngineRuns(params: EngineListParams = {}) {
+  return apiClient.get<EngineRunRow[]>('/engine/runs', { params }) as Promise<ApiEnvelope<EngineRunRow[]>>
 }
 
-export function listEngineSourceBuilds(): Promise<ApiEnvelope<EngineSourceBuildRow[]>> {
-  return apiClient.get<EngineSourceBuildRow[]>('/engine/source-builds')
+export async function listEngineDeployments(params: EngineListParams = {}) {
+  return apiClient.get<EngineDeploymentRow[]>('/engine/deployments', { params }) as Promise<ApiEnvelope<EngineDeploymentRow[]>>
+}
+
+export function listEngineSourceBuilds(params: EngineListParams = {}): Promise<ApiEnvelope<EngineSourceBuildRow[]>> {
+  return apiClient.get<EngineSourceBuildRow[]>('/engine/source-builds', { params })
 }
 
 export function submitEngineSourceBuild(payload: {

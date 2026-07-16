@@ -22,6 +22,17 @@ class EventDeliveryRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_deliveries_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[EventDelivery], int]:
+        raise NotImplementedError
+
+    @abstractmethod
     def save(self, delivery: EventDelivery) -> EventDelivery:
         raise NotImplementedError
 

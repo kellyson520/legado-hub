@@ -1,7 +1,8 @@
 import asyncio
 import json
+from math import ceil
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 
@@ -125,9 +126,13 @@ def _assert_review_queue_write_permission(identity: RequestIdentity, item_type: 
 
 @router.get('/jobs')
 async def list_operations_jobs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=50),
     _=Depends(require_permission(Permission.SYSTEM_JOBS_MANAGE)),
 ):
-    jobs = build_job_service().list_jobs()
+    result = build_job_service().list_jobs_page(page=page, page_size=page_size, search=search, status=status)
     data = [
         {
             'id': job.id,
@@ -138,23 +143,32 @@ async def list_operations_jobs(
             'created_at': job.created_at.isoformat() if job.created_at is not None else None,
             'last_error': job.last_error,
         }
-        for job in jobs
+        for job in result["items"]
     ]
     return {
         'success': True,
         'code': 'OK',
         'message': 'operations jobs listed',
         'data': data,
-        'meta': {'total': len(data)},
+        'meta': result["meta"],
         'trace_id': None,
     }
 
 
 @router.get('/deliveries')
 async def list_event_deliveries(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=50),
     _=Depends(require_permission(Permission.SYSTEM_JOBS_MANAGE)),
 ):
-    deliveries = build_event_delivery_service().list_deliveries()
+    result = build_event_delivery_service().list_deliveries_page(
+        page=page,
+        page_size=page_size,
+        search=search,
+        status=status,
+    )
     data = [
         {
             'event_id': delivery.event_id,
@@ -169,14 +183,14 @@ async def list_event_deliveries(
             'delivered_at': delivery.delivered_at.isoformat() if delivery.delivered_at is not None else None,
             'created_at': delivery.created_at.isoformat() if delivery.created_at is not None else None,
         }
-        for delivery in deliveries
+        for delivery in result["items"]
     ]
     return {
         'success': True,
         'code': 'OK',
         'message': 'event deliveries listed',
         'data': data,
-        'meta': {'total': len(data)},
+        'meta': result["meta"],
         'trace_id': None,
     }
 
@@ -211,33 +225,40 @@ async def list_event_delivery_attempts(
 
 @router.get('/source-builds')
 async def list_source_build_candidates(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
     _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
 ):
     source_runtime = build_source_runtime_service()
-    candidates = await source_runtime.list_recent_versions(status='candidate', limit=50)
-    failed = await source_runtime.list_recent_versions(status='failed', limit=50)
-    data = sorted(
-        [*candidates, *failed],
-        key=lambda item: (item.get('created_at') or '', item['id']),
-        reverse=True,
-    )[:50]
+    result = await source_runtime.list_recent_versions_page(
+        status=['candidate', 'failed'],
+        page=page,
+        page_size=page_size,
+        search=search,
+    )
     return {
         'success': True,
         'code': 'OK',
         'message': 'source build candidates listed',
-        'data': data,
-        'meta': {'total': len(data)},
+        'data': result["items"],
+        'meta': result["meta"],
         'trace_id': None,
     }
 
 
 @router.get('/agent-runs')
 async def list_operations_agent_runs(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    status: str | None = Query(default=None, max_length=50),
     _=Depends(require_permission(Permission.AGENT_RUNS_READ)),
 ):
     service = build_agent_runtime_service()
+    result = service.list_runs_page(page=page, page_size=page_size, search=search, status=status)
     rows = []
-    for run in service.list_runs(limit=50):
+    for run in result["items"]:
         history = service.get_tool_history(run.id, tenant_id=run.tenant_id) or []
         rows.append(_serialize_agent_run(run, history=history))
     return {
@@ -245,7 +266,7 @@ async def list_operations_agent_runs(
         'code': 'OK',
         'message': 'agent runs listed',
         'data': rows,
-        'meta': {'total': len(rows)},
+        'meta': result["meta"],
         'trace_id': None,
     }
 
@@ -272,6 +293,9 @@ async def get_operations_agent_run(
 
 @router.get('/review-queue')
 async def list_review_queue(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
     _=Depends(require_permission(Permission.AGENT_RUNS_READ)),
 ):
     items = build_work_knowledge_service().list_review_queue()
@@ -379,12 +403,30 @@ async def list_review_queue(
         for job in translation_jobs
     )
     data.sort(key=lambda item: item.get('created_at') or '', reverse=True)
+    normalized_search = search.strip().lower()
+    if normalized_search:
+        data = [
+            item
+            for item in data
+            if normalized_search in ' '.join(
+                str(item.get(field) or '')
+                for field in ('id', 'item_type', 'proposal_type', 'summary', 'evidence', 'created_by')
+            ).lower()
+        ]
+    total = len(data)
+    data = data[(page - 1) * page_size : page * page_size]
     return {
         'success': True,
         'code': 'OK',
         'message': 'review queue listed',
         'data': data,
-        'meta': {'total': len(data)},
+        'meta': {
+            'page': page,
+            'page_size': page_size,
+            'total': total,
+            'total_pages': ceil(total / page_size) if total else 0,
+            'search': search,
+        },
         'trace_id': None,
     }
 

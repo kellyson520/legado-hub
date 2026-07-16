@@ -279,32 +279,39 @@ export interface OperationReviewResolveResult {
   resolved_at?: string | null
 }
 
-export function listOperationsJobs(): Promise<ApiEnvelope<OperationJobRow[]>> {
-  return apiClient.get<OperationJobRow[]>('/events/jobs')
+export interface OperationListParams {
+  page?: number
+  page_size?: number
+  search?: string
+  status?: string
 }
 
-export function listEventDeliveries(): Promise<ApiEnvelope<OperationDeliveryRow[]>> {
-  return apiClient.get<OperationDeliveryRow[]>('/events/deliveries')
+export function listOperationsJobs(params: OperationListParams = {}): Promise<ApiEnvelope<OperationJobRow[]>> {
+  return apiClient.get<OperationJobRow[]>('/events/jobs', { params })
+}
+
+export function listEventDeliveries(params: OperationListParams = {}): Promise<ApiEnvelope<OperationDeliveryRow[]>> {
+  return apiClient.get<OperationDeliveryRow[]>('/events/deliveries', { params })
 }
 
 export function listEventDeliveryAttempts(eventId: string): Promise<ApiEnvelope<OperationDeliveryAttemptRow[]>> {
   return apiClient.get<OperationDeliveryAttemptRow[]>(`/events/deliveries/${eventId}/attempts`)
 }
 
-export function listSourceBuildCandidates(): Promise<ApiEnvelope<OperationSourceBuildRow[]>> {
-  return apiClient.get<OperationSourceBuildRow[]>('/events/source-builds')
+export function listSourceBuildCandidates(params: OperationListParams = {}): Promise<ApiEnvelope<OperationSourceBuildRow[]>> {
+  return apiClient.get<OperationSourceBuildRow[]>('/events/source-builds', { params })
 }
 
-export function listOperationAgentRuns(): Promise<ApiEnvelope<OperationAgentRunRow[]>> {
-  return apiClient.get<OperationAgentRunRow[]>('/events/agent-runs')
+export function listOperationAgentRuns(params: OperationListParams = {}): Promise<ApiEnvelope<OperationAgentRunRow[]>> {
+  return apiClient.get<OperationAgentRunRow[]>('/events/agent-runs', { params })
 }
 
 export function getOperationAgentRun(runId: string): Promise<ApiEnvelope<OperationAgentRunDetail>> {
   return apiClient.get<OperationAgentRunDetail>(`/events/agent-runs/${runId}`)
 }
 
-export function listReviewQueueCandidates(): Promise<ApiEnvelope<OperationReviewQueueRow[]>> {
-  return apiClient.get<OperationReviewQueueRow[]>('/events/review-queue')
+export function listReviewQueueCandidates(params: OperationListParams = {}): Promise<ApiEnvelope<OperationReviewQueueRow[]>> {
+  return apiClient.get<OperationReviewQueueRow[]>('/events/review-queue', { params })
 }
 
 export function resolveReviewQueueItem(

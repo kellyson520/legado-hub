@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.domain.entities.auth import ApiKey, AuditEvent, RefreshSession, Role, User
 from app.domain.repositories.auth_repo import AuthRepository
@@ -80,6 +82,41 @@ class SQLiteAuthRepository(AuthRepository):
         try:
             rows = db.query(UserModel).order_by(UserModel.id.asc()).all()
             return [self._user_from_model(db, row) for row in rows]
+        finally:
+            db.close()
+
+    async def list_users_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[User], int]:
+        db = SessionLocal()
+        try:
+            query = db.query(UserModel)
+            if status == "enabled":
+                query = query.filter(UserModel.is_active == True)
+            elif status == "disabled":
+                query = query.filter(UserModel.is_active == False)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        UserModel.username.ilike(pattern),
+                        UserModel.display_name.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(UserModel.id.asc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [self._user_from_model(db, row) for row in rows], total
         finally:
             db.close()
 
@@ -286,6 +323,52 @@ class SQLiteAuthRepository(AuthRepository):
         finally:
             db.close()
 
+    async def list_api_keys_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str | None = None,
+    ) -> tuple[list[ApiKey], int]:
+        db = SessionLocal()
+        try:
+            query = db.query(ApiKeyModel)
+            if status == "enabled":
+                query = query.filter(ApiKeyModel.is_enabled == True)
+            elif status == "disabled":
+                query = query.filter(ApiKeyModel.is_enabled == False)
+            normalized_search = search.strip()
+            if normalized_search:
+                query = query.filter(ApiKeyModel.name.ilike(f"%{normalized_search}%"))
+            total = query.count()
+            models = (
+                query.order_by(ApiKeyModel.id.asc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            result = []
+            for model in models:
+                permission_rows = (
+                    db.query(ApiKeyPermissionModel.permission_name)
+                    .filter(ApiKeyPermissionModel.api_key_id == model.id)
+                    .all()
+                )
+                result.append(
+                    ApiKey(
+                        id=model.id,
+                        name=model.name,
+                        key_hash=model.key_hash,
+                        permissions=[row[0] for row in permission_rows],
+                        is_enabled=model.is_enabled,
+                        created_at=model.created_at,
+                    )
+                )
+            return result, total
+        finally:
+            db.close()
+
     async def set_api_key_enabled(self, api_key_id: int, enabled: bool) -> None:
         db = SessionLocal()
         try:
@@ -373,5 +456,46 @@ class SQLiteAuthRepository(AuthRepository):
                 )
                 for row in rows
             ]
+        finally:
+            db.close()
+
+    async def list_audit_events_page(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 100,
+        search: str = "",
+    ) -> tuple[list[AuditEvent], int]:
+        db = SessionLocal()
+        try:
+            query = db.query(AuditLogModel)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        AuditLogModel.action.ilike(pattern),
+                        AuditLogModel.resource.ilike(pattern),
+                        AuditLogModel.detail.ilike(pattern),
+                    )
+                )
+            total = query.count()
+            rows = (
+                query.order_by(AuditLogModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )
+            return [
+                AuditEvent(
+                    id=row.id,
+                    actor_id=row.actor_id,
+                    action=row.action,
+                    resource=row.resource,
+                    detail=row.detail,
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ], total
         finally:
             db.close()

@@ -1,6 +1,13 @@
 import { apiClient } from '@/api/client'
 import type { ApiEnvelope } from '@/api/types'
 
+export interface AIListParams {
+  page?: number
+  page_size?: number
+  search?: string
+  status?: string
+}
+
 export type AIWorkspaceMode = 'chat' | 'character' | 'storyline' | 'world'
 
 export interface AIWorkspaceToolCall {
@@ -48,8 +55,8 @@ interface BackendAITaskRow {
   cost?: number | string
 }
 
-export async function listAITasks() {
-  const response = (await apiClient.get<BackendAITaskRow[]>('/ai/tasks')) as ApiEnvelope<BackendAITaskRow[]>
+export async function listAITasks(params: AIListParams = {}) {
+  const response = (await apiClient.get<BackendAITaskRow[]>('/ai/tasks', { params })) as ApiEnvelope<BackendAITaskRow[]>
   return {
     ...response,
     data: response.data.map((task) => ({
@@ -63,8 +70,8 @@ export async function listAITasks() {
   } satisfies ApiEnvelope<AITaskRow[]>
 }
 
-export function listAIConversations(): Promise<ApiEnvelope<AIConversationSummary[]>> {
-  return apiClient.get('/ai/conversations')
+export function listAIConversations(params: AIListParams = {}): Promise<ApiEnvelope<AIConversationSummary[]>> {
+  return apiClient.get('/ai/conversations', { params })
 }
 
 export function createAIConversation(payload: { title?: string }): Promise<ApiEnvelope<AIConversationSummary>> {
