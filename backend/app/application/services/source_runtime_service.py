@@ -1,3 +1,6 @@
+import asyncio
+from copy import deepcopy
+
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.auth import AuditEvent
 from app.domain.repositories.source_runtime_repo import SourceRuntimeRepository
@@ -35,10 +38,19 @@ def _sanitize_legado_value(value):
 
 
 class SourceRuntimeService:
-    def __init__(self, repo: SourceRuntimeRepository, audit=None, source_repo=None):
+    LIVE_PROBE_TRIGGER = "rule_editor_live_probe"
+    LIVE_PROBE_TIMEOUT_SECONDS = 25
+
+    def __init__(self, repo: SourceRuntimeRepository, audit=None, source_repo=None, source_probe=None):
         self._repo = repo
         self._audit = audit
         self._source_repo = source_repo
+        self._source_probe = source_probe
+
+    async def aclose(self) -> None:
+        close = getattr(self._source_probe, "aclose", None)
+        if callable(close):
+            await close()
 
     async def register_published_book_sources(self, actor_id: str | int = 0) -> int:
         if self._source_repo is None:
@@ -180,7 +192,7 @@ class SourceRuntimeService:
             "created_at": version.created_at.isoformat() if version.created_at else None,
             "latest_validation": self._serialize_test_run(latest_run),
             "content_status": content_status,
-            "publish_allowed": self._publish_allowed(version.status, latest_run, content_status),
+            "publish_allowed": self._publish_allowed(version, latest_run, content_status),
         }
 
     async def create_rule_draft(self, source_version_id: str, payload: dict, actor_id: str) -> dict:
@@ -212,6 +224,46 @@ class SourceRuntimeService:
             raise NotFoundException("source version not found")
 
         content_status = self._content_status(version.payload)
+        steps, diagnostics = self._shape_validation(version.payload, content_status)
+        trigger = "rule_editor_shape"
+
+        if self._requires_live_probe(version) and content_status != "verification_wall":
+            trigger = self.LIVE_PROBE_TRIGGER
+            live_steps, live_diagnostics = await self._run_live_probe(version)
+            steps.update(live_steps)
+            diagnostics.extend(live_diagnostics)
+            content_status = self._content_status(version.payload, steps)
+
+        has_book_info = steps["book_info"]["passed"]
+        full_chain_passed = all(steps[name]["passed"] for name in ("search", "toc", "content"))
+        if not full_chain_passed:
+            score, grade = 0, "F"
+        elif has_book_info:
+            score, grade = 100, "A"
+        else:
+            score, grade = 85, "B"
+
+        run = self._repo.record_test_run(
+            source_version_id=version.id,
+            trigger=trigger,
+            score=score,
+            grade=grade,
+            step_results=steps,
+            diagnostics=diagnostics,
+        )
+        await self._audit_event(actor_id, "source_rule.validate", version.id)
+        return {
+            "source_version_id": version.id,
+            "validation_id": run.id,
+            "score": run.score,
+            "grade": run.grade,
+            "step_results": run.step_results,
+            "diagnostics": run.diagnostics,
+            "content_status": content_status,
+            "publish_allowed": self._publish_allowed(version, run, content_status),
+        }
+
+    def _shape_validation(self, payload: dict, content_status: str) -> tuple[dict[str, dict], list[str]]:
         steps: dict[str, dict] = {}
         diagnostics: list[str] = []
         for field, step_name in (
@@ -219,7 +271,7 @@ class SourceRuntimeService:
             ("ruleToc", "toc"),
             ("ruleContent", "content"),
         ):
-            rule = version.payload.get(field)
+            rule = payload.get(field)
             passed = isinstance(rule, dict) and bool(rule)
             if step_name == "content" and content_status == "verification_wall":
                 passed = False
@@ -235,38 +287,88 @@ class SourceRuntimeService:
                     else f"{field} is required"
                 )
 
-        has_book_info = isinstance(version.payload.get("ruleBookInfo"), dict) and bool(version.payload["ruleBookInfo"])
+        has_book_info = isinstance(payload.get("ruleBookInfo"), dict) and bool(payload["ruleBookInfo"])
         steps["book_info"] = {
             "passed": has_book_info,
             "elapsed_ms": 0,
             "status": "ready" if has_book_info else "optional_missing",
         }
-        if content_status == "verification_wall" or any(not steps[name]["passed"] for name in ("search", "toc", "content")):
-            score, grade = 0, "F"
-        elif has_book_info:
-            score, grade = 100, "A"
-        else:
-            score, grade = 85, "B"
+        return steps, diagnostics
 
-        run = self._repo.record_test_run(
-            source_version_id=version.id,
-            trigger="rule_editor",
-            score=score,
-            grade=grade,
-            step_results=steps,
-            diagnostics=diagnostics,
-        )
-        await self._audit_event(actor_id, "source_rule.validate", version.id)
-        return {
-            "source_version_id": version.id,
-            "validation_id": run.id,
-            "score": run.score,
-            "grade": run.grade,
-            "step_results": run.step_results,
-            "diagnostics": run.diagnostics,
-            "content_status": content_status,
-            "publish_allowed": self._publish_allowed(version.status, run, content_status),
+    async def _run_live_probe(self, version) -> tuple[dict[str, dict], list[str]]:
+        if self._source_probe is None:
+            return self._live_probe_unavailable("live probe service is not configured")
+
+        source = self._source_for_live_probe(version)
+        if source is None:
+            return self._live_probe_unavailable("book source payload is invalid")
+
+        try:
+            evidence = await asyncio.wait_for(
+                self._source_probe.probe_source(
+                    source,
+                    keyword_samples=[self._probe_keyword(version.payload)],
+                    probe_mode="full_chain",
+                ),
+                timeout=self.LIVE_PROBE_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            return self._live_probe_unavailable("live probe timed out")
+        except Exception as exc:
+            return self._live_probe_unavailable(f"live probe failed: {exc}")
+
+        steps: dict[str, dict] = {}
+        diagnostics: list[str] = []
+        for stage_name in ("search", "toc", "content"):
+            stage = getattr(evidence, stage_name)
+            passed = stage.status == "ok"
+            steps[stage_name] = {
+                "passed": passed,
+                "elapsed_ms": stage.elapsed_ms,
+                "status": stage.status,
+                "hit_count": stage.hit_count,
+                "sample_title": stage.sample_title,
+                "request_preview": stage.request_preview,
+                "error_message": stage.error_message,
+                "detail": stage.detail,
+                "validation_kind": "live_probe",
+            }
+            if not passed:
+                diagnostics.append(self._live_probe_diagnostic(stage_name, stage))
+        return steps, diagnostics
+
+    @staticmethod
+    def _source_for_live_probe(version) -> dict | None:
+        payload = version.payload if isinstance(version.payload, dict) else {}
+        source = SourceRuntimeService._legacy_book_source_payload(payload)
+        if source is None:
+            return None
+        result = deepcopy(source)
+        result["id"] = version.id
+        return result
+
+    @staticmethod
+    def _probe_keyword(payload: dict) -> str:
+        keyword = payload.get("keyword") if isinstance(payload, dict) else None
+        return keyword.strip() if isinstance(keyword, str) and keyword.strip() else "斗罗大陆"
+
+    @staticmethod
+    def _live_probe_diagnostic(stage_name: str, stage) -> str:
+        detail = stage.error_message or stage.detail.get("block_reason") or stage.detail.get("http_error")
+        return f"live {stage_name} probe failed" + (f": {detail}" if detail else "")
+
+    @classmethod
+    def _live_probe_unavailable(cls, diagnostic: str) -> tuple[dict[str, dict], list[str]]:
+        steps = {
+            stage: {
+                "passed": False,
+                "elapsed_ms": 0,
+                "status": "not_run",
+                "validation_kind": "live_probe",
+            }
+            for stage in ("search", "toc", "content")
         }
+        return steps, [diagnostic]
 
     async def publish_rule_version(self, source_version_id: str, actor_id: str) -> dict:
         version = self._repo.get_version(source_version_id)
@@ -281,8 +383,8 @@ class SourceRuntimeService:
         content_status = self._content_status(version.payload, latest_run.step_results if latest_run else None)
         if content_status == "verification_wall":
             raise ValidationException("verification_wall blocks publication")
-        if latest_run is None or latest_run.grade not in {"A", "B"}:
-            raise ValidationException("A or B validation grade is required before publication")
+        if not self._publish_allowed(version, latest_run, content_status):
+            raise ValidationException("a passing live probe is required before publication")
 
         superseded_version_ids: list[str] = []
         for item in self._repo.list_versions(version.source_type, version.source_id):
@@ -389,6 +491,11 @@ class SourceRuntimeService:
         if version.status != "candidate":
             raise ValidationException("Only candidate source versions can be published")
         self._assert_source_audit_publishable(version)
+        latest_runs = self._repo.list_test_runs(source_version_id)
+        latest_run = latest_runs[0] if latest_runs else None
+        content_status = self._content_status(version.payload, latest_run.step_results if latest_run else None)
+        if not self._publish_allowed(version, latest_run, content_status):
+            raise ValidationException("a passing live probe is required before publication")
 
         superseded_version_ids: list[str] = []
         for item in self._repo.list_versions(version.source_type, version.source_id):
@@ -551,8 +658,40 @@ class SourceRuntimeService:
         }
 
     @staticmethod
-    def _publish_allowed(status: str, run, content_status: str) -> bool:
-        return status == "candidate" and content_status != "verification_wall" and run is not None and run.grade in {"A", "B"}
+    def _requires_live_probe(version) -> bool:
+        return version.source_type == "book"
+
+    @classmethod
+    def _publish_allowed(cls, version, run, content_status: str) -> bool:
+        if version.status != "candidate" or content_status == "verification_wall" or run is None:
+            return False
+        if run.grade not in {"A", "B"}:
+            return False
+        if not cls._requires_live_probe(version):
+            return True
+        return cls._is_passing_live_probe(run)
+
+    @classmethod
+    def _is_passing_live_probe(cls, run) -> bool:
+        steps = run.step_results if isinstance(run.step_results, dict) else {}
+        if run.trigger == cls.LIVE_PROBE_TRIGGER:
+            return all(
+                isinstance(steps.get(stage), dict)
+                and steps[stage].get("passed") is True
+                and steps[stage].get("validation_kind") == "live_probe"
+                for stage in ("search", "toc", "content")
+            )
+        if run.trigger == "source_audit":
+            audit = steps.get("source_audit")
+            return (
+                isinstance(audit, dict)
+                and audit.get("passed") is True
+                and all(
+                    isinstance(steps.get(stage), dict) and steps[stage].get("passed") is True
+                    for stage in ("search", "toc", "content")
+                )
+            )
+        return False
 
     async def _audit_event(self, actor_id: str, action: str, source_version_id: str) -> None:
         if self._audit is None:

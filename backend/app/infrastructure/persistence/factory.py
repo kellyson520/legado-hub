@@ -129,6 +129,7 @@ def build_source_runtime_service() -> SourceRuntimeService:
         build_source_runtime_repository(),
         audit=build_auth_repository(),
         source_repo=build_source_repository(),
+        source_probe=build_source_probe_service(),
     )
 
 

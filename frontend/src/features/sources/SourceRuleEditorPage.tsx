@@ -119,7 +119,7 @@ export function SourceRuleEditorPage() {
     try {
       const response = await validateSourceVersion(sourceVersionId)
       setVersion(versionFromResponse(response))
-      setMessage('规则验证已完成。')
+      setMessage('实测验证已完成。')
     } catch {
       setError('规则验证失败，请检查书源网络状态与规则配置。')
     } finally {
@@ -182,7 +182,7 @@ export function SourceRuleEditorPage() {
               <Input id="book-source-url" value={bookSourceUrl} onChange={(event) => setBookSourceUrl(event.target.value)} disabled={!canWrite} />
             </label>
             <div className="md:col-span-2 text-sm text-muted-foreground">
-              当前版本：{version.source_version_id} · 状态：{version.status} · 正文状态：{version.content_status}
+              当前版本：{version.source_version_id} · 状态：{version.status} · 正文状态：{version.content_status} · 实测状态：{version.latest_validation ? (version.publish_allowed ? '已通过' : '未通过') : '待验证'}
             </div>
           </Card>
 
@@ -205,15 +205,15 @@ export function SourceRuleEditorPage() {
             {contentBlocked ? <p className="text-sm font-medium text-rose-700">正文访问受阻，禁止发布</p> : null}
             <div className="flex flex-wrap gap-3">
               <Button type="button" onClick={() => void handleSaveDraft()} disabled={!canWrite || rulesJsonInvalid || submitting}>保存候选</Button>
-              <Button type="button" variant="outline" onClick={() => void handleValidate()} disabled={!canWrite || submitting}>验证规则</Button>
+              <Button type="button" variant="outline" onClick={() => void handleValidate()} disabled={!canWrite || submitting}>实测验证</Button>
               {canWrite ? <Button type="button" variant="secondary" onClick={() => void handlePublish()} disabled={!publishEnabled || submitting}>发布版本</Button> : null}
             </div>
           </Card>
 
           {version.latest_validation ? (
             <Card className="space-y-3 p-5">
-              <h2 className="text-lg font-semibold">最近验证结果</h2>
-              <p className="text-sm">评分：{version.latest_validation.score} · 等级：{version.latest_validation.grade}</p>
+              <h2 className="text-lg font-semibold">最近实测结果</h2>
+              <p className="text-sm">评分：{version.latest_validation.score} · 等级：{version.latest_validation.grade} · 执行：{version.latest_validation.trigger}</p>
               <div className="grid gap-2 md:grid-cols-3">
                 {Object.entries(version.latest_validation.step_results).map(([step, result]) => (
                   <div key={step} className="rounded-md border border-border p-3 text-sm">

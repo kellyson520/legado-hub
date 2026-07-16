@@ -141,7 +141,11 @@ async def validate_source_rule_version(
     identity: RequestIdentity = Depends(get_current_identity),
     _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
 ):
-    data = await build_source_runtime_service().validate_rule_version(source_version_id, str(identity.user_id))
+    service = build_source_runtime_service()
+    try:
+        data = await service.validate_rule_version(source_version_id, str(identity.user_id))
+    finally:
+        await service.aclose()
     return {
         "success": True,
         "code": "OK",

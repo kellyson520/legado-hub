@@ -58,3 +58,16 @@ test('规则 JSON 非法时禁止保存候选版本', async () => {
   expect(screen.getByText('规则 JSON 格式错误，修正后才能保存候选版本。')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '保存候选' })).toBeDisabled()
 })
+
+test('规则编辑器将验证入口标注为真实全链实测', async () => {
+  render(
+    <MemoryRouter initialEntries={['/sources/rules/source-version-1']}>
+      <Routes>
+        <Route path="/sources/rules/:sourceVersionId" element={<SourceRuleEditorPage />} />
+      </Routes>
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByRole('button', { name: '实测验证' })).toBeEnabled()
+  expect(screen.getByText(/实测状态：/)).toHaveTextContent('待验证')
+})

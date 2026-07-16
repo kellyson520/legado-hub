@@ -72,7 +72,10 @@ def test_source_rule_editor_api_requires_write_permission_and_blocks_verificatio
     from app.infrastructure.persistence.sqlite.auth_repo_impl import SQLiteAuthRepository
 
     audit_events = asyncio.run(SQLiteAuthRepository().list_audit_events())
-    assert [event.action for event in audit_events] == ["source_rule.validate", "source_rule.draft"]
+    assert {event.action for event in audit_events if event.resource == "source_rule"} == {
+        "source_rule.validate",
+        "source_rule.draft",
+    }
 
     publish = client.post(
         f"/api/sources/versions/{draft_id}/publish",
@@ -112,10 +115,15 @@ def test_direct_rule_publish_rejects_unsettled_source_audit(tmp_path, monkeypatc
     )
     repo.record_test_run(
         source_version_id=version.id,
-        trigger="rule_editor",
+        trigger="source_audit",
         score=100,
         grade="A",
-        step_results={"content": {"passed": True, "status": "ready", "elapsed_ms": 0}},
+        step_results={
+            "search": {"passed": True, "status": "ok", "elapsed_ms": 1},
+            "toc": {"passed": True, "status": "ok", "elapsed_ms": 1},
+            "content": {"passed": True, "status": "ok", "elapsed_ms": 1},
+            "source_audit": {"passed": True, "status": "recorded", "elapsed_ms": 0},
+        },
     )
     writer = create_access_token({"sub": "7", "permissions": ["book_sources.write"], "roles": []})
 
@@ -149,10 +157,15 @@ def test_direct_rule_publish_allows_passed_settled_source_audit(tmp_path, monkey
     )
     repo.record_test_run(
         source_version_id=version.id,
-        trigger="rule_editor",
+        trigger="source_audit",
         score=100,
         grade="A",
-        step_results={"content": {"passed": True, "status": "ready", "elapsed_ms": 0}},
+        step_results={
+            "search": {"passed": True, "status": "ok", "elapsed_ms": 1},
+            "toc": {"passed": True, "status": "ok", "elapsed_ms": 1},
+            "content": {"passed": True, "status": "ok", "elapsed_ms": 1},
+            "source_audit": {"passed": True, "status": "recorded", "elapsed_ms": 0},
+        },
     )
     writer = create_access_token({"sub": "7", "permissions": ["book_sources.write"], "roles": []})
 

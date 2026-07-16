@@ -9,6 +9,31 @@ class AuditRecorder:
         self.events.append(event)
 
 
+class PassingLiveProbe:
+    def __init__(self):
+        self.calls = []
+
+    async def probe_source(self, source, keyword_samples, probe_mode):
+        from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+
+        self.calls.append((source, keyword_samples, probe_mode))
+        return SourceProbeEvidence(
+            source_id=source["id"],
+            source_name=source["bookSourceName"],
+            source_url=source["bookSourceUrl"],
+            probe_mode=probe_mode,
+            keyword=keyword_samples[0],
+            search=StageProbeResult(stage="search", status="ok", elapsed_ms=12, hit_count=1),
+            toc=StageProbeResult(stage="toc", status="ok", elapsed_ms=18, hit_count=3),
+            content=StageProbeResult(
+                stage="content",
+                status="ok",
+                elapsed_ms=24,
+                detail={"content_length": 120},
+            ),
+        )
+
+
 def _valid_source_payload(**overrides):
     payload = {
         "bookSourceName": "示例书源",
@@ -81,13 +106,16 @@ async def test_rule_publish_requires_validation_and_supersedes_published_version
     repo.update_version_status(original.id, "published")
     audit = AuditRecorder()
     source_repo = SQLiteSourceRepository()
-    service = SourceRuntimeService(repo, audit=audit, source_repo=source_repo)
+    probe = PassingLiveProbe()
+    service = SourceRuntimeService(repo, audit=audit, source_repo=source_repo, source_probe=probe)
     draft = await service.create_rule_draft(original.id, _valid_source_payload(bookSourceName="新版书源"), "7")
 
     validation = await service.validate_rule_version(draft["source_version_id"], "7")
     published = await service.publish_rule_version(draft["source_version_id"], "7")
 
     assert validation["grade"] == "A"
+    assert repo.list_test_runs(draft["source_version_id"])[0].trigger == "rule_editor_live_probe"
+    assert probe.calls[0][2] == "full_chain"
     assert published["status"] == "published"
     assert repo.get_version(original.id).status == "superseded"
     assert repo.list_deployments(draft["source_version_id"])[0].action == "source_rule.publish"
@@ -96,6 +124,80 @@ async def test_rule_publish_requires_validation_and_supersedes_published_version
     assert total == 1
     assert legacy_sources[0]["bookSourceName"] == "新版书源"
     assert legacy_sources[0]["bookSourceUrl"] == "https://example.test/books"
+
+
+@pytest.mark.asyncio
+async def test_rule_publish_rejects_shape_only_validation_without_live_probe(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-rule-shape-only.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_runtime_service import SourceRuntimeService
+    from app.core.exceptions import ValidationException
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+
+    bootstrap_sqlite()
+    repo = SQLiteSourceRuntimeRepository()
+    candidate = repo.create_candidate_version(
+        "book",
+        "https://example.test/shape-only",
+        _valid_source_payload(bookSourceUrl="https://example.test/shape-only"),
+        "7",
+    )
+    repo.record_test_run(
+        source_version_id=candidate.id,
+        trigger="rule_editor",
+        score=100,
+        grade="A",
+        step_results={
+            "search": {"passed": True, "status": "ready"},
+            "toc": {"passed": True, "status": "ready"},
+            "content": {"passed": True, "status": "ready"},
+        },
+    )
+
+    with pytest.raises(ValidationException, match="live probe"):
+        await SourceRuntimeService(repo).publish_rule_version(candidate.id, "7")
+
+    assert repo.get_version(candidate.id).status == "candidate"
+
+
+@pytest.mark.asyncio
+async def test_review_publish_rejects_shape_only_validation_without_live_probe(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-review-shape-only.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_runtime_service import SourceRuntimeService
+    from app.core.exceptions import ValidationException
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+
+    bootstrap_sqlite()
+    repo = SQLiteSourceRuntimeRepository()
+    candidate = repo.create_candidate_version(
+        "book",
+        "https://example.test/review-shape-only",
+        _valid_source_payload(bookSourceUrl="https://example.test/review-shape-only"),
+        "7",
+    )
+    repo.record_test_run(
+        source_version_id=candidate.id,
+        trigger="rule_editor",
+        score=100,
+        grade="A",
+        step_results={
+            "search": {"passed": True, "status": "ready"},
+            "toc": {"passed": True, "status": "ready"},
+            "content": {"passed": True, "status": "ready"},
+        },
+    )
+
+    with pytest.raises(ValidationException, match="live probe"):
+        await SourceRuntimeService(repo).resolve_review(candidate.id, reviewer_id="7", action="publish")
+
+    assert repo.get_version(candidate.id).status == "candidate"
 
 
 @pytest.mark.asyncio
@@ -122,10 +224,13 @@ async def test_review_publish_registers_valid_book_source_for_legacy_health_prob
         "7",
     )
 
-    published = await SourceRuntimeService(
+    service = SourceRuntimeService(
         runtime_repo,
         source_repo=source_repo,
-    ).resolve_review(candidate.id, reviewer_id="7", action="publish")
+        source_probe=PassingLiveProbe(),
+    )
+    await service.validate_rule_version(candidate.id, "7")
+    published = await service.resolve_review(candidate.id, reviewer_id="7", action="publish")
 
     legacy_sources, total = await source_repo.list_book_sources(page=1, page_size=10)
     assert published["status"] == "published"
