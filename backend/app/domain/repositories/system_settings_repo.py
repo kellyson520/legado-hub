@@ -1,4 +1,17 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime
+
+
+@dataclass(frozen=True)
+class VersionedSetting:
+    value: dict[str, object]
+    version: str | None
+    updated_at: datetime | None
+
+
+class ConcurrentSettingsUpdateError(RuntimeError):
+    pass
 
 
 class SystemSettingsRepository(ABC):
@@ -16,4 +29,17 @@ class SystemSettingsRepository(ABC):
 
     @abstractmethod
     def set_int(self, key: str, value: int) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_json(self, key: str, default: dict[str, object]) -> VersionedSetting:
+        raise NotImplementedError
+
+    @abstractmethod
+    def put_json(
+        self,
+        key: str,
+        value: dict[str, object],
+        expected_version: str | None,
+    ) -> VersionedSetting:
         raise NotImplementedError

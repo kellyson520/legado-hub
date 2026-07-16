@@ -14,7 +14,11 @@ class AgentToolRegistry:
         'tenant_id', 'tenantId', 'tenantID', 'tenant', 'tenant_ids', 'tenantIds',
     })
 
-    def __init__(self, source_build_handlers: Mapping[str, Any] | None = None):
+    def __init__(
+        self,
+        source_build_handlers: Mapping[str, Any] | None = None,
+        novel_analysis_handlers: Mapping[str, Any] | None = None,
+    ):
         tools = self._builtin_tools()
         allowed_handlers = frozenset({
             'source.inspect', 'source.probe', 'page.inspect', 'page.request',
@@ -22,6 +26,15 @@ class AgentToolRegistry:
         })
         for name, handler in (source_build_handlers or {}).items():
             if name not in allowed_handlers or name not in tools or not callable(handler):
+                continue
+            tool = tools[name]
+            tools[name] = AgentTool(tool.name, tool.category, tool.allowed_agent_kinds, handler)
+        allowed_novel_handlers = frozenset({
+            'source.search', 'book.resolve', 'toc.get', 'chapter.fetch',
+            'evidence.search', 'evidence.get',
+        })
+        for name, handler in (novel_analysis_handlers or {}).items():
+            if name not in allowed_novel_handlers or name not in tools or not callable(handler):
                 continue
             tool = tools[name]
             tools[name] = AgentTool(tool.name, tool.category, tool.allowed_agent_kinds, handler)
@@ -71,17 +84,21 @@ class AgentToolRegistry:
     def _builtin_tools(self) -> dict[str, AgentTool]:
         tools: dict[str, AgentTool] = {}
         read_tools = (
-            'work.search', 'work.get', 'toc.get', 'chapter.get',
+            'work.search', 'work.get', 'chapter.get',
             'character.find', 'character.relations',
             'plot.find', 'plot.timeline', 'plot.thread',
             'world.find', 'world.relations', 'world.rules',
-            'evidence.search', 'evidence.get',
         )
         for name in read_tools:
             tools[name] = AgentTool(name, 'read', frozenset({'knowledge', 'source_build'}))
 
         tools.update({
-            'source.search': AgentTool('source.search', 'read', frozenset({'source_build'})),
+            'source.search': AgentTool('source.search', 'read', frozenset({'knowledge'})),
+            'book.resolve': AgentTool('book.resolve', 'read', frozenset({'knowledge'})),
+            'toc.get': AgentTool('toc.get', 'read', frozenset({'knowledge'})),
+            'chapter.fetch': AgentTool('chapter.fetch', 'read', frozenset({'knowledge'})),
+            'evidence.search': AgentTool('evidence.search', 'read', frozenset({'knowledge'})),
+            'evidence.get': AgentTool('evidence.get', 'read', frozenset({'knowledge'})),
             'source.inspect': AgentTool('source.inspect', 'operate', frozenset({'source_build'})),
             'source.probe': AgentTool('source.probe', 'operate', frozenset({'source_build'})),
             'page.inspect': AgentTool('page.inspect', 'operate', frozenset({'source_build'})),

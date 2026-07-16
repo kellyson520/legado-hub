@@ -158,6 +158,10 @@ Every setting save returns the server-normalized complete section and its optimi
 
 Each phase is independently deployable. A missing model route disables only the affected automated role; manual reading, evidence storage, and existing source functions continue to work.
 
+### 8.1 Opt-in Provider Acceptance
+
+The repository includes a skipped-by-default acceptance test at `backend/tests/test_real_evidence_first_novel_agent.py`. It runs only with `RUN_REAL_PROVIDER_TESTS=1` and requires `REAL_NOVEL_SOURCE_ID`; optional inputs are `REAL_NOVEL_KEYWORD`, `REAL_NOVEL_CHAPTER_INDEX`, and `REAL_NOVEL_TENANT_ID`. The test uses the configured provider routes and a user-approved healthy published source. It asserts IDs, checkpoints, and adjudication outcomes only; it does not print provider credentials, source headers, model request bodies, or full chapter content.
+
 ## 9. Acceptance Criteria
 
 - A user can select a healthy published source, search a real work, resolve it, fetch a chapter, and see a persisted evidence span with its source and content hash.

@@ -8,7 +8,17 @@ from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvi
 from app.infrastructure.providers.registry import ProviderRegistry
 
 
-PROVIDER_ROUTE_GROUPS = ("default", "ai", "source_build", "translation", "novel")
+PROVIDER_ROUTE_GROUPS = (
+    "default",
+    "ai",
+    "source_build",
+    "translation",
+    "novel",
+    "novel_extract",
+    "novel_verify",
+    "novel_adjudicate",
+    "novel_audit",
+)
 
 
 class ProviderQuotaLimiter(Protocol):

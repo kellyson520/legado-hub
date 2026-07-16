@@ -168,7 +168,7 @@ Extend PROVIDER_ROUTE_GROUPS with novel_extract, novel_verify, novel_adjudicate,
 
 - [ ] **Step 4: Run API tests**
 
-Run: PYTHONPATH=backend pytest backend/tests/test_system_settings_registry.py backend/tests/test_api_system_settings_registry.py backend/tests/test_system_settings_service.py -q
+Run: PYTHONPATH=backend pytest backend/tests/test_system_settings_registry.py backend/tests/test_api_system_settings_registry.py backend/tests/test_api_system_settings.py backend/tests/test_api_provider_platform.py -q
 
 Expected: PASS.
 

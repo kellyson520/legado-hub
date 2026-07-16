@@ -18,7 +18,10 @@ from ..core.logging import get_logger, set_log_context, clear_log_context
 from ..core.events import publish_event, SourceFetchedEvent, SystemNoticeEvent
 from ..infrastructure.persistence.factory import (
     build_event_delivery_service,
+    build_novel_analysis_pipeline_service,
+    build_novel_analysis_task_service,
     build_source_health_admin_service,
+    build_system_settings_service,
     get_source_repo,
     get_user_repo,
 )
@@ -158,7 +161,6 @@ def job_mark_stale_sources():
     logger.info(f"[定时任务] 开始清理失效源", extra={"action": "job_start", "job": job_name})
 
     async def _do():
-        repo = get_source_repo()
         from datetime import datetime
         stale_threshold = datetime.utcnow() - timedelta(days=7)
 
@@ -316,6 +318,76 @@ def job_archive_audit_logs():
         clear_log_context()
 
 
+def job_process_novel_analysis_tasks():
+    """Run a bounded batch of evidence-first analysis tasks when automation permits it."""
+    job_name = "novel_analysis_tasks"
+    set_log_context(trace_id=f"job_{datetime.utcnow().timestamp():.0f}")
+
+    async def _do():
+        settings = build_system_settings_service()
+        automation_section = settings.get_section("agents", "automation")
+        automation = automation_section.get("value", {}) if isinstance(automation_section, dict) else {}
+        if not (
+            bool(automation.get("enabled", True))
+            and bool(automation.get("background_incremental_enabled", False))
+            and not bool(automation.get("emergency_pause", False))
+        ):
+            logger.info(
+                "[定时任务] 小说分析自动化未启用或已暂停",
+                extra={"action": job_name, "status": "skipped"},
+            )
+            return
+
+        budgets_section = settings.get_section("agents", "budgets")
+        budgets = budgets_section.get("value", {}) if isinstance(budgets_section, dict) else {}
+        limit = min(max(int(budgets.get("max_concurrent_tasks", 1)), 1), 8)
+        task_service = build_novel_analysis_task_service()
+        pipeline = build_novel_analysis_pipeline_service()
+        for _ in range(limit):
+            task = task_service.lease_next()
+            if task is None:
+                return
+            try:
+                result = await pipeline.process_task(task, tenant_id=task.tenant_id)
+                if result.reasons and not result.claim_ids:
+                    task_service.block(
+                        task.id,
+                        tenant_id=task.tenant_id,
+                        reason="; ".join(result.reasons),
+                    )
+                    continue
+                task_service.complete(task.id, tenant_id=task.tenant_id, result=result)
+            except Exception as exc:
+                task_service.block(
+                    task.id,
+                    tenant_id=task.tenant_id,
+                    reason=_sanitize_analysis_task_error(exc),
+                )
+                logger.exception(
+                    "[定时任务] 小说分析任务已阻断",
+                    extra={"action": job_name, "task_id": task.id},
+                )
+
+    try:
+        _safe_async_run(_do())
+    except Exception as exc:
+        logger.exception(
+            "[定时任务] 小说分析调度异常: %s",
+            exc,
+            extra={"action": "job_error", "job": job_name},
+        )
+    finally:
+        clear_log_context()
+
+
+def _sanitize_analysis_task_error(exc: Exception) -> str:
+    message = str(exc)
+    import re
+
+    message = re.sub(r"(?i)(bearer|api[_ -]?key)\s*[:=]?\s*[^\s,;]+", r"\1 [redacted]", message)
+    return message[:500] or exc.__class__.__name__
+
+
 # ==================== 调度注册 ====================
 
 JOBS = [
@@ -325,6 +397,7 @@ JOBS = [
     ("reset_daily_quota", "0 0 * * *", job_reset_daily_quota, "每天0点重置配额"),
     ("sync_quota_to_db", "*/30 * * * *", job_sync_quota_to_db, "每30分钟同步配额"),
     ("archive_audit_logs", "0 2 * * 0", job_archive_audit_logs, "每周日2点归档日志"),
+    ("novel_analysis_tasks", "*/5 * * * *", job_process_novel_analysis_tasks, "每5分钟处理证据分析任务"),
 ]
 
 
@@ -506,4 +579,3 @@ async def run_event_delivery_job(limit: int = 20) -> dict:
             for delivery in deliveries
         ],
     }
-

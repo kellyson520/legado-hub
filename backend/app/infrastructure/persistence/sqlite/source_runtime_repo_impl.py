@@ -37,6 +37,7 @@ def _loads_list(raw: str | None) -> list[str]:
 
 
 class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
+    _SQLITE_IN_BATCH_SIZE = 800
     def __init__(self, session=None):
         self._session = session
 
@@ -158,6 +159,86 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
             db.commit()
             db.refresh(model)
             return self._version_to_entity(model)
+        finally:
+            self._close(db)
+
+    def existing_source_ids(self, source_type: str, source_ids: list[str]) -> set[str]:
+        normalized_ids = list(dict.fromkeys(source_id for source_id in source_ids if source_id))
+        if not normalized_ids:
+            return set()
+        db = self._db()
+        try:
+            existing: set[str] = set()
+            for offset in range(0, len(normalized_ids), self._SQLITE_IN_BATCH_SIZE):
+                rows = (
+                    db.query(SourceVersionModel.source_id)
+                    .filter(
+                        SourceVersionModel.source_type == source_type,
+                        SourceVersionModel.source_id.in_(normalized_ids[offset:offset + self._SQLITE_IN_BATCH_SIZE]),
+                    )
+                    .distinct()
+                    .all()
+                )
+                existing.update(str(row[0]) for row in rows)
+            return existing
+        finally:
+            self._close(db)
+
+    def create_candidate_version_ids_bulk(
+        self,
+        source_type: str,
+        entries: list[tuple[str, dict, str]],
+    ) -> dict[str, str]:
+        if not entries:
+            return {}
+        db = self._db()
+        try:
+            source_ids = [source_id for source_id, _payload, _actor_id in entries]
+            definitions: dict[str, SourceDefinitionModel] = {}
+            for offset in range(0, len(source_ids), self._SQLITE_IN_BATCH_SIZE):
+                rows = (
+                    db.query(SourceDefinitionModel)
+                    .filter(
+                        SourceDefinitionModel.source_type == source_type,
+                        SourceDefinitionModel.source_key.in_(source_ids[offset:offset + self._SQLITE_IN_BATCH_SIZE]),
+                    )
+                    .all()
+                )
+                definitions.update({row.source_key: row for row in rows})
+            missing = [
+                SourceDefinitionModel(
+                    source_type=source_type,
+                    source_key=source_id,
+                    source_name=source_id,
+                    source_group="default",
+                    enabled=True,
+                )
+                for source_id in source_ids
+                if source_id not in definitions
+            ]
+            if missing:
+                db.add_all(missing)
+                db.flush()
+                definitions.update({model.source_key: model for model in missing})
+
+            versions = [
+                SourceVersionModel(
+                    id=uuid4().hex,
+                    source_definition_id=definitions[source_id].id,
+                    source_type=source_type,
+                    source_id=source_id,
+                    status="candidate",
+                    payload=json.dumps(payload, ensure_ascii=False),
+                    created_by=actor_id,
+                )
+                for source_id, payload, actor_id in entries
+            ]
+            db.add_all(versions)
+            db.commit()
+            return {model.source_id: model.id for model in versions}
+        except Exception:
+            db.rollback()
+            raise
         finally:
             self._close(db)
 

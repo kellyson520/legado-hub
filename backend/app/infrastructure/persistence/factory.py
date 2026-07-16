@@ -9,12 +9,20 @@ from app.application.services.content_distribution_service import ContentDistrib
 from app.application.services.dashboard_service import DashboardService
 from app.application.services.event_delivery_service import EventDeliveryService
 from app.application.services.engine_service import EngineService
+from app.application.services.evidence_service import EvidenceService
 from app.application.services.job_service import JobService
 from app.application.services.interactive_browser_service import InteractiveBrowserService
 from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
 from app.application.services.novel_agent_service import NovelAgentService
+from app.application.services.novel_analysis_pipeline_service import NovelAnalysisPipelineService
+from app.application.services.novel_analysis_audit_service import NovelAnalysisAuditService
+from app.application.services.novel_analysis_task_service import NovelAnalysisTaskService
+from app.application.services.narrative_knowledge_service import NarrativeKnowledgeService
 from app.application.services.novel_app_service import NovelAppService
-from app.application.services.provider_platform_service import ProviderPlatformService
+from app.application.services.provider_platform_service import (
+    PROVIDER_ROUTE_GROUPS,
+    ProviderPlatformService,
+)
 from app.application.services.source_complement_app_service import SourceComplementAppService
 from app.application.services.source_build_agent import SourceBuildAgent
 from app.application.services.source_build_ai_repair_service import SourceBuildAIRepairService
@@ -33,6 +41,8 @@ from app.application.services.source_runtime_service import SourceRuntimeService
 from app.application.services.system_settings_service import SystemSettingsService
 from app.application.services.translation_service import TranslationService
 from app.application.services.work_knowledge_service import WorkKnowledgeService
+from app.application.services.work_ingestion_service import WorkIngestionService
+from app.application.services.novel_analysis_tool_executor import NovelAnalysisToolExecutor
 from app.core.config import settings
 from app.infrastructure.browser.playwright_driver import PlaywrightBrowserDriver
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
@@ -40,7 +50,10 @@ from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIR
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_runtime_repo_impl import SQLiteNovelRuntimeRepository
+from app.infrastructure.persistence.sqlite.novel_analysis_task_repo_impl import SQLiteNovelAnalysisTaskRepository
+from app.infrastructure.persistence.sqlite.narrative_knowledge_repo_impl import SQLiteNarrativeKnowledgeRepository
 from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLiteEventDeliveryRepository
+from app.infrastructure.persistence.sqlite.evidence_repo_impl import SQLiteEvidenceRepository
 from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
 from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
 from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
@@ -109,6 +122,21 @@ def build_canonical_content_repository() -> SQLiteCanonicalContentRepository:
     return SQLiteCanonicalContentRepository()
 
 
+def build_evidence_repository() -> SQLiteEvidenceRepository:
+    bootstrap_sqlite()
+    return SQLiteEvidenceRepository()
+
+
+def build_narrative_knowledge_repository() -> SQLiteNarrativeKnowledgeRepository:
+    bootstrap_sqlite()
+    return SQLiteNarrativeKnowledgeRepository()
+
+
+def build_novel_analysis_task_repository() -> SQLiteNovelAnalysisTaskRepository:
+    bootstrap_sqlite()
+    return SQLiteNovelAnalysisTaskRepository()
+
+
 def build_provider_repository() -> SQLiteProviderRepository:
     bootstrap_sqlite()
     return SQLiteProviderRepository()
@@ -139,6 +167,72 @@ def build_source_review_service() -> SourceReviewService:
 
 def build_canonical_content_service() -> CanonicalContentService:
     return CanonicalContentService(build_canonical_content_repository())
+
+
+def build_evidence_service() -> EvidenceService:
+    return EvidenceService(
+        repo=build_evidence_repository(),
+        canonical_repo=build_canonical_content_repository(),
+    )
+
+
+def build_narrative_knowledge_service() -> NarrativeKnowledgeService:
+    return NarrativeKnowledgeService(
+        repo=build_narrative_knowledge_repository(),
+        evidence_service=build_evidence_service(),
+    )
+
+
+def build_novel_analysis_task_service() -> NovelAnalysisTaskService:
+    return NovelAnalysisTaskService(build_novel_analysis_task_repository())
+
+
+def build_novel_analysis_pipeline_service() -> NovelAnalysisPipelineService:
+    return NovelAnalysisPipelineService(
+        knowledge_service=build_narrative_knowledge_service(),
+        evidence_service=build_evidence_service(),
+        platform=build_provider_platform_service(),
+        settings_service=build_system_settings_service(),
+        decision_recorder=build_novel_analysis_task_repository(),
+    )
+
+
+def build_novel_analysis_audit_service() -> NovelAnalysisAuditService:
+    return NovelAnalysisAuditService(
+        build_evidence_repository(),
+        build_narrative_knowledge_repository(),
+        task_service=build_novel_analysis_task_service(),
+    )
+
+
+def build_work_ingestion_service() -> WorkIngestionService:
+    canonical_repo = build_canonical_content_repository()
+    return WorkIngestionService(
+        reader=build_source_read_service(),
+        source_repo=build_source_repository(),
+        source_runtime_repo=build_source_runtime_repository(),
+        source_health_repo=build_source_health_repository(),
+        canonical_repo=canonical_repo,
+        evidence_service=EvidenceService(build_evidence_repository(), canonical_repo),
+    )
+
+
+def build_novel_analysis_tool_executor() -> NovelAnalysisToolExecutor:
+    return NovelAnalysisToolExecutor(
+        ingestion_service=build_work_ingestion_service(),
+        evidence_service=build_evidence_service(),
+        agent_runtime=build_agent_runtime_service(),
+        audit_service=build_novel_analysis_audit_service(),
+        settings_service=build_system_settings_service(),
+    )
+
+
+def build_novel_analysis_tool_registry():
+    from app.application.services.agent_tool_registry import AgentToolRegistry
+
+    return AgentToolRegistry(
+        novel_analysis_handlers=build_novel_analysis_tool_executor().handlers(),
+    )
 
 
 def build_content_distribution_service() -> ContentDistributionService:
@@ -251,7 +345,7 @@ class _AllowAllProviderQuotaLimiter:
 
 
 def build_provider_registry() -> ProviderRegistry:
-    provider_groups = ("default", "ai", "source_build", "translation", "novel")
+    provider_groups = PROVIDER_ROUTE_GROUPS
     groups: dict[str, list[ProviderSelection]] = {}
     if settings.LLM_API_URL and settings.LLM_API_KEY:
         provider = OpenAICompatibleProvider(

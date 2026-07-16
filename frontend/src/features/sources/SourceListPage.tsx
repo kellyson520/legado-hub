@@ -2,21 +2,14 @@ import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 
-import { exportLegadoSources, importLegadoSources, listBookSources, type LegadoSource, type SourceRow } from '@/api/modules/sources'
+import { exportLegadoSources, importLegadoSourceFile, importLegadoSources, listBookSources, type LegadoSource, type SourceRow } from '@/api/modules/sources'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 
-function readTextFile(reader: FileReader, file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('File is not text'))
-    reader.onerror = () => reject(reader.error ?? new Error('Unable to read file'))
-    reader.onabort = () => reject(new Error('File read aborted'))
-    reader.readAsText(file)
-  })
-}
+const MAX_LEGADO_FILE_BYTES = 32 * 1024 * 1024
 
 export function SourceListPage() {
   const [rows, setRows] = useState<SourceRow[]>([])
@@ -30,7 +23,6 @@ export function SourceListPage() {
   const [createdVersionIds, setCreatedVersionIds] = useState<string[]>([])
   const mountedRef = useRef(true)
   const activeRequestIdRef = useRef(0)
-  const activeFileReaderRef = useRef<FileReader | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const readingFileRef = useRef(false)
   const submittingRef = useRef(false)
@@ -54,8 +46,6 @@ export function SourceListPage() {
       mounted = false
       mountedRef.current = false
       activeRequestIdRef.current += 1
-      activeFileReaderRef.current?.abort()
-      activeFileReaderRef.current = null
       readingFileRef.current = false
       submittingRef.current = false
     }
@@ -63,8 +53,6 @@ export function SourceListPage() {
 
   function startRequest() {
     activeRequestIdRef.current += 1
-    activeFileReaderRef.current?.abort()
-    activeFileReaderRef.current = null
     return activeRequestIdRef.current
   }
 
@@ -124,20 +112,29 @@ export function SourceListPage() {
       }
       return
     }
-
-    const reader = new FileReader()
-    activeFileReaderRef.current = reader
+    if (file.size > MAX_LEGADO_FILE_BYTES) {
+      if (isCurrentRequest(requestId)) {
+        readingFileRef.current = false
+        setReadingFile(false)
+        setError('JSON 文件超过 32 MiB 上传限制。')
+      }
+      return
+    }
     try {
-      const json = await readTextFile(reader, file)
+      const response = await importLegadoSourceFile(file)
       if (!isCurrentRequest(requestId)) return
-      if (!json.trim()) { setError('选择的 JSON 文件为空。'); return }
-      setLegadoJson(json)
-      await importLegadoJson(json, requestId)
+      const created = response.data.items.filter((item) => item.status === 'created').length
+      const invalid = response.data.items.filter((item) => item.status === 'invalid').length
+      const skipped = response.data.items.filter((item) => item.status === 'skipped_duplicate').length
+      setCreatedVersionIds(response.data.items.flatMap((item) => (
+        item.status === 'created' && item.source_version_id ? [item.source_version_id] : []
+      )))
+      setFeedback(`已创建 ${created} 个候选书源${invalid ? `，${invalid} 项无效` : ''}${skipped ? `，${skipped} 项重复跳过` : ''}`)
+      setLegadoJson('')
     } catch {
-      if (isCurrentRequest(requestId)) setError('无法读取所选 JSON 文件，请重新选择。')
+      if (isCurrentRequest(requestId)) setError('文件导入失败，请确认 JSON 格式、文件大小和登录权限。')
     } finally {
       if (isCurrentRequest(requestId)) {
-        activeFileReaderRef.current = null
         readingFileRef.current = false
         setReadingFile(false)
       }

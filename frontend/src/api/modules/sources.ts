@@ -68,6 +68,14 @@ export function importLegadoSources(payload: LegadoSource | LegadoSource[]): Pro
   return apiClient.post('/sources/import', payload)
 }
 
+export function importLegadoSourceFile(file: File): Promise<ApiEnvelope<{ items: LegadoImportItem[] }>> {
+  const formData = new FormData()
+  formData.append('file', file, file.name)
+  return apiClient.post('/sources/import/file', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
 export function exportLegadoSources(): Promise<ApiEnvelope<LegadoSource[]>> {
   return apiClient.get('/sources/export')
 }

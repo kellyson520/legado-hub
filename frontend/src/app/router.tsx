@@ -8,6 +8,7 @@ import { AIWorkspacePage } from '@/features/ai/AIWorkspacePage'
 import { EngineRunsPage } from '@/features/engine/EngineRunsPage'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { NovelTasksPage } from '@/features/novel/NovelTasksPage'
+import { WorkAnalysisPage } from '@/features/novel-analysis/WorkAnalysisPage'
 import { AgentRunsPage } from '@/features/operations/AgentRunsPage'
 import { EventDeliveriesPage } from '@/features/operations/EventDeliveriesPage'
 import { JobsPage } from '@/features/operations/JobsPage'
@@ -17,7 +18,7 @@ import { SourceHealthPage } from '@/features/sources/SourceHealthPage'
 import { SourceHealthDetailPage } from '@/features/sources/SourceHealthDetailPage'
 import { SourceListPage } from '@/features/sources/SourceListPage'
 import { SourceRuleEditorPage } from '@/features/sources/SourceRuleEditorPage'
-import { SystemSettingsPage } from '@/features/system/SystemSettingsPage'
+import { SystemSettingsRoutePage } from '@/features/system/SystemSettingsRoutePage'
 import { TranslationJobsPage } from '@/features/translation/TranslationJobsPage'
 import { RequireAuth } from '@/app/router/RequireAuth'
 import { RequirePermission } from '@/app/router/RequirePermission'
@@ -36,12 +37,14 @@ export const appRoutes = [
   { path: '/ai/workspace', element: <AIWorkspacePage /> },
   { path: '/translation/jobs', element: <TranslationJobsPage /> },
   { path: '/novel/tasks', element: <NovelTasksPage /> },
+  { path: '/novel-analysis/:workId', element: <WorkAnalysisPage /> },
   { path: '/operations/jobs', element: <JobsPage /> },
   { path: '/operations/agent-runs', element: <AgentRunsPage /> },
   { path: '/operations/deliveries', element: <EventDeliveriesPage /> },
   { path: '/operations/source-builds', element: <SourceBuildsPage /> },
   { path: '/operations/review-queue', element: <ReviewQueuePage /> },
-  { path: '/system/settings', element: <SystemSettingsPage /> },
+  { path: '/system/settings', element: <Navigate to="/system/settings/models/providers" replace /> },
+  { path: '/system/settings/:domain/:tab', element: <SystemSettingsRoutePage /> },
 ]
 
 export function AppRoutes() {
@@ -65,12 +68,16 @@ export function AppRoutes() {
         </Route>
         <Route element={<RequirePermission permission="translation.run" />}><Route path="/translation/jobs" element={<TranslationJobsPage />} /></Route>
         <Route element={<RequirePermission permission="novel.manage" />}><Route path="/novel/tasks" element={<NovelTasksPage />} /></Route>
+        <Route element={<RequirePermission permission="novel.manage" />}><Route path="/novel-analysis/:workId" element={<WorkAnalysisPage />} /></Route>
         <Route element={<RequirePermission permission="system.jobs.manage" />}><Route path="/operations/jobs" element={<JobsPage />} /></Route>
         <Route element={<RequirePermission permission="agent_runs.read" />}><Route path="/operations/agent-runs" element={<AgentRunsPage />} /></Route>
         <Route element={<RequirePermission permission="system.jobs.manage" />}><Route path="/operations/deliveries" element={<EventDeliveriesPage />} /></Route>
         <Route element={<RequirePermission permission="book_sources.read" />}><Route path="/operations/source-builds" element={<SourceBuildsPage />} /></Route>
         <Route element={<RequirePermission permission="agent_runs.read" />}><Route path="/operations/review-queue" element={<ReviewQueuePage />} /></Route>
-        <Route element={<RequirePermission permission="system.settings.manage" />}><Route path="/system/settings" element={<SystemSettingsPage />} /></Route>
+        <Route element={<RequirePermission permission="system.settings.manage" />}>
+          <Route path="/system/settings" element={<Navigate to="/system/settings/models/providers" replace />} />
+          <Route path="/system/settings/:domain/:tab" element={<SystemSettingsRoutePage />} />
+        </Route>
       </Route>
       <Route path="/" element={<Navigate to="/login" replace />} />
       <Route path="*" element={<Navigate to="/login" replace />} />

@@ -85,6 +85,15 @@ export interface ProviderRoute {
   entries: ProviderRouteEntry[]
 }
 
+export interface SettingsSection<T extends Record<string, unknown> = Record<string, unknown>> {
+  domain: string
+  tab: string
+  value: T
+  version: string | null
+  updatedAt?: string | null
+  updated_at?: string | null
+}
+
 export async function listProviders() {
   return apiClient.get<ProviderRow[]>('/system/providers') as Promise<ApiEnvelope<ProviderRow[]>>
 }
@@ -160,6 +169,25 @@ export function updateSourceBuildAgentSettings(payload: {
   enabled: boolean
 }): Promise<ApiEnvelope<SourceBuildAgentSettings>> {
   return apiClient.put<SourceBuildAgentSettings>('/system/source-build-agent-settings', payload)
+}
+
+export function getSettingsSection<T extends Record<string, unknown> = Record<string, unknown>>(
+  domain: string,
+  tab: string,
+): Promise<ApiEnvelope<SettingsSection<T>>> {
+  return apiClient.get<SettingsSection<T>>(`/system/settings/${domain}/${tab}`)
+}
+
+export function saveSettingsSection<T extends Record<string, unknown> = Record<string, unknown>>(
+  domain: string,
+  tab: string,
+  value: T,
+  expectedVersion: string | null,
+): Promise<ApiEnvelope<SettingsSection<T>>> {
+  return apiClient.put<SettingsSection<T>>(`/system/settings/${domain}/${tab}`, {
+    value,
+    expected_version: expectedVersion,
+  })
 }
 
 function mapInteractiveBrowserSettings(settings: InteractiveBrowserSettingsResponse): InteractiveBrowserSettings {

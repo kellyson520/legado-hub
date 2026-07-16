@@ -360,6 +360,19 @@ class SQLiteCanonicalContentRepository:
         finally:
             self._close(db)
 
+    def replace_content_variant_content(self, variant_id: str, content: str) -> ContentVariant:
+        db = self._db()
+        try:
+            model = db.query(ContentVariantModel).filter(ContentVariantModel.id == variant_id).first()
+            if model is None:
+                raise LookupError("content variant not found")
+            model.content = content
+            db.commit()
+            db.refresh(model)
+            return self._variant_entity(model)
+        finally:
+            self._close(db)
+
     def record_route_decision(
         self,
         *,

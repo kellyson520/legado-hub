@@ -132,37 +132,54 @@ class SourceRuntimeService:
         if not isinstance(records, list):
             raise ValidationException("Legado JSON must be an object or array")
 
-        items: list[dict] = []
+        items: list[dict | None] = [None] * len(records)
         batch_urls: set[str] = set()
+        candidates: list[tuple[int, str, dict]] = []
         for index, record in enumerate(records):
             if not isinstance(record, dict):
-                items.append({"index": index, "status": "invalid", "reason": "source must be an object"})
+                items[index] = {"index": index, "status": "invalid", "reason": "source must be an object"}
                 continue
             name = record.get("bookSourceName")
             url = record.get("bookSourceUrl")
             if not isinstance(name, str) or not name.strip():
-                items.append({"index": index, "status": "invalid", "reason": "bookSourceName is required"})
+                items[index] = {"index": index, "status": "invalid", "reason": "bookSourceName is required"}
                 continue
             if not isinstance(url, str) or not url.strip():
-                items.append({"index": index, "status": "invalid", "reason": "bookSourceUrl is required"})
+                items[index] = {"index": index, "status": "invalid", "reason": "bookSourceUrl is required"}
                 continue
             url = url.strip()
             invalid_rule = next((field for field in _LEGADO_RULE_FIELDS if field in record and not isinstance(record[field], dict)), None)
             if invalid_rule:
-                items.append({"index": index, "status": "invalid", "reason": f"{invalid_rule} must be an object"})
+                items[index] = {"index": index, "status": "invalid", "reason": f"{invalid_rule} must be an object"}
                 continue
-            if url in batch_urls or self._repo.list_versions("book", url):
-                items.append({"index": index, "status": "skipped_duplicate", "source_url": url})
+            if url in batch_urls:
+                items[index] = {"index": index, "status": "skipped_duplicate", "source_url": url}
                 batch_urls.add(url)
                 continue
 
             sanitized = _sanitize_legado_value(record)
             sanitized["bookSourceName"] = name.strip()
             sanitized["bookSourceUrl"] = url
-            version = self._repo.create_candidate_version("book", url, sanitized, actor_id)
             batch_urls.add(url)
-            items.append({"index": index, "status": "created", "source_url": url, "source_version_id": version.id})
-        return {"items": items}
+            candidates.append((index, url, sanitized))
+
+        existing_urls = self._repo.existing_source_ids("book", [url for _index, url, _payload in candidates])
+        to_create = [candidate for candidate in candidates if candidate[1] not in existing_urls]
+        version_ids = self._repo.create_candidate_version_ids_bulk(
+            "book",
+            [(url, sanitized, actor_id) for _index, url, sanitized in to_create],
+        )
+        for index, url, _sanitized in candidates:
+            if url in existing_urls:
+                items[index] = {"index": index, "status": "skipped_duplicate", "source_url": url}
+            else:
+                items[index] = {
+                    "index": index,
+                    "status": "created",
+                    "source_url": url,
+                    "source_version_id": version_ids[url],
+                }
+        return {"items": [item for item in items if item is not None]}
 
     async def export_legado_sources(self, actor_id: str) -> list[dict]:
         versions = self._repo.list_published_versions()

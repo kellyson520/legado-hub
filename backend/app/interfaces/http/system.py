@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.permissions import Permission
+from app.domain.repositories.system_settings_repo import ConcurrentSettingsUpdateError
 from app.infrastructure.persistence.factory import (
     build_provider_platform_service,
     build_system_settings_service,
@@ -30,6 +31,11 @@ class InteractiveBrowserSettingsRequest(BaseModel):
     automatic_enabled: bool = True
     max_sessions: int = Field(default=1, ge=1, le=3)
     session_timeout_seconds: int = Field(default=300, ge=60, le=600)
+
+
+class SettingsSectionRequest(BaseModel):
+    value: dict[str, object]
+    expected_version: str | None = None
 
 
 class ProviderRequest(BaseModel):
@@ -59,6 +65,41 @@ def _system_response(message: str, data):
         "meta": {},
         "trace_id": None,
     }
+
+
+@router.get("/settings/{domain}/{tab}")
+async def get_settings_section(
+    domain: str,
+    tab: str,
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    try:
+        data = build_system_settings_service().get_section(domain, tab)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _system_response("settings section loaded", data)
+
+
+@router.put("/settings/{domain}/{tab}")
+async def save_settings_section(
+    domain: str,
+    tab: str,
+    payload: SettingsSectionRequest,
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    try:
+        data = build_system_settings_service().save_section(
+            domain,
+            tab,
+            payload.value,
+            expected_version=payload.expected_version,
+        )
+    except ConcurrentSettingsUpdateError as exc:
+        raise HTTPException(status_code=409, detail="settings section was updated by another request") from exc
+    except ValueError as exc:
+        status_code = 404 if str(exc).startswith("Unknown settings section:") else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return _system_response("settings section saved", data)
 
 
 @router.get("/providers")

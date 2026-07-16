@@ -411,6 +411,7 @@ def test_jobs_list_defined():
         "reset_daily_quota",
         "sync_quota_to_db",
         "archive_audit_logs",
+        "novel_analysis_tasks",
     }
 
     actual_ids = {job[0] for job in JOBS}

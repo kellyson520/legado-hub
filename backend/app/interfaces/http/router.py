@@ -15,6 +15,7 @@ from app.interfaces.http import (
     interactive_browser,
     jobs,
     novel,
+    novel_analysis,
     reading,
     source_build,
     source_health,
@@ -41,6 +42,7 @@ api_router.include_router(export.router, prefix="/export", tags=["export"])
 api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(translation.router, prefix="/translation", tags=["translation"])
 api_router.include_router(novel.router, prefix="/novel", tags=["novel"])
+api_router.include_router(novel_analysis.router, prefix="/novel-analysis", tags=["novel-analysis"])
 api_router.include_router(work_knowledge.router, prefix="/work-knowledge", tags=["work-knowledge"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 api_router.include_router(reading.router, prefix="/reading", tags=["reading"])
