@@ -683,6 +683,95 @@ class WorkKnowledgeProposalModel(Base):
     published_at = Column(DateTime, nullable=True)
 
 
+class KnowledgeEntityModel(Base):
+    __tablename__ = "knowledge_entities"
+
+    id = Column(String, primary_key=True)
+    work_id = Column(String, ForeignKey("canonical_works.id"), nullable=False, index=True)
+    name = Column(String, nullable=False, default="", index=True)
+    entity_type = Column(String, nullable=False, default="character", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class KnowledgeEntityAliasModel(Base):
+    __tablename__ = "knowledge_entity_aliases"
+    __table_args__ = (UniqueConstraint("entity_id", "alias", name="ux_knowledge_entity_alias"),)
+
+    id = Column(String, primary_key=True)
+    entity_id = Column(String, ForeignKey("knowledge_entities.id"), nullable=False, index=True)
+    alias = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class KnowledgeClaimModel(Base):
+    __tablename__ = "knowledge_claims"
+
+    id = Column(String, primary_key=True)
+    work_id = Column(String, ForeignKey("canonical_works.id"), nullable=False, index=True)
+    subject_entity_id = Column(String, ForeignKey("knowledge_entities.id"), nullable=False, index=True)
+    predicate = Column(String, nullable=False, index=True)
+    object_entity_id = Column(String, ForeignKey("knowledge_entities.id"), nullable=True, index=True)
+    scalar_json = Column(Text, nullable=True)
+    epistemic = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default="candidate", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    published_at = Column(DateTime, nullable=True)
+
+
+class ClaimEvidenceModel(Base):
+    __tablename__ = "claim_evidence"
+    __table_args__ = (UniqueConstraint("claim_id", "evidence_span_id", name="ux_claim_evidence"),)
+
+    id = Column(String, primary_key=True)
+    claim_id = Column(String, ForeignKey("knowledge_claims.id"), nullable=False, index=True)
+    evidence_span_id = Column(String, ForeignKey("evidence_spans.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class NarrativeEventModel(Base):
+    __tablename__ = "narrative_events"
+
+    id = Column(String, primary_key=True)
+    work_id = Column(String, ForeignKey("canonical_works.id"), nullable=False, index=True)
+    title = Column(String, nullable=False, default="")
+    summary = Column(Text, nullable=False, default="")
+    status = Column(String, nullable=False, default="candidate", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EventParticipantModel(Base):
+    __tablename__ = "event_participants"
+    __table_args__ = (UniqueConstraint("event_id", "entity_id", name="ux_event_participant"),)
+
+    id = Column(String, primary_key=True)
+    event_id = Column(String, ForeignKey("narrative_events.id"), nullable=False, index=True)
+    entity_id = Column(String, ForeignKey("knowledge_entities.id"), nullable=False, index=True)
+    role = Column(String, nullable=False, default="participant")
+
+
+class TemporalLinkModel(Base):
+    __tablename__ = "temporal_links"
+
+    id = Column(String, primary_key=True)
+    work_id = Column(String, ForeignKey("canonical_works.id"), nullable=False, index=True)
+    before_event_id = Column(String, ForeignKey("narrative_events.id"), nullable=False, index=True)
+    after_event_id = Column(String, ForeignKey("narrative_events.id"), nullable=False, index=True)
+    relation = Column(String, nullable=False, default="before")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class KnowledgeConflictModel(Base):
+    __tablename__ = "knowledge_conflicts"
+    __table_args__ = (UniqueConstraint("incumbent_claim_id", "conflicting_claim_id", name="ux_knowledge_conflict_pair"),)
+
+    id = Column(String, primary_key=True)
+    work_id = Column(String, ForeignKey("canonical_works.id"), nullable=False, index=True)
+    incumbent_claim_id = Column(String, ForeignKey("knowledge_claims.id"), nullable=False, index=True)
+    conflicting_claim_id = Column(String, ForeignKey("knowledge_claims.id"), nullable=False, index=True)
+    status = Column(String, nullable=False, default="open", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class SourceReviewItemModel(Base):
     __tablename__ = "source_review_items"
 

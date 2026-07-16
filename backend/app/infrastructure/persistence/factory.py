@@ -14,6 +14,7 @@ from app.application.services.job_service import JobService
 from app.application.services.interactive_browser_service import InteractiveBrowserService
 from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
 from app.application.services.novel_agent_service import NovelAgentService
+from app.application.services.narrative_knowledge_service import NarrativeKnowledgeService
 from app.application.services.novel_app_service import NovelAppService
 from app.application.services.provider_platform_service import (
     PROVIDER_ROUTE_GROUPS,
@@ -46,6 +47,7 @@ from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIR
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_runtime_repo_impl import SQLiteNovelRuntimeRepository
+from app.infrastructure.persistence.sqlite.narrative_knowledge_repo_impl import SQLiteNarrativeKnowledgeRepository
 from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLiteEventDeliveryRepository
 from app.infrastructure.persistence.sqlite.evidence_repo_impl import SQLiteEvidenceRepository
 from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
@@ -121,6 +123,11 @@ def build_evidence_repository() -> SQLiteEvidenceRepository:
     return SQLiteEvidenceRepository()
 
 
+def build_narrative_knowledge_repository() -> SQLiteNarrativeKnowledgeRepository:
+    bootstrap_sqlite()
+    return SQLiteNarrativeKnowledgeRepository()
+
+
 def build_provider_repository() -> SQLiteProviderRepository:
     bootstrap_sqlite()
     return SQLiteProviderRepository()
@@ -157,6 +164,13 @@ def build_evidence_service() -> EvidenceService:
     return EvidenceService(
         repo=build_evidence_repository(),
         canonical_repo=build_canonical_content_repository(),
+    )
+
+
+def build_narrative_knowledge_service() -> NarrativeKnowledgeService:
+    return NarrativeKnowledgeService(
+        repo=build_narrative_knowledge_repository(),
+        evidence_service=build_evidence_service(),
     )
 
 
