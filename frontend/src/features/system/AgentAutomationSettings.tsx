@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
 import { useAgentSettingsSection } from './useAgentSettingsSection'
 
 type AutomationSettings = { enabled: boolean; background_incremental_enabled: boolean; emergency_pause: boolean }
@@ -21,7 +22,7 @@ export function AgentAutomationSettings() {
       <div className="mt-6 space-y-3">
         {FIELDS.map((field) => <label key={field.key} className="flex items-start justify-between gap-4 rounded-md border border-border bg-muted/30 p-4"><span><strong className="block text-sm text-foreground">{field.label}</strong><span className="mt-1 block text-sm text-muted-foreground">{field.description}</span></span><input aria-label={field.label} type="checkbox" className="mt-1 h-4 w-4" checked={section.value[field.key]} onChange={(event) => section.patch({ [field.key]: event.target.checked } as Partial<AutomationSettings>)} /></label>)}
       </div>
-      <div className="mt-5 flex flex-wrap items-center gap-3"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save automation settings'}</Button><p role="status" className="text-sm text-muted-foreground">{section.updatedAt ? `Effective ${new Date(section.updatedAt).toLocaleString()}` : 'Effective after the first save'}</p></div>
+      <div className="mt-5 flex flex-wrap items-center gap-3"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save automation settings'}</Button><SettingsEffectiveStatus updatedAt={section.updatedAt} /></div>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
   )

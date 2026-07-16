@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { StatusMessage } from '@/components/data/StatusMessage'
 import { Input } from '@/components/ui/input'
+import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
 import { useAgentSettingsSection } from './useAgentSettingsSection'
 
 type GovernanceSettings = {
@@ -17,10 +18,6 @@ const DEFAULTS: GovernanceSettings = {
   minimum_inferred_evidence: 2,
   require_human_review_for_identity: true,
   require_human_review_for_conflicts: true,
-}
-
-function effectiveTime(updatedAt: string | null) {
-  return updatedAt ? `Effective ${new Date(updatedAt).toLocaleString()}` : 'Effective after the first save'
 }
 
 export function AgentGovernanceSettings() {
@@ -55,7 +52,7 @@ export function AgentGovernanceSettings() {
       </div>
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save governance settings'}</Button>
-        <p role="status" className="text-sm text-muted-foreground">{effectiveTime(section.updatedAt)}</p>
+        <SettingsEffectiveStatus updatedAt={section.updatedAt} />
       </div>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
