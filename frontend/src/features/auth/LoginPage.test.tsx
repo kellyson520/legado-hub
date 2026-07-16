@@ -30,3 +30,12 @@ test('shows a failed login message', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
   expect(await screen.findByText('Invalid username or password')).toBeInTheDocument()
 })
+
+test('shows a clear credential hint for an HTTP 401 login failure', async () => {
+  login.mockRejectedValueOnce(Object.assign(new Error('Request failed with status code 401'), {
+    response: { status: 401 },
+  }))
+  render(<MemoryRouter><LoginPage /></MemoryRouter>)
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+  expect(await screen.findByText('用户名或密码错误，请检查后重试。')).toBeInTheDocument()
+})
