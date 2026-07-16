@@ -486,6 +486,7 @@ def build_ai_workspace_service() -> AIWorkspaceService:
         ai_tasks=build_ai_runtime_repository(),
         audit=build_auth_repository(),
         source_runtime=build_source_runtime_service(),
+        novel_tool_executor=build_novel_analysis_tool_executor(),
     )
 
 

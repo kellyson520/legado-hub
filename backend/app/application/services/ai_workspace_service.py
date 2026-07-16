@@ -10,10 +10,11 @@ from app.domain.entities.auth import AuditEvent
 
 
 _SENSITIVE_KEY_PARTS = ("cookie", "token", "authorization", "provider", "internal", "api_key", "apikey")
-_MAX_MODEL_TOOL_TURNS = 3
+_MAX_MODEL_TOOL_TURNS = 4
+_CONTENT_RETRIEVAL_TOOL_NAMES = frozenset({"source.search", "toc.get", "chapter.fetch"})
 _DEFAULT_TOOL_NAMES = frozenset({
     "list_visible_sources", "get_source_rule_summary", "list_ai_analysis_results",
-})
+}) | _CONTENT_RETRIEVAL_TOOL_NAMES
 _SOURCE_READ_TOOL_NAMES = frozenset({"get_source_validation_summary"})
 _SOURCE_WRITE_TOOL_NAMES = frozenset({"create_source_rule_draft"})
 _ALL_TOOL_NAMES = _DEFAULT_TOOL_NAMES | _SOURCE_READ_TOOL_NAMES | _SOURCE_WRITE_TOOL_NAMES
@@ -54,13 +55,14 @@ class _SourceRuleDraftArguments(BaseModel):
 
 
 class AIWorkspaceService:
-    def __init__(self, platform, conversations, sources, ai_tasks, audit, source_runtime=None):
+    def __init__(self, platform, conversations, sources, ai_tasks, audit, source_runtime=None, novel_tool_executor=None):
         self._platform = platform
         self._conversations = conversations
         self._sources = sources
         self._ai_tasks = ai_tasks
         self._audit = audit
         self._source_runtime = source_runtime
+        self._novel_tool_executor = novel_tool_executor
 
     async def create_conversation(self, actor_id: str, title: str = "") -> dict:
         conversation = self._conversations.create_conversation(
@@ -123,7 +125,10 @@ class AIWorkspaceService:
             })
         try:
             assistant_content, model_tool_calls = await self._run_model_tool_loop(
-                actor_id=str(actor_id), messages=messages, allowed_tool_names=tools,
+                actor_id=str(actor_id),
+                messages=messages,
+                allowed_tool_names=tools,
+                require_content_evidence=mode in {"character", "storyline", "world"},
             )
             tool_calls.extend(model_tool_calls)
             assistant = self._conversations.append_message(
@@ -157,16 +162,25 @@ class AIWorkspaceService:
         actor_id: str,
         messages: list[dict],
         allowed_tool_names: frozenset[str],
+        require_content_evidence: bool = False,
     ) -> tuple[str, list[dict]]:
+        if require_content_evidence and not (_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names):
+            return "未获授权读取书籍原文，不能基于模型记忆生成人物、剧情或世界观结论。", []
         executed_calls: list[dict] = []
         for _turn in range(_MAX_MODEL_TOOL_TURNS):
+            has_chapter_evidence = self._has_chapter_evidence(executed_calls)
+            model_tool_names = allowed_tool_names
+            if require_content_evidence and not has_chapter_evidence:
+                model_tool_names = frozenset(_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names)
+                if not executed_calls:
+                    model_tool_names = frozenset({"source.search"})
             invocation = await self._platform.invoke_chat(
                 provider_group="ai",
                 model=None,
                 payload={
                     "messages": messages,
-                    "tools": self._tool_schemas(allowed_tool_names),
-                    "tool_choice": "auto",
+                    "tools": self._tool_schemas(model_tool_names),
+                    "tool_choice": "required" if require_content_evidence and not has_chapter_evidence else "auto",
                     "temperature": 0,
                 },
                 quota_scope=("user", actor_id),
@@ -175,6 +189,8 @@ class AIWorkspaceService:
             assistant_message = self._assistant_message(output)
             model_calls = self._model_tool_calls(output, assistant_message)
             if not model_calls:
+                if require_content_evidence and not self._has_chapter_evidence(executed_calls):
+                    return "未能取得可验证的书籍正文证据，不能基于模型记忆生成人物、剧情或世界观结论。", executed_calls
                 return str(assistant_message.get("content") or ""), executed_calls
 
             messages.append(assistant_message)
@@ -217,6 +233,18 @@ class AIWorkspaceService:
             elif request.name == "create_source_rule_draft":
                 args = _SourceRuleDraftArguments.model_validate(request.arguments)
                 result = await self._create_source_rule_draft(args.source_version_id, args.patch, str(actor_id))
+            elif request.name in _CONTENT_RETRIEVAL_TOOL_NAMES:
+                if self._novel_tool_executor is None:
+                    raise ValidationException("Novel content retrieval is unavailable")
+                tool_result = await self._novel_tool_executor.ainvoke(
+                    request.name,
+                    {**request.arguments, "tenant_id": str(actor_id)},
+                )
+                result = (
+                    tool_result.data
+                    if tool_result.status == "accepted"
+                    else {"status": tool_result.status, "error": tool_result.error_code or "tool_rejected"}
+                )
             else:
                 raise ValidationException("Unsupported AI tool")
             sanitized = _sanitize(result)
@@ -274,6 +302,16 @@ class AIWorkspaceService:
         return [call for call in calls if isinstance(call, dict)] if isinstance(calls, list) else []
 
     @staticmethod
+    def _has_chapter_evidence(tool_calls: list[dict]) -> bool:
+        for call in tool_calls:
+            if call.get("name") != "chapter.fetch":
+                continue
+            result = call.get("result")
+            if isinstance(result, dict) and result.get("evidence_span_ids"):
+                return True
+        return False
+
+    @staticmethod
     def _tool_schemas(allowed_tool_names: frozenset[str] = _DEFAULT_TOOL_NAMES) -> list[dict]:
         def schema(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
             parameters = {"type": "object", "properties": properties, "additionalProperties": False}
@@ -294,6 +332,24 @@ class AIWorkspaceService:
                 "source_version_id": {"type": "string", "minLength": 1},
                 "patch": {"type": "object", "minProperties": 1},
             }, ["source_version_id", "patch"]),
+            schema("source.search", "Search the user's enabled book sources for a work before analysis.", {
+                "keyword": {"type": "string", "minLength": 1, "maxLength": 200},
+                "source_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
+                "author_hint": {"type": "string", "maxLength": 200},
+            }, ["keyword"]),
+            schema("toc.get", "Read a book's table of contents to select relevant chapters.", {
+                "source_id": {"type": "integer"},
+                "book_url": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "book_name": {"type": "string", "minLength": 1, "maxLength": 300},
+                "author_hint": {"type": "string", "maxLength": 200},
+            }, ["source_id", "book_url", "book_name"]),
+            schema("chapter.fetch", "Fetch and store one relevant chapter as verifiable evidence before making a literary claim.", {
+                "source_id": {"type": "integer"},
+                "book_url": {"type": "string", "minLength": 1, "maxLength": 2048},
+                "book_name": {"type": "string", "minLength": 1, "maxLength": 300},
+                "chapter_index": {"type": "integer", "minimum": 0, "maximum": 100000},
+                "author_hint": {"type": "string", "maxLength": 200},
+            }, ["source_id", "book_url", "book_name", "chapter_index"]),
         ]
         return [item for item in schemas if item["function"]["name"] in allowed_tool_names]
 
@@ -303,6 +359,11 @@ class AIWorkspaceService:
         return (
             MODE_PROMPTS[mode]
             + " You may use only the listed tools when evidence is needed."
+            + (
+                " For character, storyline, and world analysis, you must retrieve source.search, toc.get, and chapter.fetch evidence before answering. "
+                "Never use parametric knowledge; if chapter evidence is unavailable, state that no conclusion can be made."
+                if mode in {"character", "storyline", "world"} else ""
+            )
             + (" Candidate rule drafts may be created but never published." if candidate_draft_allowed else "")
             + " Never request secrets, publish sources, browse arbitrary URLs, or run code."
         )
