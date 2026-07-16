@@ -226,7 +226,18 @@ class SourceBuildAuditService:
                 keyword=keyword,
                 attempt=attempt,
             )
-        audit_status = 'passed' if passed else 'failed'
+        autonomous_build = payload.get('autonomous_build') if isinstance(payload, dict) else None
+        agent_review = autonomous_build.get('ai') if isinstance(autonomous_build, dict) else None
+        unified_review_ready = (
+            isinstance(existing_audit, dict)
+            and existing_audit.get('workflow') == 'unified'
+            and isinstance(agent_review, dict)
+            and agent_review.get('status') == 'succeeded'
+        )
+        audit_status = 'approved_for_publish' if passed and unified_review_ready else ('passed' if passed else 'failed')
+        if passed and not unified_review_ready and existing_audit.get('workflow') == 'unified':
+            audit_status = 'manual_review_required'
+            report['reason_code'] = 'review_agent_unavailable_or_incomplete'
         if not passed:
             audit_status = 'terminal_review_pending'
             report['recovery_state'] = 'terminal_review_pending'
