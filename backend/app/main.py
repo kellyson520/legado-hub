@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
-from app.core.logging import setup_logging
+from app.core.logging import get_logger, setup_logging
 from app.core.middleware import AuditLogMiddleware, RateLimitMiddleware, TraceMiddleware
 from app.infrastructure.persistence.factory import (
     build_source_runtime_service,
@@ -15,13 +15,16 @@ from app.interfaces.http.router import api_router
 from app.tasks.scheduler import run_event_delivery_job, run_source_build_job
 
 
+logger = get_logger("lifespan")
+
+
 async def _event_delivery_worker(stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         try:
             await run_event_delivery_job(limit=settings.EVENT_DELIVERY_BATCH_SIZE)
         except Exception:
-            # Keep the worker alive; failures are surfaced through delivery history.
-            pass
+            # Keep the worker alive, but never hide a delivery failure from operators.
+            logger.exception("event delivery worker iteration failed", extra={"action": "worker_error", "worker": "event_delivery"})
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=settings.EVENT_DELIVERY_POLL_SECONDS)
         except asyncio.TimeoutError:
@@ -33,7 +36,7 @@ async def _source_build_worker(stop_event: asyncio.Event) -> None:
         try:
             await run_source_build_job(limit=settings.SOURCE_BUILD_BATCH_SIZE)
         except Exception:
-            pass
+            logger.exception("source build worker iteration failed", extra={"action": "worker_error", "worker": "source_build"})
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=settings.SOURCE_BUILD_POLL_SECONDS)
         except asyncio.TimeoutError:
