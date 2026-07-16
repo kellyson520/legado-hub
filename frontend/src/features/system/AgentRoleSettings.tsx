@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { useAgentSettingsSection } from './useAgentSettingsSection'
 
 type RoleSettings = {
@@ -44,7 +45,7 @@ export function AgentRoleSettings() {
         ))}
       </div>
       <div className="mt-5 flex flex-wrap items-center gap-3"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save role settings'}</Button><p role="status" className="text-sm text-muted-foreground">{section.updatedAt ? `Effective ${new Date(section.updatedAt).toLocaleString()}` : 'Effective after the first save'}</p></div>
-      {section.error ? <p role="alert" className="mt-3 text-sm text-destructive">{section.error}</p> : null}
+      <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
   )
 }
