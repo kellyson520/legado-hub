@@ -158,6 +158,16 @@ def build_source_runtime_service() -> SourceRuntimeService:
         audit=build_auth_repository(),
         source_repo=build_source_repository(),
         source_probe=build_source_probe_service(),
+        audit_workflow=build_source_audit_workflow_service(),
+    )
+
+
+def build_source_audit_workflow_service():
+    from app.application.services.source_audit_workflow_service import SourceAuditWorkflowService
+
+    return SourceAuditWorkflowService(
+        build_source_runtime_repository(),
+        build_source_build_service(),
     )
 
 
