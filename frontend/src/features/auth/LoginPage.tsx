@@ -3,6 +3,21 @@ import { useLocation, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '@/app/providers/AuthProvider'
 
+function loginErrorMessage(reason: unknown) {
+  if (
+    typeof reason === 'object'
+    && reason !== null
+    && 'response' in reason
+    && typeof reason.response === 'object'
+    && reason.response !== null
+    && 'status' in reason.response
+    && reason.response.status === 401
+  ) {
+    return '用户名或密码错误，请检查后重试。'
+  }
+  return reason instanceof Error ? reason.message : '登录失败，请稍后重试。'
+}
+
 export function LoginPage() {
   const { login } = useAuth()
   const navigate = useNavigate()
@@ -21,7 +36,7 @@ export function LoginPage() {
       const from = (location.state as { from?: string } | null)?.from || '/sources'
       navigate(from, { replace: true })
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Sign in failed')
+      setError(loginErrorMessage(reason))
     } finally {
       setPending(false)
     }
