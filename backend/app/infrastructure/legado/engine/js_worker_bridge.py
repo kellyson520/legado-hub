@@ -9,6 +9,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 
+from lxml import etree
+
 from app.infrastructure.legado.engine.js_session_models import (
     JsExecutionContext,
     JsExecutionTrace,
@@ -296,4 +298,6 @@ class JsWorkerClient:
 
     @staticmethod
     def _json_default(value):
+        if isinstance(value, etree._Element):
+            return etree.tostring(value, encoding='unicode', method='html')
         return str(value)

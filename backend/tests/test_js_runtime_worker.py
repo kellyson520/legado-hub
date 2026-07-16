@@ -5,6 +5,7 @@ from threading import Event, Thread
 
 import pytest
 from bs4 import BeautifulSoup
+from lxml import html
 
 from app.infrastructure.legado.engine.js_runtime import JsRuntime
 from app.infrastructure.legado.engine.js_session_models import JsExecutionContext
@@ -101,6 +102,27 @@ def test_worker_client_serializes_html_tag_context_as_string():
     assert output.success is True
     assert "斗罗大陆" in output.value
     client.close()
+
+
+def test_js_runtime_serializes_lxml_xpath_node_as_html_for_js_rules():
+    runtime = JsRuntime()
+    node = html.fromstring('<a href="/chapter/1">第一章</a>')
+
+    output = runtime.execute_with_metadata(
+        """
+        var doc = org.jsoup.Jsoup.parse(result);
+        return doc.select('a').first().attr('href');
+        """,
+        data=node,
+        stage="toc_rule_js",
+        source={"bookSourceName": "XPath JS", "bookSourceUrl": "https://example.com"},
+        baseUrl="https://example.com",
+        variables={},
+    )
+
+    assert output.success is True
+    assert output.value == "/chapter/1"
+    runtime.close()
 
 
 def test_worker_client_times_out_and_terminates_infinite_js_execution():

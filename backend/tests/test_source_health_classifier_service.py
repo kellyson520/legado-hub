@@ -51,6 +51,32 @@ def test_classifier_marks_helper_missing_as_dead():
     assert decision.failure_reason == "helper_missing"
 
 
+def test_classifier_marks_js_worker_failure_as_blocked_not_unknown():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=51,
+        source_name="八叉书库",
+        source_url="https://bcshuku.com",
+        probe_mode="search_only",
+        keyword="剑来",
+        search=StageProbeResult(
+            stage="search",
+            status="failed",
+            error_message="WORKER_EOF",
+            detail={"js_exec_status": "fail", "js_error": "WORKER_EOF"},
+        ),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.health_status == "blocked"
+    assert decision.failure_reason == "js_runtime_failure"
+    assert decision.route_policy == "skip"
+
+
 def test_classifier_marks_cloudflare_transport_as_waf_blocked():
     from app.application.services.source_health_classifier_service import SourceHealthClassifierService
 

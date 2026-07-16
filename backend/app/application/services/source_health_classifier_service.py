@@ -78,6 +78,8 @@ class SourceHealthClassifierService:
 
         if any(marker in lowered for marker in ["token=undefined", "token=null", "_token=undefined", "_token=null"]):
             return "token_missing"
+        if any(marker in lowered for marker in ["worker_eof", "worker_io_error", "js_runtime_error"]):
+            return "js_runtime_failure"
         if "is not defined" in lowered:
             return "helper_missing"
         if "unexpected token '<'" in lowered:
@@ -142,6 +144,7 @@ class SourceHealthClassifierService:
             "network_unreachable",
             "tls_or_handshake_error",
             "http_status_error",
+            "js_runtime_failure",
         }:
             return "blocked"
         if failure_reason in {"helper_missing", "upstream_changed", "invalid_source_rule", "deprecated_source"}:
@@ -163,6 +166,7 @@ class SourceHealthClassifierService:
             "waf_blocked",
             "network_unreachable",
             "tls_or_handshake_error",
+            "js_runtime_failure",
         }:
             return "high"
         if failure_reason in {"timeout", "http_status_error", "html_instead_of_json", "parse_empty", "keyword_no_result"}:
@@ -177,6 +181,7 @@ class SourceHealthClassifierService:
             "network_unreachable",
             "tls_or_handshake_error",
             "http_status_error",
+            "js_runtime_failure",
         }:
             return 60
         if failure_reason in {"token_missing", "auth_required"}:

@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
@@ -10,10 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     websockify \
     x11vnc \
     xvfb \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+COPY nodejs/ ./nodejs/
+RUN npm ci --prefix ./nodejs
 
 COPY app/ ./app/
 
