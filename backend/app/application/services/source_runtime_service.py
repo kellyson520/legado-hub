@@ -40,6 +40,14 @@ def _sanitize_legado_value(value):
 class SourceRuntimeService:
     LIVE_PROBE_TRIGGER = "rule_editor_live_probe"
     LIVE_PROBE_TIMEOUT_SECONDS = 25
+    _SAFE_PROBE_STATUSES = {"ok", "failed", "skipped", "unknown"}
+    _SAFE_PROBE_DETAIL_ENUMS = {
+        "response_kind": {"json", "html", "text", "network_error"},
+        "expected_response_kind": {"json", "html", "text"},
+        "parse_status": {"unknown", "empty", "content_access_blocked"},
+        "block_reason": {"verification_wall"},
+        "js_exec_status": {"ok", "fail"},
+    }
 
     def __init__(self, repo: SourceRuntimeRepository, audit=None, source_repo=None, source_probe=None):
         self._repo = repo
@@ -314,28 +322,45 @@ class SourceRuntimeService:
             )
         except asyncio.TimeoutError:
             return self._live_probe_unavailable("live probe timed out")
-        except Exception as exc:
-            return self._live_probe_unavailable(f"live probe failed: {exc}")
+        except Exception:
+            return self._live_probe_unavailable("live probe failed")
 
         steps: dict[str, dict] = {}
         diagnostics: list[str] = []
         for stage_name in ("search", "toc", "content"):
             stage = getattr(evidence, stage_name)
-            passed = stage.status == "ok"
-            steps[stage_name] = {
-                "passed": passed,
-                "elapsed_ms": stage.elapsed_ms,
-                "status": stage.status,
-                "hit_count": stage.hit_count,
-                "sample_title": stage.sample_title,
-                "request_preview": stage.request_preview,
-                "error_message": stage.error_message,
-                "detail": stage.detail,
-                "validation_kind": "live_probe",
-            }
+            steps[stage_name] = self._safe_live_probe_step(stage)
+            passed = steps[stage_name]["passed"]
             if not passed:
-                diagnostics.append(self._live_probe_diagnostic(stage_name, stage))
+                diagnostics.append(self._live_probe_diagnostic(stage_name, steps[stage_name]))
         return steps, diagnostics
+
+    @classmethod
+    def _safe_live_probe_step(cls, stage) -> dict:
+        status = stage.status if stage.status in cls._SAFE_PROBE_STATUSES else "unknown"
+        detail = stage.detail if isinstance(stage.detail, dict) else {}
+        step = {
+            "passed": status == "ok",
+            "elapsed_ms": cls._bounded_non_negative_int(stage.elapsed_ms),
+            "status": status,
+            "hit_count": cls._bounded_non_negative_int(stage.hit_count),
+            "validation_kind": "live_probe",
+        }
+        for key in ("http_status", "content_length", "http_elapsed_ms"):
+            if key in detail:
+                step[key] = cls._bounded_non_negative_int(detail[key])
+        for key, allowed in cls._SAFE_PROBE_DETAIL_ENUMS.items():
+            value = detail.get(key)
+            if value in allowed:
+                step[key] = value
+        return step
+
+    @staticmethod
+    def _bounded_non_negative_int(value) -> int:
+        try:
+            return min(max(int(value), 0), 1_000_000_000)
+        except (TypeError, ValueError):
+            return 0
 
     @staticmethod
     def _source_for_live_probe(version) -> dict | None:
@@ -353,9 +378,9 @@ class SourceRuntimeService:
         return keyword.strip() if isinstance(keyword, str) and keyword.strip() else "斗罗大陆"
 
     @staticmethod
-    def _live_probe_diagnostic(stage_name: str, stage) -> str:
-        detail = stage.error_message or stage.detail.get("block_reason") or stage.detail.get("http_error")
-        return f"live {stage_name} probe failed" + (f": {detail}" if detail else "")
+    def _live_probe_diagnostic(stage_name: str, step: dict) -> str:
+        reason = step.get("block_reason")
+        return f"live {stage_name} probe failed" + (f" ({reason})" if reason else "")
 
     @classmethod
     def _live_probe_unavailable(cls, diagnostic: str) -> tuple[dict[str, dict], list[str]]:
@@ -643,8 +668,8 @@ class SourceRuntimeService:
         if audit.get("test_run_pending"):
             raise ValidationException("source audit test-run checkpoint must settle before publication")
 
-    @staticmethod
-    def _serialize_test_run(run) -> dict | None:
+    @classmethod
+    def _serialize_test_run(cls, run) -> dict | None:
         if run is None:
             return None
         return {
@@ -652,10 +677,55 @@ class SourceRuntimeService:
             "trigger": run.trigger,
             "score": run.score,
             "grade": run.grade,
-            "step_results": run.step_results,
-            "diagnostics": run.diagnostics,
+            "step_results": cls._safe_serialized_steps(run.step_results),
+            "diagnostics": [cls._safe_diagnostic(item) for item in run.diagnostics],
             "created_at": run.created_at.isoformat() if run.created_at else None,
         }
+
+    @classmethod
+    def _safe_serialized_steps(cls, step_results: object) -> dict:
+        if not isinstance(step_results, dict):
+            return {}
+        result: dict[str, dict] = {}
+        for stage_name, stage in step_results.items():
+            if not isinstance(stage, dict):
+                continue
+            safe = {
+                "passed": bool(stage.get("passed")),
+                "elapsed_ms": cls._bounded_non_negative_int(stage.get("elapsed_ms")),
+                "status": stage.get("status") if stage.get("status") in cls._SAFE_PROBE_STATUSES else "unknown",
+            }
+            for key in ("hit_count", "http_status", "content_length", "http_elapsed_ms", "attempt"):
+                if key in stage:
+                    safe[key] = cls._bounded_non_negative_int(stage[key])
+            for key, allowed in cls._SAFE_PROBE_DETAIL_ENUMS.items():
+                if stage.get(key) in allowed:
+                    safe[key] = stage[key]
+            if stage.get("validation_kind") == "live_probe":
+                safe["validation_kind"] = "live_probe"
+            if stage.get("run_kind") in {"normal", "manual_browser"}:
+                safe["run_kind"] = stage["run_kind"]
+            result[str(stage_name)] = safe
+        return result
+
+    @staticmethod
+    def _safe_diagnostic(value: object) -> str:
+        if not isinstance(value, str):
+            return "validation_failed"
+        if value in {
+            "正文访问受阻，禁止发布",
+            "live probe service is not configured",
+            "book source payload is invalid",
+            "live probe timed out",
+            "live probe failed",
+            "validation_failed",
+        }:
+            return str(value)
+        if value.startswith("rule") and value.endswith(" is required"):
+            return value
+        if value.startswith("live ") and " probe failed" in value:
+            return value if value.endswith("probe failed") or value.endswith("(verification_wall)") else "validation_failed"
+        return "validation_failed"
 
     @staticmethod
     def _requires_live_probe(version) -> bool:

@@ -506,7 +506,7 @@ def test_operations_review_queue_rejects_unsettled_source_audit(monkeypatch, tmp
     assert repo.get_version(version.id).status == 'candidate'
 
 
-def test_operations_review_queue_can_publish_source_build_candidate_with_passed_audit_without_test_run(monkeypatch, tmp_path):
+def test_operations_review_queue_rejects_source_build_candidate_with_passed_audit_without_live_test_run(monkeypatch, tmp_path):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-audit-passed.sqlite3'))
     monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
@@ -537,11 +537,12 @@ def test_operations_review_queue_can_publish_source_build_candidate_with_passed_
         json={'item_type': 'source_version', 'action': 'publish'},
     )
 
-    assert response.status_code == 200
-    assert response.json()['data']['status'] == 'published'
+    assert response.status_code == 422
+    assert 'live probe' in response.json()['message'].lower()
+    assert repo.get_version(version.id).status == 'candidate'
 
 
-def test_operations_review_queue_can_publish_legacy_unmarked_source_build_candidate(monkeypatch, tmp_path):
+def test_operations_review_queue_rejects_legacy_unmarked_source_build_candidate_without_live_test_run(monkeypatch, tmp_path):
     monkeypatch.setenv('APP_ENV', 'test')
     monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-source-build-review-resolve.sqlite3'))
     monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
@@ -568,10 +569,9 @@ def test_operations_review_queue_can_publish_legacy_unmarked_source_build_candid
         json={'item_type': 'source_version', 'action': 'publish'},
     )
 
-    assert response.status_code == 200
-    assert response.json()['data']['queue_item_id'] == version.id
-    assert response.json()['data']['item_type'] == 'source_version'
-    assert response.json()['data']['status'] == 'published'
+    assert response.status_code == 422
+    assert 'live probe' in response.json()['message'].lower()
+    assert repo.get_version(version.id).status == 'candidate'
 
 
 def test_operations_review_queue_can_resolve_source_review(monkeypatch, tmp_path):

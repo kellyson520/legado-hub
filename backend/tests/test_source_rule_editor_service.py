@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 
@@ -31,6 +33,34 @@ class PassingLiveProbe:
                 elapsed_ms=24,
                 detail={"content_length": 120},
             ),
+        )
+
+
+class SensitiveLiveProbe:
+    async def probe_source(self, source, keyword_samples, probe_mode):
+        from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+
+        return SourceProbeEvidence(
+            source_id=source["id"],
+            source_name=source["bookSourceName"],
+            source_url=source["bookSourceUrl"],
+            probe_mode=probe_mode,
+            keyword=keyword_samples[0],
+            search=StageProbeResult(
+                stage="search",
+                status="failed",
+                elapsed_ms=12,
+                request_preview="https://example.test/search?token=top-secret BODY=password=top-secret",
+                error_message="authorization: Bearer top-secret",
+                detail={
+                    "http_status": 401,
+                    "response_kind": "network_error",
+                    "response_preview": "<input value='top-secret'>",
+                    "http_error": "cookie=top-secret",
+                },
+            ),
+            toc=StageProbeResult(stage="toc", status="skipped"),
+            content=StageProbeResult(stage="content", status="skipped"),
         )
 
 
@@ -161,6 +191,41 @@ async def test_rule_publish_rejects_shape_only_validation_without_live_probe(tmp
         await SourceRuntimeService(repo).publish_rule_version(candidate.id, "7")
 
     assert repo.get_version(candidate.id).status == "candidate"
+
+
+@pytest.mark.asyncio
+async def test_live_probe_validation_persists_only_safe_evidence_summary(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-rule-safe-evidence.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_runtime_service import SourceRuntimeService
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+
+    bootstrap_sqlite()
+    repo = SQLiteSourceRuntimeRepository()
+    candidate = repo.create_candidate_version(
+        "book",
+        "https://example.test/safe-evidence",
+        _valid_source_payload(bookSourceUrl="https://example.test/safe-evidence"),
+        "7",
+    )
+    service = SourceRuntimeService(repo, source_probe=SensitiveLiveProbe())
+
+    validation = await service.validate_rule_version(candidate.id, "7")
+    detail = await service.get_version_detail(candidate.id)
+
+    for result in (validation, detail):
+        rendered = json.dumps(result, ensure_ascii=False)
+        assert "top-secret" not in rendered
+        assert "request_preview" not in rendered
+        assert "response_preview" not in rendered
+        assert "http_error" not in rendered
+        assert "error_message" not in rendered
+
+    assert validation["step_results"]["search"]["http_status"] == 401
+    assert validation["step_results"]["search"]["response_kind"] == "network_error"
 
 
 @pytest.mark.asyncio
