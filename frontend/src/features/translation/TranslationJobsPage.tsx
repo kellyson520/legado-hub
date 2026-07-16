@@ -1,7 +1,7 @@
 import { listTranslationJobs, type TranslationJobRow } from '@/api/modules/translation'
+import { ListStatus } from '@/components/data/ListStatus'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 export function TranslationJobsPage() {
@@ -30,7 +30,15 @@ export function TranslationJobsPage() {
         onClearSearch={pagination.clearSearch}
         onPageChange={pagination.goToPage}
       />
-      {error ? <Card className="flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>Failed to load translation jobs.</span><button type="button" className="underline" onClick={() => pagination.retry()}>重试</button></Card> : null}
+      <ListStatus
+        loading={loading}
+        error={error}
+        empty={!loading && jobs.length === 0}
+        onRetry={pagination.retry}
+        loadingLabel="正在加载翻译任务…"
+        errorLabel="Failed to load translation jobs."
+        emptyLabel="暂无翻译任务。"
+      />
       <div className="space-y-3">
         {jobs.map((job) => (
           <article key={job.id} className="rounded-md border border-border bg-card p-5 shadow-sm">
@@ -40,7 +48,6 @@ export function TranslationJobsPage() {
             </p>
           </article>
         ))}
-        {!loading && jobs.length === 0 ? <Card className="p-5 text-sm text-muted-foreground">暂无翻译任务。</Card> : null}
       </div>
     </ConsoleLayout>
   )

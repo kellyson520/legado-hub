@@ -1,7 +1,7 @@
 import { listAITasks, type AITaskRow } from '@/api/modules/ai'
+import { ListStatus } from '@/components/data/ListStatus'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 export function AITasksPage() {
@@ -30,7 +30,15 @@ export function AITasksPage() {
         onClearSearch={pagination.clearSearch}
         onPageChange={pagination.goToPage}
       />
-      {error ? <Card className="flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>Failed to load AI tasks.</span><button type="button" className="underline" onClick={() => pagination.retry()}>重试</button></Card> : null}
+      <ListStatus
+        loading={loading}
+        error={error}
+        empty={!loading && tasks.length === 0}
+        onRetry={pagination.retry}
+        loadingLabel="正在加载 AI 任务…"
+        errorLabel="Failed to load AI tasks."
+        emptyLabel="暂无 AI 任务。"
+      />
       <div className="space-y-4">
         <div className="grid grid-cols-4 gap-3 rounded-md border border-border bg-muted/50 p-4 text-xs font-medium text-muted-foreground">
           <span>task</span>
@@ -49,7 +57,6 @@ export function AITasksPage() {
             <span>{task.model}</span>
           </article>
         ))}
-        {!loading && tasks.length === 0 ? <Card className="p-5 text-sm text-muted-foreground">暂无 AI 任务。</Card> : null}
       </div>
     </ConsoleLayout>
   )
