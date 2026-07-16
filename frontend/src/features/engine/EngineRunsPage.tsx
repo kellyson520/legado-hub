@@ -13,9 +13,8 @@ import {
   type RegexTestResult,
 } from '@/api/modules/engine'
 import { RunTimeline } from '@/components/diagnostics/RunTimeline'
-import { ListStatus } from '@/components/data/ListStatus'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -66,9 +65,9 @@ export function EngineRunsPage() {
     pageSize: 20,
     load: ({ page, pageSize, search }) => listEngineSourceBuilds({ page, page_size: pageSize, search }),
   })
-  const { rows: runs, meta: runsMeta, loading: runsLoading, error: runsError } = runsPagination
-  const { rows: deployments, meta: deploymentsMeta, loading: deploymentsLoading, error: deploymentsError } = deploymentsPagination
-  const { rows: sourceBuilds, meta: sourceBuildsMeta, loading: sourceBuildsLoading, error: sourceBuildsError } = sourceBuildsPagination
+  const { rows: runs, loading: runsLoading } = runsPagination
+  const { rows: deployments, loading: deploymentsLoading } = deploymentsPagination
+  const { rows: sourceBuilds, loading: sourceBuildsLoading } = sourceBuildsPagination
   const [sourceUrl, setSourceUrl] = useState('')
   const [keyword, setKeyword] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -182,19 +181,6 @@ export function EngineRunsPage() {
         </section>
 
         <section className="rounded-2xl border border-border bg-card p-5 shadow-sm xl:col-span-2">
-          <PaginationToolbar
-            page={sourceBuildsMeta.page}
-            totalPages={sourceBuildsMeta.total_pages}
-            total={sourceBuildsMeta.total}
-            searchInput={sourceBuildsPagination.searchInput}
-            appliedSearch={sourceBuildsPagination.appliedSearch}
-            loading={sourceBuildsLoading}
-            searchLabel="搜索规则候选"
-            onSearchInput={sourceBuildsPagination.setSearchInput}
-            onSearch={() => sourceBuildsPagination.submitSearch()}
-            onClearSearch={sourceBuildsPagination.clearSearch}
-            onPageChange={sourceBuildsPagination.goToPage}
-          />
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
@@ -207,17 +193,15 @@ export function EngineRunsPage() {
             </Badge>
           </div>
 
-          <div className="mt-5">
-            <ListStatus
-              loading={sourceBuildsLoading}
-              error={sourceBuildsError}
-              empty={!sourceBuildsLoading && sourceBuilds.length === 0}
-              onRetry={sourceBuildsPagination.retry}
-              loadingLabel="正在加载规则候选…"
-              errorLabel="加载规则候选失败，请稍后重试。"
-              emptyLabel="暂无规则候选。"
-            />
-          </div>
+          <PaginatedListControls
+            className="mt-5"
+            pagination={sourceBuildsPagination}
+            empty={!sourceBuildsLoading && sourceBuilds.length === 0}
+            loadingLabel="正在加载规则候选…"
+            errorLabel="加载规则候选失败，请稍后重试。"
+            emptyLabel="暂无规则候选。"
+            searchLabel="搜索规则候选"
+          />
 
           <div className="mt-5 grid gap-3">
             {sourceBuilds.map((row) => {
@@ -276,57 +260,25 @@ export function EngineRunsPage() {
         <div className="grid gap-3 md:grid-cols-2">
           <div>
             <p className="mb-2 text-xs font-medium text-muted-foreground">Engine runs</p>
-            <PaginationToolbar
-              page={runsMeta.page}
-              totalPages={runsMeta.total_pages}
-              total={runsMeta.total}
-              searchInput={runsPagination.searchInput}
-              appliedSearch={runsPagination.appliedSearch}
-              loading={runsLoading}
+            <PaginatedListControls
+              pagination={runsPagination}
+              empty={!runsLoading && runs.length === 0}
+              loadingLabel="正在加载运行记录…"
+              errorLabel="加载运行记录失败，请稍后重试。"
+              emptyLabel="暂无运行记录。"
               searchLabel="搜索运行"
-              onSearchInput={runsPagination.setSearchInput}
-              onSearch={() => runsPagination.submitSearch()}
-              onClearSearch={runsPagination.clearSearch}
-              onPageChange={runsPagination.goToPage}
             />
-            <div className="mt-3">
-              <ListStatus
-                loading={runsLoading}
-                error={runsError}
-                empty={!runsLoading && runs.length === 0}
-                onRetry={runsPagination.retry}
-                loadingLabel="正在加载运行记录…"
-                errorLabel="加载运行记录失败，请稍后重试。"
-                emptyLabel="暂无运行记录。"
-              />
-            </div>
           </div>
           <div>
             <p className="mb-2 text-xs font-medium text-muted-foreground">Deployments</p>
-            <PaginationToolbar
-              page={deploymentsMeta.page}
-              totalPages={deploymentsMeta.total_pages}
-              total={deploymentsMeta.total}
-              searchInput={deploymentsPagination.searchInput}
-              appliedSearch={deploymentsPagination.appliedSearch}
-              loading={deploymentsLoading}
+            <PaginatedListControls
+              pagination={deploymentsPagination}
+              empty={!deploymentsLoading && deployments.length === 0}
+              loadingLabel="正在加载部署记录…"
+              errorLabel="加载部署记录失败，请稍后重试。"
+              emptyLabel="暂无部署记录。"
               searchLabel="搜索部署"
-              onSearchInput={deploymentsPagination.setSearchInput}
-              onSearch={() => deploymentsPagination.submitSearch()}
-              onClearSearch={deploymentsPagination.clearSearch}
-              onPageChange={deploymentsPagination.goToPage}
             />
-            <div className="mt-3">
-              <ListStatus
-                loading={deploymentsLoading}
-                error={deploymentsError}
-                empty={!deploymentsLoading && deployments.length === 0}
-                onRetry={deploymentsPagination.retry}
-                loadingLabel="正在加载部署记录…"
-                errorLabel="加载部署记录失败，请稍后重试。"
-                emptyLabel="暂无部署记录。"
-              />
-            </div>
           </div>
         </div>
         <RunTimeline runs={runs} deployments={deployments} />

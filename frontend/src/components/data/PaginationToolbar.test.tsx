@@ -53,4 +53,13 @@ describe('PaginationToolbar', () => {
 
     expect(screen.getByText('暂无匹配数据')).toBeInTheDocument()
   })
+
+  test('can delegate loading and empty labels while retaining the page summary', () => {
+    renderToolbar({ loading: true, showLoadingLabel: false, showEmptyLabel: false })
+    expect(screen.queryByText('正在加载…')).not.toBeInTheDocument()
+
+    // Loaded, non-empty rows still own their page summary in the toolbar.
+    renderToolbar({ total: 21, totalPages: 2, showLoadingLabel: false, showEmptyLabel: false })
+    expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
+  })
 })

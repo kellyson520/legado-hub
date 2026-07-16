@@ -5,9 +5,8 @@ import {
   type OperationSourceBuildAuditSummary,
   type OperationSourceBuildRow,
 } from '@/api/modules/operations'
-import { ListStatus } from '@/components/data/ListStatus'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { ManualVerificationPanel } from './ManualVerificationPanel'
 
@@ -89,7 +88,7 @@ export function SourceBuildsPage() {
     pageSize: 20,
     load: ({ page, pageSize, search }) => listSourceBuildCandidates({ page, page_size: pageSize, search }),
   })
-  const { rows, meta, loading, error } = pagination
+  const { rows } = pagination
   const [verificationSessionId, setVerificationSessionId] = useState<string | null>(null)
 
   return (
@@ -98,27 +97,13 @@ export function SourceBuildsPage() {
       title="Source build candidates"
       description="查看候选 source build、最近验证结果与自动修补探针摘要。"
     >
-      <PaginationToolbar
-        page={meta.page}
-        totalPages={meta.total_pages}
-        total={meta.total}
-        searchInput={pagination.searchInput}
-        appliedSearch={pagination.appliedSearch}
-        loading={loading}
-        searchLabel="搜索构建候选"
-        onSearchInput={pagination.setSearchInput}
-        onSearch={() => pagination.submitSearch()}
-        onClearSearch={pagination.clearSearch}
-        onPageChange={pagination.goToPage}
-      />
-      <ListStatus
-        loading={loading}
-        error={error}
-        empty={!loading && rows.length === 0}
-        onRetry={pagination.retry}
+      <PaginatedListControls
+        pagination={pagination}
+        empty={!pagination.loading && rows.length === 0}
         loadingLabel="正在加载构建候选…"
         errorLabel="Failed to load source build candidates."
         emptyLabel="No source build candidates yet"
+        searchLabel="搜索构建候选"
       />
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
         <table className="min-w-full divide-y divide-border text-sm">

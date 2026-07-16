@@ -15,6 +15,8 @@ export interface PaginationToolbarProps {
   searchLabel?: string
   itemLabel?: string
   emptyLabel?: string
+  showLoadingLabel?: boolean
+  showEmptyLabel?: boolean
   onSearchInput: (value: string) => void
   onSearch: () => void
   onClearSearch: () => void
@@ -32,6 +34,8 @@ export function PaginationToolbar({
   searchLabel = '搜索书源',
   itemLabel = '条',
   emptyLabel = '暂无匹配数据',
+  showLoadingLabel = true,
+  showEmptyLabel = true,
   onSearchInput,
   onSearch,
   onClearSearch,
@@ -77,9 +81,13 @@ export function PaginationToolbar({
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {loading ? (
-          <p className="text-sm text-muted-foreground" aria-live="polite">正在加载…</p>
+          showLoadingLabel ? (
+            <p className="text-sm text-muted-foreground" aria-live="polite">正在加载…</p>
+          ) : null
         ) : total === 0 ? (
-          <p className="text-sm text-muted-foreground">{emptyLabel}</p>
+          showEmptyLabel ? (
+            <p className="text-sm text-muted-foreground">{emptyLabel}</p>
+          ) : null
         ) : (
           <p className="text-sm text-muted-foreground">第 {page} / {safeTotalPages} 页，共 {total} {itemLabel}</p>
         )}

@@ -8,8 +8,7 @@ import {
   type OperationDeliveryRow,
   type OperationStreamEvent,
 } from '@/api/modules/operations'
-import { ListStatus } from '@/components/data/ListStatus'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
@@ -76,7 +75,7 @@ export function EventDeliveriesPage() {
     pageSize: 20,
     load: ({ page, pageSize, search }) => listEventDeliveries({ page, page_size: pageSize, search }),
   })
-  const { rows, meta, loading, error: loadError } = pagination
+  const { rows } = pagination
   const [streamRows, setStreamRows] = useState<OperationDeliveryRow[]>([])
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
   const [attempts, setAttempts] = useState<OperationDeliveryAttemptRow[]>([])
@@ -192,27 +191,13 @@ export function EventDeliveriesPage() {
     >
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
-          <PaginationToolbar
-            page={meta.page}
-            totalPages={meta.total_pages}
-            total={meta.total}
-            searchInput={pagination.searchInput}
-            appliedSearch={pagination.appliedSearch}
-            loading={loading}
-            searchLabel="搜索事件投递"
-            onSearchInput={pagination.setSearchInput}
-            onSearch={() => pagination.submitSearch()}
-            onClearSearch={pagination.clearSearch}
-            onPageChange={pagination.goToPage}
-          />
-          <ListStatus
-            loading={loading}
-            error={loadError}
-            empty={!loading && deliveries.length === 0}
-            onRetry={pagination.retry}
+          <PaginatedListControls
+            pagination={pagination}
+            empty={!pagination.loading && deliveries.length === 0}
             loadingLabel="正在加载事件投递…"
             errorLabel="Failed to load event deliveries."
             emptyLabel="No event deliveries yet"
+            searchLabel="搜索事件投递"
           />
           <table className="min-w-full divide-y divide-border text-sm">
             <thead className="bg-muted/40 text-left text-muted-foreground">

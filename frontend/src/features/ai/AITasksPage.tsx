@@ -1,6 +1,5 @@
 import { listAITasks, type AITaskRow } from '@/api/modules/ai'
-import { ListStatus } from '@/components/data/ListStatus'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
@@ -9,7 +8,7 @@ export function AITasksPage() {
     pageSize: 20,
     load: ({ page, pageSize, search }) => listAITasks({ page, page_size: pageSize, search }),
   })
-  const { rows: tasks, meta, loading, error } = pagination
+  const { rows: tasks } = pagination
 
   return (
     <ConsoleLayout
@@ -17,27 +16,13 @@ export function AITasksPage() {
       title="Inference workbench"
       description="这里收敛结构化分析任务，持续暴露 provider、model、成本与状态，方便后续接入真实 provider 平台。"
     >
-      <PaginationToolbar
-        page={meta.page}
-        totalPages={meta.total_pages}
-        total={meta.total}
-        searchInput={pagination.searchInput}
-        appliedSearch={pagination.appliedSearch}
-        loading={loading}
-        searchLabel="搜索 AI 任务"
-        onSearchInput={pagination.setSearchInput}
-        onSearch={() => pagination.submitSearch()}
-        onClearSearch={pagination.clearSearch}
-        onPageChange={pagination.goToPage}
-      />
-      <ListStatus
-        loading={loading}
-        error={error}
-        empty={!loading && tasks.length === 0}
-        onRetry={pagination.retry}
+      <PaginatedListControls
+        pagination={pagination}
+        empty={!pagination.loading && tasks.length === 0}
         loadingLabel="正在加载 AI 任务…"
         errorLabel="Failed to load AI tasks."
         emptyLabel="暂无 AI 任务。"
+        searchLabel="搜索 AI 任务"
       />
       <div className="space-y-4">
         <div className="grid grid-cols-4 gap-3 rounded-md border border-border bg-muted/50 p-4 text-xs font-medium text-muted-foreground">

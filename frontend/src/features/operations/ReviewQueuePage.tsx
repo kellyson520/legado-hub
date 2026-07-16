@@ -7,9 +7,8 @@ import {
   type OperationSourceBuildAuditSummary,
   type OperationReviewQueueRow,
 } from '@/api/modules/operations'
-import { ListStatus } from '@/components/data/ListStatus'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { SourceAuditSummary } from './SourceBuildsPage'
 
@@ -82,7 +81,7 @@ export function ReviewQueuePage() {
     pageSize: 20,
     load: ({ page, pageSize, search }) => listReviewQueueCandidates({ page, page_size: pageSize, search }),
   })
-  const { rows, meta, loading, error: loadError } = pagination
+  const { rows } = pagination
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(() => new Set())
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<string | null>(null)
@@ -139,27 +138,13 @@ export function ReviewQueuePage() {
       <div className="space-y-3">
         {feedback ? <p className="text-sm text-emerald-600">{feedback}</p> : null}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        <PaginationToolbar
-          page={meta.page}
-          totalPages={meta.total_pages}
-          total={meta.total}
-          searchInput={pagination.searchInput}
-          appliedSearch={pagination.appliedSearch}
-          loading={loading}
-          searchLabel="搜索审核项"
-          onSearchInput={pagination.setSearchInput}
-          onSearch={() => pagination.submitSearch()}
-          onClearSearch={pagination.clearSearch}
-          onPageChange={pagination.goToPage}
-        />
-        <ListStatus
-          loading={loading}
-          error={loadError}
-          empty={!loading && visibleRows.length === 0}
-          onRetry={pagination.retry}
+        <PaginatedListControls
+          pagination={pagination}
+          empty={!pagination.loading && visibleRows.length === 0}
           loadingLabel="正在加载审核队列…"
           errorLabel="Failed to load review queue."
           emptyLabel="No review candidates yet"
+          searchLabel="搜索审核项"
         />
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
           <table className="min-w-full divide-y divide-border text-sm">

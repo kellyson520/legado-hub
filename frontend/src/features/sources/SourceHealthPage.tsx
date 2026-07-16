@@ -8,11 +8,10 @@ import {
   recoverSourceHealth,
   type SourceHealthRow,
 } from '@/api/modules/sourceHealth'
-import { ListStatus } from '@/components/data/ListStatus'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 const PAGE_SIZE = 20
@@ -29,7 +28,7 @@ export function SourceHealthPage() {
     pageSize: PAGE_SIZE,
     load: ({ page, pageSize, search }) => listSourceHealth({ page, page_size: pageSize, search }),
   })
-  const { rows, meta, loading, error: loadError } = pagination
+  const { rows, meta } = pagination
   const [actionError, setActionError] = useState<string | null>(null)
   const [pendingSourceIds, setPendingSourceIds] = useState<Set<number>>(() => new Set())
   const mountedRef = useRef(true)
@@ -121,38 +120,23 @@ export function SourceHealthPage() {
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-foreground">Book source health</h3>
           <div className="flex gap-3">
-            <Button variant="outline" size="sm" onClick={() => pagination.reload()} disabled={loading}>Probe now</Button>
+            <Button variant="outline" size="sm" onClick={() => pagination.reload()} disabled={pagination.loading}>Probe now</Button>
             <Link to="/sources" className="text-sm font-medium text-primary">
               Back to inventory
             </Link>
           </div>
         </div>
 
-        <ListStatus
-          loading={loading}
-          error={loadError}
-          empty={!loading && rows.length === 0}
-          onRetry={pagination.retry}
+        <PaginatedListControls
+          pagination={pagination}
+          empty={!pagination.loading && rows.length === 0}
           loadingLabel="Loading"
           errorLabel="Unable to load source health. Please try again."
           emptyLabel="暂无书源健康记录。"
+          searchLabel="搜索书源"
         />
 
         {actionError ? <div role="alert" className="mb-4 text-sm text-rose-600">{actionError}</div> : null}
-
-        <PaginationToolbar
-          page={meta.page}
-          totalPages={meta.total_pages}
-          total={meta.total}
-          searchInput={pagination.searchInput}
-          appliedSearch={pagination.appliedSearch}
-          loading={loading}
-          searchLabel="搜索书源"
-          onSearchInput={pagination.setSearchInput}
-          onSearch={() => pagination.submitSearch()}
-          onClearSearch={pagination.clearSearch}
-          onPageChange={pagination.goToPage}
-        />
 
         <div className="space-y-4">
             {rows.map((row) => (

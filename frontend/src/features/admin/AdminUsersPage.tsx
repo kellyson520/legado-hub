@@ -9,9 +9,8 @@ import {
   type AdminUserRow,
 } from '@/api/modules/admin'
 import { useAuth } from '@/app/providers/AuthProvider'
-import { ListStatus } from '@/components/data/ListStatus'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { roleText, statusText } from '@/lib/i18n'
@@ -38,7 +37,7 @@ export function AdminUsersPage() {
     pageSize: 20,
     load: ({ page, pageSize, search }) => listUsers({ page, page_size: pageSize, search }),
   })
-  const { rows: users, meta, loading, error: loadError } = pagination
+  const { rows: users, meta } = pagination
   const [error, setError] = useState('')
   const [formMode, setFormMode] = useState<'create' | 'edit' | null>(null)
   const [editingUser, setEditingUser] = useState<AdminUserRow | null>(null)
@@ -146,18 +145,13 @@ export function AdminUsersPage() {
         <p className="text-sm text-muted-foreground">共 {meta.total} 名用户 · 可通过撤销会话即时收回访问权限</p>
         {canWrite ? <Button onClick={openCreate}>创建用户</Button> : null}
       </div>
-      <PaginationToolbar
-        page={meta.page}
-        totalPages={meta.total_pages}
-        total={meta.total}
-        searchInput={pagination.searchInput}
-        appliedSearch={pagination.appliedSearch}
-        loading={loading}
+      <PaginatedListControls
+        pagination={pagination}
+        empty={!pagination.loading && !error && users.length === 0}
+        loadingLabel="正在加载用户…"
+        errorLabel="加载用户失败，请稍后重试"
+        emptyLabel="暂无用户"
         searchLabel="搜索用户"
-        onSearchInput={pagination.setSearchInput}
-        onSearch={() => pagination.submitSearch()}
-        onClearSearch={pagination.clearSearch}
-        onPageChange={pagination.goToPage}
       />
 
       {formMode ? (
@@ -255,16 +249,6 @@ export function AdminUsersPage() {
       ) : null}
 
       {error ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p> : null}
-      <ListStatus
-        loading={loading}
-        error={loadError}
-        empty={!loading && !error && users.length === 0}
-        onRetry={pagination.retry}
-        loadingLabel="正在加载用户…"
-        errorLabel="加载用户失败，请稍后重试"
-        emptyLabel="暂无用户"
-      />
-
       <div className="space-y-3">
         {users.map((user) => (
           <article key={user.id} className="flex flex-col gap-4 rounded-lg border border-border bg-card p-5 shadow-sm md:flex-row md:items-center md:justify-between">

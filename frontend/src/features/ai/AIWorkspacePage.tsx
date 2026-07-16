@@ -10,9 +10,8 @@ import {
   type AIConversationSummary,
   type AIWorkspaceMode,
 } from '@/api/modules/ai'
-import { ListStatus } from '@/components/data/ListStatus'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
@@ -49,7 +48,7 @@ export function AIWorkspacePage() {
     pageSize: 20,
     load: ({ page, pageSize, search }) => listAIConversations({ page, page_size: pageSize, search }),
   })
-  const { rows: conversations, meta, loading: loadingConversations, error: listError } = pagination
+  const { rows: conversations, loading: loadingConversations } = pagination
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [conversation, setConversation] = useState<AIConversation | null>(null)
   const [mode, setMode] = useState<AIWorkspaceMode>('chat')
@@ -178,39 +177,26 @@ export function AIWorkspacePage() {
             <Button className="w-full" onClick={() => void createConversation()} disabled={sending}>新建对话</Button>
           </div>
           <div className="max-h-[290px] space-y-1 overflow-y-auto p-3 lg:max-h-[610px]">
-            <ListStatus
-              loading={loadingConversations}
-              error={listError}
+            <PaginatedListControls
+              pagination={pagination}
               empty={!loadingConversations && conversations.length === 0}
-              onRetry={pagination.retry}
               loadingLabel="正在加载对话…"
               errorLabel="加载 AI 对话失败，请稍后重试。"
               emptyLabel="尚无对话，点击“新建对话”开始分析。"
-            />
-            <PaginationToolbar
-              page={meta.page}
-              totalPages={meta.total_pages}
-              total={meta.total}
-              searchInput={pagination.searchInput}
-              appliedSearch={pagination.appliedSearch}
-              loading={loadingConversations}
               searchLabel="搜索对话"
-              onSearchInput={pagination.setSearchInput}
-              onSearch={() => pagination.submitSearch()}
-              onClearSearch={pagination.clearSearch}
-              onPageChange={pagination.goToPage}
-            />
-            {conversations.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => void switchConversation(item.id)}
-                className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${item.id === activeConversationId ? 'border-primary/40 bg-primary text-primary-foreground shadow-sm' : 'border-transparent hover:border-border hover:bg-accent'}`}
-              >
-                <span className="block truncate text-sm font-semibold">{item.title}</span>
-                <span className={`mt-1 block text-xs ${item.id === activeConversationId ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}>{formatTime(item.created_at)}</span>
-              </button>
-            ))}
+            >
+              {conversations.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => void switchConversation(item.id)}
+                  className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${item.id === activeConversationId ? 'border-primary/40 bg-primary text-primary-foreground shadow-sm' : 'border-transparent hover:border-border hover:bg-accent'}`}
+                >
+                  <span className="block truncate text-sm font-semibold">{item.title}</span>
+                  <span className={`mt-1 block text-xs ${item.id === activeConversationId ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}>{formatTime(item.created_at)}</span>
+                </button>
+              ))}
+            </PaginatedListControls>
           </div>
           <div className="border-t border-border p-4 text-xs leading-5 text-muted-foreground">
             <p className="font-semibold text-foreground">工具边界</p>

@@ -1,6 +1,5 @@
 import { listOperationsJobs, type OperationJobRow } from '@/api/modules/operations'
-import { ListStatus } from '@/components/data/ListStatus'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
@@ -11,7 +10,7 @@ export function JobsPage() {
     pageSize: PAGE_SIZE,
     load: ({ page, pageSize, search }) => listOperationsJobs({ page, page_size: pageSize, search }),
   })
-  const { rows: jobs, meta, loading, error } = pagination
+  const { rows: jobs } = pagination
 
   return (
     <ConsoleLayout
@@ -19,27 +18,13 @@ export function JobsPage() {
       title="Jobs control plane"
       description="集中查看后台 durable jobs 的状态、租约尝试和失败信息，为后续 webhook / SSE 分发与运营排障提供统一入口。"
     >
-      <PaginationToolbar
-        page={meta.page}
-        totalPages={meta.total_pages}
-        total={meta.total}
-        searchInput={pagination.searchInput}
-        appliedSearch={pagination.appliedSearch}
-        loading={loading}
-        searchLabel="搜索任务"
-        onSearchInput={pagination.setSearchInput}
-        onSearch={() => pagination.submitSearch()}
-        onClearSearch={pagination.clearSearch}
-        onPageChange={pagination.goToPage}
-      />
-      <ListStatus
-        loading={loading}
-        error={error}
-        empty={!loading && jobs.length === 0}
-        onRetry={pagination.retry}
+      <PaginatedListControls
+        pagination={pagination}
+        empty={!pagination.loading && jobs.length === 0}
         loadingLabel="正在加载后台任务…"
         errorLabel="Failed to load operations jobs."
         emptyLabel="No operations jobs yet"
+        searchLabel="搜索任务"
       />
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
         <table className="min-w-full divide-y divide-border text-sm">

@@ -7,9 +7,8 @@ import {
   type OperationAgentRunRow,
   type OperationAgentToolInvocationRow,
 } from '@/api/modules/operations'
-import { ListStatus } from '@/components/data/ListStatus'
+import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 function getAgentKind(row: OperationAgentRunRow | OperationAgentRunDetail) {
@@ -65,7 +64,7 @@ export function AgentRunsPage() {
     pageSize: 20,
     load: ({ page, pageSize, search }) => listOperationAgentRuns({ page, page_size: pageSize, search }),
   })
-  const { rows, meta, loading, error: listError } = pagination
+  const { rows } = pagination
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<OperationAgentRunDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
@@ -93,27 +92,13 @@ export function AgentRunsPage() {
     >
       <div className="space-y-4">
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        <PaginationToolbar
-          page={meta.page}
-          totalPages={meta.total_pages}
-          total={meta.total}
-          searchInput={pagination.searchInput}
-          appliedSearch={pagination.appliedSearch}
-          loading={loading}
-          searchLabel="搜索 Agent run"
-          onSearchInput={pagination.setSearchInput}
-          onSearch={() => pagination.submitSearch()}
-          onClearSearch={pagination.clearSearch}
-          onPageChange={pagination.goToPage}
-        />
-        <ListStatus
-          loading={loading}
-          error={listError}
-          empty={!loading && rows.length === 0}
-          onRetry={pagination.retry}
+        <PaginatedListControls
+          pagination={pagination}
+          empty={!pagination.loading && rows.length === 0}
           loadingLabel="正在加载 Agent runs…"
           errorLabel="Failed to load agent runs."
           emptyLabel="No agent runs yet"
+          searchLabel="搜索 Agent run"
         />
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
           <table className="min-w-full divide-y divide-border text-sm">
