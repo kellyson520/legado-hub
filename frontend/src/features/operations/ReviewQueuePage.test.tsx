@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { vi } from 'vitest'
 
 const operationsMocks = vi.hoisted(() => ({
@@ -138,7 +139,7 @@ beforeEach(() => {
 })
 
 test('review queue page renders source, knowledge, and translation review candidates', async () => {
-  render(<ReviewQueuePage />)
+  render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
   expect(await screen.findByRole('heading', { name: 'Review queue' })).toBeInTheDocument()
   expect(screen.getByText('build_escalation')).toBeInTheDocument()
@@ -160,6 +161,15 @@ test('review queue page renders source, knowledge, and translation review candid
   expect(screen.getByText('Translated content preview')).toBeInTheDocument()
 })
 
+test('review queue links source version candidates to rule audit', async () => {
+  render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
+
+  expect(await screen.findByRole('link', { name: '审核规则' })).toHaveAttribute(
+    'href',
+    '/sources/rules/source-version-1'
+  )
+})
+
 test('review queue page resolves source version publish candidates', async () => {
   operationsMocks.resolveReviewQueueItem.mockResolvedValueOnce({
     success: true,
@@ -178,7 +188,7 @@ test('review queue page resolves source version publish candidates', async () =>
     trace_id: null,
   })
 
-  render(<ReviewQueuePage />)
+  render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
   const button = await screen.findByRole('button', { name: 'Publish source_version_publish' })
   fireEvent.click(button)
@@ -215,7 +225,7 @@ test('review queue page resolves source review items', async () => {
     trace_id: null,
   })
 
-  render(<ReviewQueuePage />)
+  render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
   const button = await screen.findByRole('button', { name: 'Resolve build_escalation' })
   fireEvent.click(button)
@@ -251,7 +261,7 @@ test('review queue page marks translation review items as reviewed', async () =>
     trace_id: null,
   })
 
-  render(<ReviewQueuePage />)
+  render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
   const button = await screen.findByRole('button', { name: 'Mark reviewed translation_review' })
   fireEvent.click(button)
