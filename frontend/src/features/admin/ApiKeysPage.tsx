@@ -6,13 +6,14 @@ import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useServerPagination } from '@/hooks/useServerPagination'
+import { toPaginatedQueryParams } from '@/lib/pagination'
 
 const scopes = ['read.work', 'read.toc', 'read.chapter', 'jobs.submit', 'events.read', 'source.submit']
 
 export function ApiKeysPage() {
   const pagination = useServerPagination<ApiKeyRow>({
     pageSize: 20,
-    load: ({ page, pageSize, search }) => listApiKeys({ page, page_size: pageSize, search }),
+    load: (request) => listApiKeys(toPaginatedQueryParams(request)),
   })
   const { rows: keys } = pagination
   const [name, setName] = useState(''); const [permissions, setPermissions] = useState<string[]>(['read.work']); const [revealed, setRevealed] = useState(''); const [error, setError] = useState('')

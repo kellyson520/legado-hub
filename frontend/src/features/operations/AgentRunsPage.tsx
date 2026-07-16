@@ -10,6 +10,7 @@ import {
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
+import { toPaginatedQueryParams } from '@/lib/pagination'
 
 function getAgentKind(row: OperationAgentRunRow | OperationAgentRunDetail) {
   return row.agentKind ?? row.agent_kind ?? 'agent'
@@ -62,7 +63,7 @@ function formatPayload(value: unknown) {
 export function AgentRunsPage() {
   const pagination = useServerPagination<OperationAgentRunRow>({
     pageSize: 20,
-    load: ({ page, pageSize, search }) => listOperationAgentRuns({ page, page_size: pageSize, search }),
+    load: (request) => listOperationAgentRuns(toPaginatedQueryParams(request)),
   })
   const { rows } = pagination
   const [selectedId, setSelectedId] = useState<string | null>(null)

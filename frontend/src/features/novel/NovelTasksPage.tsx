@@ -2,11 +2,12 @@ import { listNovelTasks, type NovelTaskRow } from '@/api/modules/novel'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
+import { toPaginatedQueryParams } from '@/lib/pagination'
 
 export function NovelTasksPage() {
   const pagination = useServerPagination<NovelTaskRow>({
     pageSize: 20,
-    load: ({ page, pageSize, search }) => listNovelTasks({ page, page_size: pageSize, search }),
+    load: (request) => listNovelTasks(toPaginatedQueryParams(request)),
   })
   const { rows: tasks } = pagination
 

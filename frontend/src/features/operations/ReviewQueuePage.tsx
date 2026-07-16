@@ -11,6 +11,7 @@ import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
+import { toPaginatedQueryParams } from '@/lib/pagination'
 import { SourceAuditSummary } from './SourceBuildsPage'
 
 function getProposalType(row: OperationReviewQueueRow) {
@@ -80,7 +81,7 @@ function canResolve(row: OperationReviewQueueRow) {
 export function ReviewQueuePage() {
   const pagination = useServerPagination<OperationReviewQueueRow>({
     pageSize: 20,
-    load: ({ page, pageSize, search }) => listReviewQueueCandidates({ page, page_size: pageSize, search }),
+    load: (request) => listReviewQueueCandidates(toPaginatedQueryParams(request)),
   })
   const { rows } = pagination
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(() => new Set())

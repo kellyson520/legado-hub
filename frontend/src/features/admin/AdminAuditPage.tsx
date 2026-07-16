@@ -2,11 +2,12 @@ import { listAuditLogs, type AuditLogRow } from '@/api/modules/admin'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
+import { toPaginatedQueryParams } from '@/lib/pagination'
 
 export function AdminAuditPage() {
   const pagination = useServerPagination<AuditLogRow>({
     pageSize: 50,
-    load: ({ page, pageSize, search }) => listAuditLogs({ page, page_size: pageSize, search }),
+    load: (request) => listAuditLogs(toPaginatedQueryParams(request)),
   })
   const { rows: logs } = pagination
 

@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useServerPagination } from '@/hooks/useServerPagination'
+import { toPaginatedQueryParams } from '@/lib/pagination'
 
 function getSourceId(row: EngineSourceBuildRow) {
   return row.sourceId ?? row.source_id ?? row.payload.canonical_url ?? row.id
@@ -56,15 +57,15 @@ function getProbeSummary(autonomousBuild: EngineSourceBuildAutonomousBuild | und
 export function EngineRunsPage() {
   const runsPagination = useServerPagination<EngineRunRow>({
     pageSize: 20,
-    load: ({ page, pageSize, search }) => listEngineRuns({ page, page_size: pageSize, search }),
+    load: (request) => listEngineRuns(toPaginatedQueryParams(request)),
   })
   const deploymentsPagination = useServerPagination<EngineDeploymentRow>({
     pageSize: 20,
-    load: ({ page, pageSize, search }) => listEngineDeployments({ page, page_size: pageSize, search }),
+    load: (request) => listEngineDeployments(toPaginatedQueryParams(request)),
   })
   const sourceBuildsPagination = useServerPagination<EngineSourceBuildRow>({
     pageSize: 20,
-    load: ({ page, pageSize, search }) => listEngineSourceBuilds({ page, page_size: pageSize, search }),
+    load: (request) => listEngineSourceBuilds(toPaginatedQueryParams(request)),
   })
   const { rows: runs, loading: runsLoading } = runsPagination
   const { rows: deployments, loading: deploymentsLoading } = deploymentsPagination
