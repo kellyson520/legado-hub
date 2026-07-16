@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 
 import { exportLegadoSources, importLegadoSourceFile, importLegadoSources, listBookSources, type LegadoSource, type SourceRow } from '@/api/modules/sources'
+import { ListStatus } from '@/components/data/ListStatus'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -164,9 +165,16 @@ export function SourceListPage() {
       <form className="mt-4 space-y-3" onSubmit={handleImport}><label className="text-sm font-medium" htmlFor="legado-json">Legado JSON</label><Textarea id="legado-json" value={legadoJson} onChange={(event) => setLegadoJson(event.target.value)} placeholder={'[{"bookSourceName":"示例书源","bookSourceUrl":"https://example.com"}]'} /><div className="flex flex-wrap items-end gap-3"><label className="sr-only" htmlFor="legado-json-file">选择 Legado JSON 文件</label><Input ref={fileInputRef} id="legado-json-file" className="sr-only" type="file" accept=".json,application/json" onChange={(event) => void handleFileSelection(event)} disabled={submitting || readingFile} /><Button type="button" variant="outline" disabled={submitting || readingFile} onClick={() => fileInputRef.current?.click()}><Upload className="mr-2 h-4 w-4" aria-hidden="true" />上传 JSON 文件</Button><Button type="submit" disabled={submitting || readingFile}>导入书源</Button>{feedback ? <span className="pb-2 text-sm text-emerald-600">{feedback}</span> : null}{error ? <span role="alert" className="pb-2 text-sm text-rose-600">{error}</span> : null}</div>{createdVersionIds.length > 0 ? <div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span className="text-muted-foreground">候选书源已创建，可继续：</span>{createdVersionIds.map((sourceVersionId) => <Link key={sourceVersionId} to={`/sources/rules/${sourceVersionId}`} className="font-medium text-primary underline-offset-4 hover:underline">编辑规则</Link>)}</div> : null}</form>
     </Card>
     <div className="grid gap-4">
-      {loading ? <Card className="p-6 text-sm text-muted-foreground">正在加载书源…</Card> : loadError ? <Card className="flex flex-wrap items-center gap-3 p-6 text-sm text-rose-600" role="alert"><span>无法加载书源库存，请重试。</span><Button type="button" variant="outline" size="sm" onClick={() => pagination.retry()}>重试</Button></Card> : rows.length === 0 ? <Card className="p-6 text-sm text-muted-foreground">{pagination.appliedSearch ? `没有匹配“${pagination.appliedSearch}”的书源。` : '当前运行库存中还没有书源。可上传 Legado JSON 文件创建候选书源。'}</Card> : <>
-        {rows.map((row) => <Card key={row.id} className="grid gap-4 p-5 md:grid-cols-[1.6fr_1fr]"><div><p className="text-xs font-medium text-muted-foreground">书源</p><h3 className="mt-2 text-lg font-semibold">{row.bookSourceName}</h3><p className="mt-2 break-all text-sm text-muted-foreground">{row.bookSourceUrl}</p></div><div className="rounded-md border border-border bg-muted/40 p-4"><p className="text-xs font-medium text-muted-foreground">书源状态</p><p className="mt-2 text-lg font-medium text-primary">{row.sourceStatus}</p>{row.sourceStatus === 'candidate' ? <Link to={`/sources/rules/${row.id}`} className="mt-3 inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline">审核规则</Link> : null}</div></Card>)}
-      </>}
+      <ListStatus
+        loading={loading}
+        error={loadError}
+        empty={!loading && rows.length === 0}
+        onRetry={pagination.retry}
+        loadingLabel="正在加载书源…"
+        errorLabel="无法加载书源库存，请重试。"
+        emptyLabel={pagination.appliedSearch ? `没有匹配“${pagination.appliedSearch}”的书源。` : '当前运行库存中还没有书源。可上传 Legado JSON 文件创建候选书源。'}
+      />
+      {rows.map((row) => <Card key={row.id} className="grid gap-4 p-5 md:grid-cols-[1.6fr_1fr]"><div><p className="text-xs font-medium text-muted-foreground">书源</p><h3 className="mt-2 text-lg font-semibold">{row.bookSourceName}</h3><p className="mt-2 break-all text-sm text-muted-foreground">{row.bookSourceUrl}</p></div><div className="rounded-md border border-border bg-muted/40 p-4"><p className="text-xs font-medium text-muted-foreground">书源状态</p><p className="mt-2 text-lg font-medium text-primary">{row.sourceStatus}</p>{row.sourceStatus === 'candidate' ? <Link to={`/sources/rules/${row.id}`} className="mt-3 inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline">审核规则</Link> : null}</div></Card>)}
     </div>
   </ConsoleLayout>
 }

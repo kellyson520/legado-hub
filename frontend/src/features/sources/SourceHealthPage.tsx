@@ -8,6 +8,7 @@ import {
   recoverSourceHealth,
   type SourceHealthRow,
 } from '@/api/modules/sourceHealth'
+import { ListStatus } from '@/components/data/ListStatus'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -127,12 +128,15 @@ export function SourceHealthPage() {
           </div>
         </div>
 
-        {loadError ? (
-          <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-rose-600">
-            <span>Unable to load source health. Please try again.</span>
-            <Button variant="outline" size="sm" onClick={() => pagination.retry()} disabled={loading}>重试</Button>
-          </div>
-        ) : null}
+        <ListStatus
+          loading={loading}
+          error={loadError}
+          empty={!loading && rows.length === 0}
+          onRetry={pagination.retry}
+          loadingLabel="Loading"
+          errorLabel="Unable to load source health. Please try again."
+          emptyLabel="暂无书源健康记录。"
+        />
 
         {actionError ? <div role="alert" className="mb-4 text-sm text-rose-600">{actionError}</div> : null}
 
@@ -150,10 +154,7 @@ export function SourceHealthPage() {
           onPageChange={pagination.goToPage}
         />
 
-        {loading ? (
-          <div className="text-sm text-muted-foreground">Loading</div>
-        ) : (
-          <div className="space-y-4">
+        <div className="space-y-4">
             {rows.map((row) => (
               <article key={row.source_id} className="rounded-md border border-border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-4">
@@ -207,8 +208,7 @@ export function SourceHealthPage() {
                 </div>
               </article>
             ))}
-          </div>
-        )}
+        </div>
       </Card>
     </ConsoleLayout>
   )
