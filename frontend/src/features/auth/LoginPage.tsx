@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import { useAuth } from '@/app/providers/AuthProvider'
+import { StatusMessage } from '@/components/data/StatusMessage'
 
 function loginErrorMessage(reason: unknown) {
   if (
@@ -56,7 +57,7 @@ export function LoginPage() {
             Password
             <input aria-label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground outline-none focus:ring-2 focus:ring-ring" autoComplete="current-password" />
           </label>
-          {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+          <StatusMessage tone="error" message={error} />
           <button type="submit" disabled={pending} className="h-10 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90 disabled:opacity-50">
             {pending ? 'Signing in' : 'Sign in'}
           </button>

@@ -8,6 +8,7 @@ import {
   type OperationAgentToolInvocationRow,
 } from '@/api/modules/operations'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { toPaginatedQueryParams } from '@/lib/pagination'
@@ -92,7 +93,7 @@ export function AgentRunsPage() {
       description="按租户查看最近 Agent run、工具调用结果与证据轨迹，用于回溯自动构建与知识处理过程。"
     >
       <div className="space-y-4">
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <StatusMessage tone="error" message={error} />
         <PaginatedListControls
           pagination={pagination}
           empty={!pagination.loading && rows.length === 0}

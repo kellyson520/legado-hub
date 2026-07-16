@@ -15,6 +15,7 @@ import {
   type QuotaPolicyRow,
   type SourceBuildAgentSettings,
 } from '@/api/modules/system'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -300,16 +301,8 @@ export function ProviderSettingsContent() {
                 {!sourceBuildAgentLoaded ? 'Loading…' : savingSourceBuildAgent ? 'Saving…' : sourceBuildAgentSettings?.enabled ? 'Enabled' : 'Disabled'}
               </Button>
             </div>
-            {sourceBuildAgentMessage ? (
-              <p role="status" className="mt-3 text-sm font-medium text-emerald-600 dark:text-emerald-400">
-                {sourceBuildAgentMessage}
-              </p>
-            ) : null}
-            {sourceBuildAgentError ? (
-              <p role="alert" className="mt-3 text-sm font-medium text-destructive">
-                {sourceBuildAgentError}
-              </p>
-            ) : null}
+            <StatusMessage tone="success" message={sourceBuildAgentMessage} className="mt-3 font-medium" />
+            <StatusMessage tone="error" message={sourceBuildAgentError} className="mt-3 font-medium" />
           </div>
 
           <div className="mt-5 border-t border-border pt-5">
@@ -414,21 +407,9 @@ export function ProviderSettingsContent() {
               >
                 {savingInteractiveBrowser ? 'Saving…' : 'Save interactive browser settings'}
               </Button>
-              {interactiveBrowserMessage ? (
-                <p role="status" className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
-                  {interactiveBrowserMessage}
-                </p>
-              ) : null}
-              {interactiveBrowserSaveError ? (
-                <p role="alert" className="text-sm font-medium text-destructive">
-                  {interactiveBrowserSaveError}
-                </p>
-              ) : null}
-              {interactiveBrowserLoadError ? (
-                <p role="alert" className="text-sm font-medium text-destructive">
-                  {interactiveBrowserLoadError}
-                </p>
-              ) : null}
+              <StatusMessage tone="success" message={interactiveBrowserMessage} className="font-medium" />
+              <StatusMessage tone="error" message={interactiveBrowserSaveError} className="font-medium" />
+              <StatusMessage tone="error" message={interactiveBrowserLoadError} className="font-medium" />
               {interactiveBrowserLoadError && interactiveBrowserSettings === null ? (
                 <Button
                   type="button"

@@ -11,6 +11,7 @@ import {
   type AIWorkspaceMode,
 } from '@/api/modules/ai'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
@@ -212,7 +213,7 @@ export function AIWorkspacePage() {
           </header>
 
           <div className="min-h-[320px] flex-1 space-y-5 bg-[radial-gradient(circle_at_top_right,hsl(var(--accent))_0,transparent_30%)] p-5">
-            {error ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p> : null}
+            <StatusMessage tone="error" message={error} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2" />
             {!loadingConversations && !conversation ? <div className="grid min-h-[250px] place-items-center text-center text-sm text-muted-foreground">新建一个 AI 对话后，即可开始人物、剧情和世界观解析。</div> : null}
             {conversation?.messages.map((message, index) => (
               <article key={message.id} className={`max-w-3xl ${message.role === 'user' ? 'ml-auto' : ''}`}>

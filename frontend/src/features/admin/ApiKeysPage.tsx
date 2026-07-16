@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Copy, KeyRound, Trash2 } from 'lucide-react'
 import { createApiKey, deleteApiKey, disableApiKey, listApiKeys, type ApiKeyRow } from '@/api/modules/admin'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,7 +32,7 @@ export function ApiKeysPage() {
       emptyLabel="暂无 API Key"
       searchLabel="搜索 API Key"
     />
-    {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+    <StatusMessage tone="error" message={error} />
     <div className="space-y-3">{keys.map((key) => <article key={key.id} className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-4"><div><p className="font-medium">{key.name}</p><p className="mt-1 text-xs text-muted-foreground">{key.permissions.join(' · ') || '无权限'} · {key.is_enabled ? '启用' : '已禁用'}</p></div><div className="flex gap-2">{key.is_enabled ? <Button size="sm" variant="outline" onClick={() => void disableApiKey(key.id).then(load)}>禁用</Button> : null}<Button size="icon" variant="destructive" aria-label={`删除 ${key.name}`} onClick={() => void deleteApiKey(key.id).then(load)}><Trash2 className="h-4 w-4" /></Button></div></article>)}</div>
   </ConsoleLayout>
 }

@@ -10,6 +10,7 @@ import {
 } from '@/api/modules/admin'
 import { useAuth } from '@/app/providers/AuthProvider'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
@@ -249,7 +250,7 @@ export function AdminUsersPage() {
         </section>
       ) : null}
 
-      {error ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p> : null}
+      <StatusMessage tone="error" message={error} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2" />
       <div className="space-y-3">
         {users.map((user) => (
           <article key={user.id} className="flex flex-col gap-4 rounded-lg border border-border bg-card p-5 shadow-sm md:flex-row md:items-center md:justify-between">

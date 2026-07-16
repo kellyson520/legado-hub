@@ -9,6 +9,7 @@ import {
   type SourceHealthRow,
 } from '@/api/modules/sourceHealth'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -137,7 +138,7 @@ export function SourceHealthPage() {
           searchLabel="搜索书源"
         />
 
-        {actionError ? <div role="alert" className="mb-4 text-sm text-rose-600">{actionError}</div> : null}
+        <StatusMessage tone="error" message={actionError} as="div" className="mb-4 text-rose-600" />
 
         <div className="space-y-4">
             {rows.map((row) => (
