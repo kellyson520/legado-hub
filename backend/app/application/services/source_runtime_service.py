@@ -201,16 +201,13 @@ class SourceRuntimeService:
         return result
 
     async def list_visible_sources(self, actor_id: str, *, page: int = 1, page_size: int = 20) -> dict:
-        visible = [
-            version
-            for version in self._repo.list_recent_versions(limit=10_000)
-            if version.status == "published"
-            or (version.status == "candidate" and str(version.created_by) == str(actor_id))
-        ]
-        total = len(visible)
-        start = (page - 1) * page_size
+        visible, total = self._repo.list_visible_versions(
+            str(actor_id),
+            page=page,
+            page_size=page_size,
+        )
         rows = []
-        for version in visible[start:start + page_size]:
+        for version in visible:
             payload = _sanitize_legado_value(version.payload)
             name = payload.get("bookSourceName", version.source_id)
             url = payload.get("bookSourceUrl", version.source_id)
@@ -649,9 +646,10 @@ class SourceRuntimeService:
 
     async def list_recent_versions(self, *, status: str | None = None, limit: int = 50) -> list[dict]:
         rows: list[dict] = []
-        for item in self._repo.list_recent_versions(status=status, limit=limit):
-            runs = self._repo.list_test_runs(item.id)
-            latest_run = runs[0] if runs else None
+        versions = self._repo.list_recent_versions(status=status, limit=limit)
+        latest_runs = self._repo.list_latest_test_runs([item.id for item in versions])
+        for item in versions:
+            latest_run = latest_runs.get(item.id)
             rows.append(
                 {
                     "id": item.id,
