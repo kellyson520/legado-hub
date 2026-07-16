@@ -38,6 +38,7 @@ def test_json_import_creates_sanitized_candidate_and_reports_item_errors(tmp_pat
     assert response.status_code == 200
     items = response.json()["data"]["items"]
     assert [item["status"] for item in items] == ["created", "invalid", "skipped_duplicate"]
+    assert response.json()["data"]["audit_queued"] == 1
 
     from app.infrastructure.persistence.factory import build_source_runtime_repository
 
@@ -48,6 +49,8 @@ def test_json_import_creates_sanitized_candidate_and_reports_item_errors(tmp_pat
     assert version.payload["ruleSearch"] == {"bookList": ".book"}
     assert "cookie" not in version.payload
     assert version.payload["header"] == {"User-Agent": "Legado"}
+    assert version.payload["source_audit"]["status"] == "queued"
+    assert version.payload["source_audit"]["job_id"]
 
 
 def test_file_import_accepts_a_20mib_legado_json_batch(tmp_path, monkeypatch):

@@ -49,11 +49,12 @@ class SourceRuntimeService:
         "js_exec_status": {"ok", "fail"},
     }
 
-    def __init__(self, repo: SourceRuntimeRepository, audit=None, source_repo=None, source_probe=None):
+    def __init__(self, repo: SourceRuntimeRepository, audit=None, source_repo=None, source_probe=None, audit_workflow=None):
         self._repo = repo
         self._audit = audit
         self._source_repo = source_repo
         self._source_probe = source_probe
+        self._audit_workflow = audit_workflow
 
     async def aclose(self) -> None:
         close = getattr(self._source_probe, "aclose", None)
@@ -169,6 +170,15 @@ class SourceRuntimeService:
             "book",
             [(url, sanitized, actor_id) for _index, url, sanitized in to_create],
         )
+        audit_queued = 0
+        if self._audit_workflow is not None:
+            for version_id in version_ids.values():
+                self._audit_workflow.schedule(
+                    version_id=version_id,
+                    actor_id=str(actor_id),
+                    trigger="import",
+                )
+                audit_queued += 1
         for index, url, _sanitized in candidates:
             if url in existing_urls:
                 items[index] = {"index": index, "status": "skipped_duplicate", "source_url": url}
@@ -179,7 +189,10 @@ class SourceRuntimeService:
                     "source_url": url,
                     "source_version_id": version_ids[url],
                 }
-        return {"items": [item for item in items if item is not None]}
+        return {
+            "items": [item for item in items if item is not None],
+            "audit_queued": audit_queued,
+        }
 
     async def export_legado_sources(self, actor_id: str) -> list[dict]:
         versions = self._repo.list_published_versions()

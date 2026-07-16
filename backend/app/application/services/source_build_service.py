@@ -139,6 +139,25 @@ class SourceBuildService:
             ),
         )
 
+    def submit_existing_candidate(
+        self,
+        *,
+        tenant_id: str,
+        source_version_id: str,
+        url: str,
+        trigger: str,
+    ):
+        return self._jobs.enqueue(
+            kind="source.build",
+            tenant_id=tenant_id,
+            payload={
+                "url": url.strip(),
+                "source_version_id": source_version_id,
+                "trigger": trigger,
+            },
+            idempotency_key=f"source.audit:{source_version_id}",
+        )
+
     @staticmethod
     def _normalize_url(url: str) -> str:
         parts = urlsplit(url.strip())
