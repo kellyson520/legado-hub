@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope } from '@/api/types'
+import type { ApiEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
 export interface AdminUserRow {
   id: string
@@ -21,12 +21,7 @@ export interface AuditLogRow {
 }
 export interface ApiKeyRow { id: number; name: string; permissions: string[]; is_enabled: boolean; raw_key?: string }
 
-export interface AdminListParams {
-  page?: number
-  page_size?: number
-  search?: string
-  status?: string
-}
+export interface AdminListParams extends PaginatedStatusQueryParams {}
 
 export async function listUsers(params: AdminListParams = {}) {
   return apiClient.get<AdminUserRow[]>('/admin/users', { params }) as Promise<ApiEnvelope<AdminUserRow[]>>

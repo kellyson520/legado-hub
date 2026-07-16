@@ -1,12 +1,7 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope } from '@/api/types'
+import type { ApiEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
-export interface TranslationListParams {
-  page?: number
-  page_size?: number
-  search?: string
-  status?: string
-}
+export interface TranslationListParams extends PaginatedStatusQueryParams {}
 
 export interface TranslationJobRow {
   id: string

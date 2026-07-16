@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope } from '@/api/types'
+import type { ApiEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
 export interface EngineRunRow {
   id: string
@@ -78,12 +78,7 @@ export interface RegexTestResult {
   error: string | null
 }
 
-export interface EngineListParams {
-  page?: number
-  page_size?: number
-  search?: string
-  status?: string
-}
+export interface EngineListParams extends PaginatedStatusQueryParams {}
 
 export async function listEngineRuns(params: EngineListParams = {}) {
   return apiClient.get<EngineRunRow[]>('/engine/runs', { params }) as Promise<ApiEnvelope<EngineRunRow[]>>

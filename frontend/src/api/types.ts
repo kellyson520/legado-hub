@@ -15,6 +15,16 @@ export interface PaginatedMeta {
   search?: string
 }
 
+export interface PaginatedQueryParams {
+  page?: number
+  page_size?: number
+  search?: string
+}
+
+export interface PaginatedStatusQueryParams extends PaginatedQueryParams {
+  status?: string
+}
+
 export interface AuthUser {
   id: string
   username: string

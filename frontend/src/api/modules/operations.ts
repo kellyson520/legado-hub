@@ -1,5 +1,5 @@
 import { apiClient, getConfiguredAccessToken } from '@/api/client'
-import type { ApiEnvelope } from '@/api/types'
+import type { ApiEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
 export interface OperationJobRow {
   id: string
@@ -279,12 +279,7 @@ export interface OperationReviewResolveResult {
   resolved_at?: string | null
 }
 
-export interface OperationListParams {
-  page?: number
-  page_size?: number
-  search?: string
-  status?: string
-}
+export interface OperationListParams extends PaginatedStatusQueryParams {}
 
 export function listOperationsJobs(params: OperationListParams = {}): Promise<ApiEnvelope<OperationJobRow[]>> {
   return apiClient.get<OperationJobRow[]>('/events/jobs', { params })

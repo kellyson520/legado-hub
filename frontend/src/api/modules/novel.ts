@@ -1,12 +1,7 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope } from '@/api/types'
+import type { ApiEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
-export interface NovelListParams {
-  page?: number
-  page_size?: number
-  search?: string
-  status?: string
-}
+export interface NovelListParams extends PaginatedStatusQueryParams {}
 
 export interface NovelTaskRow {
   id: string

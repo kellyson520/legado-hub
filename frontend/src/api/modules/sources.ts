@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope } from '@/api/types'
+import type { ApiEnvelope, PaginatedQueryParams } from '@/api/types'
 
 export interface SourceRow {
   id: number | string
@@ -14,11 +14,7 @@ export interface SourceRow {
   payload?: Record<string, unknown>
 }
 
-export interface SourceListParams {
-  page?: number
-  page_size?: number
-  search?: string
-}
+export interface SourceListParams extends PaginatedQueryParams {}
 
 export interface LegadoImportItem {
   index: number
