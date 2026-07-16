@@ -96,11 +96,11 @@ def _ensure_sqlite_provider_columns() -> None:
 
 
 def _ensure_default_provider_routes() -> None:
+    from app.application.services.provider_platform_service import PROVIDER_ROUTE_GROUPS
+
     from .provider_repo_impl import SQLiteProviderRepository
 
     repo = SQLiteProviderRepository()
-    if repo.has_routes():
-        return
     entries = [
         {"provider_account_id": account.id, "model": account.default_model}
         for account in repo.list_configured_openai_providers()
@@ -108,7 +108,9 @@ def _ensure_default_provider_routes() -> None:
     ]
     if not entries:
         return
-    for provider_group in ("default", "ai", "source_build", "translation", "novel"):
+    for provider_group in PROVIDER_ROUTE_GROUPS:
+        if repo.list_routes(provider_group):
+            continue
         repo.replace_routes(provider_group, entries)
 
 

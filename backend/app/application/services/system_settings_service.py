@@ -1,4 +1,6 @@
-from app.domain.repositories.system_settings_repo import SystemSettingsRepository
+from app.application.services.system_settings_registry import SETTINGS_REGISTRY, SettingsTab
+from app.application.services.provider_platform_service import PROVIDER_ROUTE_GROUPS
+from app.domain.repositories.system_settings_repo import SystemSettingsRepository, VersionedSetting
 from app.infrastructure.providers.registry import ProviderRegistry
 
 
@@ -23,6 +25,32 @@ class SystemSettingsService:
     def set_source_build_agent_enabled(self, enabled: bool) -> dict:
         self._repo.set_bool(SOURCE_BUILD_AGENT_ENABLED, enabled)
         return self.get_source_build_agent_settings()
+
+    def get_section(self, domain: str, tab: str) -> dict:
+        registered_tab = self._registered_tab(domain, tab)
+        stored = self._repo.get_json(
+            registered_tab.storage_key,
+            registered_tab.normalize({}),
+        )
+        return self._section_response(domain, tab, registered_tab.normalize(stored.value), stored)
+
+    def save_section(
+        self,
+        domain: str,
+        tab: str,
+        value: dict[str, object],
+        *,
+        expected_version: str | None,
+    ) -> dict:
+        registered_tab = self._registered_tab(domain, tab)
+        normalized = registered_tab.normalize(value)
+        self._validate_section_value(domain, tab, normalized)
+        stored = self._repo.put_json(
+            registered_tab.storage_key,
+            normalized,
+            expected_version,
+        )
+        return self._section_response(domain, tab, normalized, stored)
 
     def get_interactive_browser_settings(self) -> dict:
         return {
@@ -62,3 +90,39 @@ class SystemSettingsService:
             return bool(self._provider_registry.resolve_group("source_build"))
         except LookupError:
             return False
+
+    @staticmethod
+    def _registered_tab(domain: str, tab: str) -> SettingsTab:
+        registered_tab = SETTINGS_REGISTRY.get_tab(domain, tab)
+        if registered_tab is None:
+            raise ValueError(f"Unknown settings section: {domain}/{tab}")
+        return registered_tab
+
+    @staticmethod
+    def _section_response(
+        domain: str,
+        tab: str,
+        value: dict[str, object],
+        stored: VersionedSetting,
+    ) -> dict:
+        return {
+            "domain": domain,
+            "tab": tab,
+            "value": value,
+            "version": stored.version,
+            "updated_at": stored.updated_at.isoformat() if stored.updated_at else None,
+        }
+
+    @staticmethod
+    def _validate_section_value(domain: str, tab: str, value: dict[str, object]) -> None:
+        if (domain, tab) != ("agents", "roles"):
+            return
+        unsupported = sorted(
+            route_group
+            for route_group in value.values()
+            if route_group not in PROVIDER_ROUTE_GROUPS
+        )
+        if unsupported:
+            raise ValueError(
+                "unsupported provider route group(s): " + ", ".join(unsupported)
+            )

@@ -14,7 +14,10 @@ from app.application.services.interactive_browser_service import InteractiveBrow
 from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
 from app.application.services.novel_agent_service import NovelAgentService
 from app.application.services.novel_app_service import NovelAppService
-from app.application.services.provider_platform_service import ProviderPlatformService
+from app.application.services.provider_platform_service import (
+    PROVIDER_ROUTE_GROUPS,
+    ProviderPlatformService,
+)
 from app.application.services.source_complement_app_service import SourceComplementAppService
 from app.application.services.source_build_agent import SourceBuildAgent
 from app.application.services.source_build_ai_repair_service import SourceBuildAIRepairService
@@ -251,7 +254,7 @@ class _AllowAllProviderQuotaLimiter:
 
 
 def build_provider_registry() -> ProviderRegistry:
-    provider_groups = ("default", "ai", "source_build", "translation", "novel")
+    provider_groups = PROVIDER_ROUTE_GROUPS
     groups: dict[str, list[ProviderSelection]] = {}
     if settings.LLM_API_URL and settings.LLM_API_KEY:
         provider = OpenAICompatibleProvider(
