@@ -2,6 +2,8 @@ import json
 from datetime import datetime
 from uuid import uuid4
 
+from sqlalchemy import and_, or_
+
 from app.database import SessionLocal
 from app.domain.entities.source_runtime import (
     SourceDefinition,
@@ -281,6 +283,40 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
         finally:
             self._close(db)
 
+    def list_visible_versions(
+        self,
+        actor_id: str,
+        *,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[SourceVersion], int]:
+        db = self._db()
+        try:
+            visibility_filter = or_(
+                SourceVersionModel.status == "published",
+                and_(
+                    SourceVersionModel.status == "candidate",
+                    SourceVersionModel.created_by == str(actor_id),
+                ),
+            )
+            query = db.query(SourceVersionModel.id).filter(visibility_filter)
+            total = query.count()
+            page_ids = [row[0] for row in (
+                query.order_by(SourceVersionModel.created_at.desc(), SourceVersionModel.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+                .all()
+            )]
+            if not page_ids:
+                return [], total
+            rows_by_id = {
+                row.id: row
+                for row in db.query(SourceVersionModel).filter(SourceVersionModel.id.in_(page_ids)).all()
+            }
+            return [self._version_to_entity(rows_by_id[version_id]) for version_id in page_ids], total
+        finally:
+            self._close(db)
+
     def list_published_versions(self) -> list[SourceVersion]:
         db = self._db()
         try:
@@ -340,6 +376,24 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
                 query = query.filter(SourceTestRunModel.source_version_id == source_version_id)
             rows = query.order_by(SourceTestRunModel.created_at.desc()).all()
             return [self._run_to_entity(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def list_latest_test_runs(self, source_version_ids: list[str]) -> dict[str, SourceTestRun]:
+        if not source_version_ids:
+            return {}
+        db = self._db()
+        try:
+            rows = (
+                db.query(SourceTestRunModel)
+                .filter(SourceTestRunModel.source_version_id.in_(source_version_ids))
+                .order_by(SourceTestRunModel.source_version_id, SourceTestRunModel.created_at.desc())
+                .all()
+            )
+            latest: dict[str, SourceTestRun] = {}
+            for row in rows:
+                latest.setdefault(row.source_version_id, self._run_to_entity(row))
+            return latest
         finally:
             self._close(db)
 

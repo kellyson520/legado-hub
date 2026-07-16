@@ -55,6 +55,16 @@ class SourceRuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_visible_versions(
+        self,
+        actor_id: str,
+        *,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[SourceVersion], int]:
+        raise NotImplementedError
+
+    @abstractmethod
     def list_published_versions(self) -> list[SourceVersion]:
         raise NotImplementedError
 
@@ -72,6 +82,10 @@ class SourceRuntimeRepository(ABC):
 
     @abstractmethod
     def list_test_runs(self, source_version_id: str | None = None) -> list[SourceTestRun]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_latest_test_runs(self, source_version_ids: list[str]) -> dict[str, SourceTestRun]:
         raise NotImplementedError
 
     @abstractmethod
