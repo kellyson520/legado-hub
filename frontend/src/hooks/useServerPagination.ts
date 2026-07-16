@@ -46,7 +46,6 @@ export function useServerPagination<T>(
   const appliedSearchRef = useRef(initialSearchRef.current)
   const metaRef = useRef<PaginatedMeta>(normalizePageMeta({}, 1, options.pageSize, 0))
   const retryTargetRef = useRef<PageTarget>({ page: 1, search: initialSearchRef.current })
-  const successfulTargetRef = useRef<PageTarget>({ page: 1, search: initialSearchRef.current })
   const [rows, setRows] = useState<T[]>([])
   const [meta, setMeta] = useState<PaginatedMeta>(metaRef.current)
   const [searchInput, setSearchInput] = useState(initialSearchRef.current)
@@ -79,7 +78,6 @@ export function useServerPagination<T>(
       metaRef.current = normalizedMeta
       setAppliedSearch(search)
       appliedSearchRef.current = search
-      successfulTargetRef.current = { page: normalizedMeta.page, search }
     } catch (caught) {
       if (!mountedRef.current || requestIdRef.current !== requestId) return
       setError(caught instanceof Error ? caught : new Error('Failed to load paginated data'))
@@ -124,7 +122,7 @@ export function useServerPagination<T>(
   }, [requestPage])
 
   const reload = useCallback(() => {
-    const target = successfulTargetRef.current
+    const target = retryTargetRef.current
     void requestPage(target.page, target.search)
   }, [requestPage])
 

@@ -12,6 +12,7 @@ export interface PaginationToolbarProps {
   loading: boolean
   showSearch?: boolean
   searchLabel?: string
+  itemLabel?: string
   emptyLabel?: string
   onSearchInput: (value: string) => void
   onSearch: () => void
@@ -28,6 +29,7 @@ export function PaginationToolbar({
   loading,
   showSearch = true,
   searchLabel = '搜索书源',
+  itemLabel = '条',
   emptyLabel = '暂无匹配数据',
   onSearchInput,
   onSearch,
@@ -77,7 +79,7 @@ export function PaginationToolbar({
         ) : total === 0 ? (
           <p className="text-sm text-muted-foreground">{emptyLabel}</p>
         ) : (
-          <p className="text-sm text-muted-foreground">第 {page} / {safeTotalPages} 页，共 {total} 条</p>
+          <p className="text-sm text-muted-foreground">第 {page} / {safeTotalPages} 页，共 {total} {itemLabel}</p>
         )}
         <div className="flex gap-2">
           <Button type="button" variant="outline" disabled={loading || page <= 1} onClick={() => onPageChange(page - 1)}>

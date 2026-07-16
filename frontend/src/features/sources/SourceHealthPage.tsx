@@ -11,32 +11,10 @@ import {
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { PaginationToolbar } from '@/components/data/PaginationToolbar'
+import { useServerPagination } from '@/hooks/useServerPagination'
 
 const PAGE_SIZE = 20
-
-interface SourceHealthPageMeta {
-  page: number
-  pageSize: number
-  total: number
-  totalPages: number
-}
-
-function numberFromMeta(meta: Record<string, unknown>, key: string, fallback: number) {
-  const value = meta[key]
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback
-}
-
-function pageMeta(meta: Record<string, unknown>, requestedPage: number): SourceHealthPageMeta {
-  const pageSize = numberFromMeta(meta, 'page_size', PAGE_SIZE) || PAGE_SIZE
-  const total = numberFromMeta(meta, 'total', 0)
-  const totalPages = numberFromMeta(meta, 'total_pages', Math.ceil(total / pageSize))
-  return {
-    page: numberFromMeta(meta, 'page', requestedPage) || requestedPage,
-    pageSize,
-    total,
-    totalPages,
-  }
-}
 
 function tone(status: string) {
   if (status === 'healthy' || status === 'ok') return 'text-emerald-600 dark:text-emerald-400'
@@ -46,17 +24,14 @@ function tone(status: string) {
 }
 
 export function SourceHealthPage() {
-  const [rows, setRows] = useState<SourceHealthRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [page, setPage] = useState(1)
-  const [meta, setMeta] = useState<SourceHealthPageMeta>({ page: 1, pageSize: PAGE_SIZE, total: 0, totalPages: 0 })
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const pagination = useServerPagination<SourceHealthRow>({
+    pageSize: PAGE_SIZE,
+    load: ({ page, pageSize, search }) => listSourceHealth({ page, page_size: pageSize, search }),
+  })
+  const { rows, meta, loading, error: loadError } = pagination
   const [actionError, setActionError] = useState<string | null>(null)
   const [pendingSourceIds, setPendingSourceIds] = useState<Set<number>>(() => new Set())
   const mountedRef = useRef(true)
-  const displayedPageRef = useRef(1)
-  const inFlightPageRef = useRef<number | null>(null)
-  const latestLoadRequestIdRef = useRef(0)
   const nextActionRequestIdRef = useRef(0)
   const actionRequestIdsRef = useRef(new Map<number, number>())
   const pendingSourceIdsRef = useRef(new Set<number>())
@@ -73,40 +48,10 @@ export function SourceHealthPage() {
     })
   }
 
-  async function load(requestedPage = displayedPageRef.current) {
-    if (!mountedRef.current) return
-    const requestId = latestLoadRequestIdRef.current + 1
-    latestLoadRequestIdRef.current = requestId
-    inFlightPageRef.current = requestedPage
-    setLoading(true)
-    setLoadError(null)
-    try {
-      const response = await listSourceHealth({ page: requestedPage, page_size: PAGE_SIZE })
-      if (!mountedRef.current || latestLoadRequestIdRef.current !== requestId) return
-      const nextMeta = pageMeta(response.meta, requestedPage)
-      setRows(response.data)
-      setMeta(nextMeta)
-      setPage(nextMeta.page)
-      displayedPageRef.current = nextMeta.page
-    } catch {
-      if (mountedRef.current && latestLoadRequestIdRef.current === requestId) {
-        setLoadError('Unable to load source health. Please try again.')
-      }
-    } finally {
-      if (mountedRef.current && latestLoadRequestIdRef.current === requestId) {
-        inFlightPageRef.current = null
-        setLoading(false)
-      }
-    }
-  }
-
   useEffect(() => {
     mountedRef.current = true
-    void load(displayedPageRef.current)
     return () => {
       mountedRef.current = false
-      latestLoadRequestIdRef.current += 1
-      inFlightPageRef.current = null
       nextActionRequestIdRef.current += 1
       actionRequestIdsRef.current.clear()
       pendingSourceIdsRef.current.clear()
@@ -128,7 +73,7 @@ export function SourceHealthPage() {
     try {
       await action(sourceId)
       if (mountedRef.current && actionRequestIdsRef.current.get(sourceId) === actionRequestId) {
-        await load(inFlightPageRef.current ?? displayedPageRef.current)
+        pagination.reload()
       }
     } catch {
       if (mountedRef.current && actionRequestIdsRef.current.get(sourceId) === actionRequestId) {
@@ -175,7 +120,7 @@ export function SourceHealthPage() {
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-foreground">Book source health</h3>
           <div className="flex gap-3">
-            <Button variant="outline" size="sm" onClick={() => void load(displayedPageRef.current)} disabled={loading}>Probe now</Button>
+            <Button variant="outline" size="sm" onClick={() => pagination.reload()} disabled={loading}>Probe now</Button>
             <Link to="/sources" className="text-sm font-medium text-primary">
               Back to inventory
             </Link>
@@ -184,12 +129,26 @@ export function SourceHealthPage() {
 
         {loadError ? (
           <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-sm text-rose-600">
-            <span>{loadError}</span>
-            <Button variant="outline" size="sm" onClick={() => void load(displayedPageRef.current)} disabled={loading}>Retry</Button>
+            <span>Unable to load source health. Please try again.</span>
+            <Button variant="outline" size="sm" onClick={() => pagination.retry()} disabled={loading}>重试</Button>
           </div>
         ) : null}
 
         {actionError ? <div role="alert" className="mb-4 text-sm text-rose-600">{actionError}</div> : null}
+
+        <PaginationToolbar
+          page={meta.page}
+          totalPages={meta.total_pages}
+          total={meta.total}
+          searchInput={pagination.searchInput}
+          appliedSearch={pagination.appliedSearch}
+          loading={loading}
+          searchLabel="搜索书源"
+          onSearchInput={pagination.setSearchInput}
+          onSearch={() => pagination.submitSearch()}
+          onClearSearch={pagination.clearSearch}
+          onPageChange={pagination.goToPage}
+        />
 
         {loading ? (
           <div className="text-sm text-muted-foreground">Loading</div>
@@ -248,27 +207,6 @@ export function SourceHealthPage() {
                 </div>
               </article>
             ))}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-              <Button
-                variant="outline"
-                size="sm"
-                aria-label="Previous page"
-                disabled={loading || page <= 1}
-                onClick={() => void load(displayedPageRef.current - 1)}
-              >
-                Previous
-              </Button>
-              <span aria-live="polite" className="text-sm text-muted-foreground">Page {page} of {meta.totalPages}</span>
-              <Button
-                variant="outline"
-                size="sm"
-                aria-label="Next page"
-                disabled={loading || meta.totalPages === 0 || page >= meta.totalPages}
-                onClick={() => void load(displayedPageRef.current + 1)}
-              >
-                Next
-              </Button>
-            </div>
           </div>
         )}
       </Card>

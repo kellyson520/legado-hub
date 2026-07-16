@@ -125,17 +125,17 @@ test('source health page uses API metadata to navigate the inventory one page at
   )
 
   expect(await screen.findByText('Total: 21')).toBeInTheDocument()
-  expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled()
+  expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  fireEvent.click(screen.getByRole('button', { name: '下一页' }))
 
   await waitFor(() => {
-    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20 })
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20, search: '' })
   })
   expect(await screen.findByText('第二页书源')).toBeInTheDocument()
-  expect(screen.getByText('Page 2 of 2')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled()
+  expect(screen.getByText('第 2 / 2 页，共 21 条')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
 })
 
 test('source health page stops loading and offers a retry when its request fails', async () => {
@@ -148,15 +148,15 @@ test('source health page stops loading and offers a retry when its request fails
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load source health. Please try again.')
   expect(screen.queryByText('Loading')).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  fireEvent.click(screen.getByRole('button', { name: '重试' }))
 
   await waitFor(() => {
-    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 1, page_size: 20 })
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 1, page_size: 20, search: '' })
   })
   expect(await screen.findByText('七猫小说')).toBeInTheDocument()
 })
 
-test('a failed page request keeps the displayed page as the next navigation and action target', async () => {
+test('a failed page request retries the failed page and keeps actions on the retried page', async () => {
   let pageTwoAttempts = 0
   vi.mocked(listSourceHealth).mockImplementation((params: { page?: number } = {}) => {
     if ((params.page ?? 1) === 2) {
@@ -174,25 +174,20 @@ test('a failed page request keeps the displayed page as the next navigation and 
   )
 
   expect(await screen.findByText('七猫小说')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  fireEvent.click(screen.getByRole('button', { name: '下一页' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load source health. Please try again.')
-  expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+  expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  fireEvent.click(screen.getByRole('button', { name: '重试' }))
   await waitFor(() => {
-    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 1, page_size: 20 })
-  })
-
-  fireEvent.click(screen.getByRole('button', { name: 'Probe source 七猫小说' }))
-  await waitFor(() => {
-    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 1, page_size: 20 })
-  })
-
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
-  await waitFor(() => {
-    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20 })
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20, search: '' })
   })
   expect(await screen.findByText('第二页书源')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Probe source 第二页书源' }))
+  await waitFor(() => {
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20, search: '' })
+  })
 })
 
 test.each(['probe', 'recover'] as const)('%s completion preserves the latest in-flight navigation', async (verb) => {
@@ -219,9 +214,9 @@ test.each(['probe', 'recover'] as const)('%s completion preserves the latest in-
   expect(screen.getByRole('button', { name: verb === 'probe' ? 'Recover source 七猫小说' : 'Probe source 七猫小说' })).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Probe source 起点读书限免+本章说' })).toBeEnabled()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  fireEvent.click(screen.getByRole('button', { name: '下一页' }))
   await waitFor(() => {
-    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20 })
+    expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20, search: '' })
   })
 
   mutation.resolve(mutationResponse())
@@ -233,7 +228,7 @@ test.each(['probe', 'recover'] as const)('%s completion preserves the latest in-
   await Promise.resolve()
   expect(screen.getByText(`最新第二页书源-${verb}`)).toBeInTheDocument()
   expect(screen.queryByText('过期第二页书源')).not.toBeInTheDocument()
-  expect(screen.getByText('Page 2 of 2')).toBeInTheDocument()
+  expect(screen.getByText('第 2 / 2 页，共 21 条')).toBeInTheDocument()
 })
 
 test('a rejected probe keeps the current page visible and re-enables its actions', async () => {
@@ -250,7 +245,7 @@ test('a rejected probe keeps the current page visible and re-enables its actions
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Unable to probe 七猫小说. Please try again.')
   expect(screen.getByText('七猫小说')).toBeInTheDocument()
-  expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+  expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
   expect(probeButton).toBeEnabled()
 })
 
@@ -268,7 +263,7 @@ test('a rejected recovery keeps the current page visible and re-enables its acti
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Unable to recover 七猫小说. Please try again.')
   expect(screen.getByText('七猫小说')).toBeInTheDocument()
-  expect(screen.getByText('Page 1 of 2')).toBeInTheDocument()
+  expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
   expect(recoverButton).toBeEnabled()
 })
 

@@ -60,7 +60,7 @@ export interface SourceHealthDetail {
   failure_timeline: SourceFailureEvent[]
 }
 
-export async function listSourceHealth(params: { page?: number; page_size?: number; statuses?: string } = {}) {
+export async function listSourceHealth(params: { page?: number; page_size?: number; search?: string; statuses?: string } = {}) {
   return apiClient.get<SourceHealthRow[]>('/source-health/book-sources', {
     params,
   }) as Promise<ApiEnvelope<SourceHealthRow[]>>
