@@ -21,6 +21,7 @@ class SourceHealthRepository(ABC):
     def list_book_source_health_inventory(
         self,
         statuses: list[str] | None = None,
+        search: str = "",
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[SourceHealthSnapshot], int]:

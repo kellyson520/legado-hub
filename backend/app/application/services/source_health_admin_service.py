@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from math import ceil
 
 from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
 
@@ -22,16 +23,24 @@ class SourceHealthAdminService:
         page: int = 1,
         page_size: int = 20,
         statuses: list[str] | None = None,
+        search: str = "",
     ) -> dict:
         offset = (page - 1) * page_size
         rows, total = self._health_repo.list_book_source_health_inventory(
             statuses=statuses,
+            search=search,
             limit=page_size,
             offset=offset,
         )
         return {
             "items": [self._snapshot_to_dict(item) for item in rows],
-            "meta": {"page": page, "page_size": page_size, "total": total},
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+            },
         }
 
     async def get_book_source_health(self, source_id: int) -> dict:

@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.database import SessionLocal
 from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
@@ -96,18 +96,28 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
     def list_book_source_health_inventory(
         self,
         statuses: list[str] | None = None,
+        search: str = "",
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[SourceHealthSnapshot], int]:
         db = self._db()
         try:
             derived_status = func.coalesce(SourceHealthSnapshotModel.health_status, "unknown")
+            normalized_search = search.strip()
+            search_pattern = f"%{normalized_search}%"
             count_query = db.query(func.count(BookSourceModel.id)).outerjoin(
                 SourceHealthSnapshotModel,
                 SourceHealthSnapshotModel.source_id == BookSourceModel.id,
             )
             if statuses:
                 count_query = count_query.filter(derived_status.in_(statuses))
+            if normalized_search:
+                count_query = count_query.filter(
+                    or_(
+                        BookSourceModel.bookSourceName.ilike(search_pattern),
+                        BookSourceModel.bookSourceUrl.ilike(search_pattern),
+                    )
+                )
             total = int(count_query.scalar() or 0)
 
             query = (
@@ -141,6 +151,13 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             )
             if statuses:
                 query = query.filter(derived_status.in_(statuses))
+            if normalized_search:
+                query = query.filter(
+                    or_(
+                        BookSourceModel.bookSourceName.ilike(search_pattern),
+                        BookSourceModel.bookSourceUrl.ilike(search_pattern),
+                    )
+                )
             rows = query.offset(offset).limit(limit).all()
             return [self._inventory_row_to_snapshot(row) for row in rows], total
         finally:

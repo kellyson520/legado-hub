@@ -29,6 +29,7 @@ async def list_book_source_health(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     statuses: str | None = None,
+    search: str = Query(default="", max_length=200),
     _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
 ):
     service = build_source_health_admin_service()
@@ -37,6 +38,7 @@ async def list_book_source_health(
             page=page,
             page_size=page_size,
             statuses=statuses.split(",") if statuses else None,
+            search=search,
         )
     finally:
         await service.aclose()

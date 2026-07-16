@@ -209,5 +209,5 @@ def test_visible_source_inventory_uses_database_pagination_without_loading_every
     response = client.get("/api/sources/visible?page=2&page_size=1", headers=headers)
 
     assert response.status_code == 200
-    assert response.json()["meta"] == {"page": 2, "page_size": 1, "total": 3, "search": ""}
+    assert response.json()["meta"] == {"page": 2, "page_size": 1, "total": 3, "total_pages": 3, "search": ""}
     assert len(response.json()["data"]) == 1

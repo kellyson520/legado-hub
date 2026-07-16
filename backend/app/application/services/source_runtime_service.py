@@ -1,5 +1,6 @@
 import asyncio
 from copy import deepcopy
+from math import ceil
 
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.auth import AuditEvent
@@ -240,7 +241,13 @@ class SourceRuntimeService:
             )
         return {
             "items": rows,
-            "meta": {"page": page, "page_size": page_size, "total": total, "search": search},
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+            },
         }
 
     async def get_version_detail(self, source_version_id: str) -> dict:
