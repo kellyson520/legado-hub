@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Body, Depends, Query
+import asyncio
+import json
+
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from typing import Any
 
 from pydantic import BaseModel
@@ -9,6 +12,7 @@ from app.interfaces.http.deps import RequestIdentity, get_current_identity, requ
 
 
 router = APIRouter()
+MAX_LEGADO_IMPORT_FILE_BYTES = 32 * 1024 * 1024
 
 
 class BookSourcePayload(BaseModel):
@@ -31,6 +35,36 @@ async def import_legado_json_sources(
 ):
     data = await build_source_runtime_service().import_legado_sources(payload, str(identity.user_id))
     return {"success": True, "code": "OK", "message": "Legado 书源导入完成", "data": data, "meta": {}, "trace_id": None}
+
+
+@router.post("/import/file")
+async def import_legado_json_file(
+    file: UploadFile = File(...),
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    try:
+        await file.seek(0)
+        size = await asyncio.to_thread(_file_size, file.file)
+        if size > MAX_LEGADO_IMPORT_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="Legado JSON file exceeds the 32 MiB upload limit")
+        await file.seek(0)
+        payload = await asyncio.to_thread(json.load, file.file)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Legado JSON file is malformed") from exc
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Legado JSON file must be UTF-8") from exc
+    finally:
+        await file.close()
+    data = await build_source_runtime_service().import_legado_sources(payload, str(identity.user_id))
+    return {"success": True, "code": "OK", "message": "Legado 书源文件导入完成", "data": data, "meta": {}, "trace_id": None}
+
+
+def _file_size(file_object) -> int:
+    file_object.seek(0, 2)
+    size = file_object.tell()
+    file_object.seek(0)
+    return size
 
 
 @router.get("/export")

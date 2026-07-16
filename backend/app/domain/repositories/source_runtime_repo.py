@@ -31,6 +31,18 @@ class SourceRuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def existing_source_ids(self, source_type: str, source_ids: list[str]) -> set[str]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_candidate_version_ids_bulk(
+        self,
+        source_type: str,
+        entries: list[tuple[str, dict, str]],
+    ) -> dict[str, str]:
+        raise NotImplementedError
+
+    @abstractmethod
     def get_version(self, version_id: str) -> SourceVersion | None:
         raise NotImplementedError
 

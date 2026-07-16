@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import json
 
 
 def _client_and_headers(tmp_path, monkeypatch):
@@ -47,6 +48,32 @@ def test_json_import_creates_sanitized_candidate_and_reports_item_errors(tmp_pat
     assert version.payload["ruleSearch"] == {"bookList": ".book"}
     assert "cookie" not in version.payload
     assert version.payload["header"] == {"User-Agent": "Legado"}
+
+
+def test_file_import_accepts_a_20mib_legado_json_batch(tmp_path, monkeypatch):
+    client, headers = _client_and_headers(tmp_path, monkeypatch)
+    payload = [
+        {
+            "bookSourceName": f"批量书源 {index}",
+            "bookSourceUrl": f"https://bulk-{index}.example.test/books",
+            "ruleSearch": {"bookList": ".book"},
+            "memo": "x" * 81_000,
+        }
+        for index in range(260)
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    assert len(encoded) >= 20 * 1024 * 1024
+
+    response = client.post(
+        "/api/sources/import/file",
+        headers=headers,
+        files={"file": ("legado-20mib.json", encoded, "application/json")},
+    )
+
+    assert response.status_code == 200
+    items = response.json()["data"]["items"]
+    assert len(items) == len(payload)
+    assert all(item["status"] == "created" for item in items)
 
 
 def test_export_is_whitelisted_and_only_includes_own_candidates_or_published(tmp_path, monkeypatch):
