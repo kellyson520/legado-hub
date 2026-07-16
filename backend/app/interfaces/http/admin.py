@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 from app.application.services.auth_service import AuthAppService
 from app.core.permissions import Permission
+from app.core.response import from_paginated_result
 from app.interfaces.http.deps import RequestIdentity, get_auth_service, get_current_identity, require_permission
 
 
@@ -40,14 +41,7 @@ async def list_users(
     service: AuthAppService = Depends(get_auth_service),
 ):
     result = await service.list_users_page(page=page, page_size=page_size, search=search, status=status)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "users listed",
-        "data": result["items"],
-        "meta": result["meta"],
-        "trace_id": None,
-    }
+    return from_paginated_result(result, message="users listed")
 
 
 @router.post("/users")
@@ -151,14 +145,7 @@ async def list_api_keys(
     service: AuthAppService = Depends(get_auth_service),
 ):
     result = await service.list_api_keys_page(page=page, page_size=page_size, search=search, status=status)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "api keys listed",
-        "data": result["items"],
-        "meta": result["meta"],
-        "trace_id": None,
-    }
+    return from_paginated_result(result, message="api keys listed")
 
 
 @router.post("/api-keys")
@@ -224,14 +211,7 @@ async def list_audit(
     service: AuthAppService = Depends(get_auth_service),
 ):
     result = await service.list_audit_events_page(page=page, page_size=page_size, search=search)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "audit listed",
-        "data": result["items"],
-        "meta": result["meta"],
-        "trace_id": None,
-    }
+    return from_paginated_result(result, message="audit listed")
 
 
 @router.post("/sessions/{user_id}/revoke")

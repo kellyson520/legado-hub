@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from app.core.exceptions import AuthorizationException, NotFoundException, ValidationException
 from app.core.pagination import pagination_meta
 from app.core.permissions import Permission
+from app.core.response import from_paginated_result
 from app.application.services.event_delivery_service import get_event_delivery_stream_broker
 from app.infrastructure.persistence.factory import (
     build_agent_runtime_service,
@@ -148,14 +149,7 @@ async def list_operations_jobs(
         }
         for job in result["items"]
     ]
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'operations jobs listed',
-        'data': data,
-        'meta': result["meta"],
-        'trace_id': None,
-    }
+    return from_paginated_result({**result, 'items': data}, message='operations jobs listed')
 
 
 @router.get('/deliveries')
@@ -188,14 +182,7 @@ async def list_event_deliveries(
         }
         for delivery in result["items"]
     ]
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'event deliveries listed',
-        'data': data,
-        'meta': result["meta"],
-        'trace_id': None,
-    }
+    return from_paginated_result({**result, 'items': data}, message='event deliveries listed')
 
 
 @router.get('/deliveries/{event_id}/attempts')
@@ -240,14 +227,7 @@ async def list_source_build_candidates(
         page_size=page_size,
         search=search,
     )
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'source build candidates listed',
-        'data': result["items"],
-        'meta': result["meta"],
-        'trace_id': None,
-    }
+    return from_paginated_result(result, message='source build candidates listed')
 
 
 @router.get('/agent-runs')
@@ -264,14 +244,7 @@ async def list_operations_agent_runs(
     for run in result["items"]:
         history = service.get_tool_history(run.id, tenant_id=run.tenant_id) or []
         rows.append(_serialize_agent_run(run, history=history))
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'agent runs listed',
-        'data': rows,
-        'meta': result["meta"],
-        'trace_id': None,
-    }
+    return from_paginated_result({**result, 'items': rows}, message='agent runs listed')
 
 
 @router.get('/agent-runs/{run_id}')
@@ -477,14 +450,13 @@ async def list_review_queue(
         + translation_result["meta"]["total"]
     )
     data = data[(page - 1) * page_size : page * page_size]
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'review queue listed',
-        'data': data,
-        'meta': pagination_meta(page, page_size, total, search=search),
-        'trace_id': None,
-    }
+    return from_paginated_result(
+        {
+            'items': data,
+            'meta': pagination_meta(page, page_size, total, search=search),
+        },
+        message='review queue listed',
+    )
 
 
 @router.post('/review-queue/{item_id}/resolve')

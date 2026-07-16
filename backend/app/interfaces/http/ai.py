@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
+from app.core.response import from_paginated_result
 from app.infrastructure.persistence.factory import build_ai_service, build_ai_workspace_service
 from app.infrastructure.persistence.factory import build_system_settings_service
 from app.interfaces.http.deps import require_permission
@@ -55,7 +56,7 @@ async def list_ai_tasks(
 ):
     service = build_ai_service()
     result = await service.list_tasks_page(page=page, page_size=page_size, search=search, status=status)
-    return {"success": True, "code": "OK", "message": "ai tasks listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
+    return from_paginated_result(result, message="ai tasks listed")
 
 
 @router.post("/tasks/character")
@@ -81,7 +82,7 @@ async def list_conversations(
         page_size=page_size,
         search=search,
     )
-    return {"success": True, "code": "OK", "message": "ai conversations listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
+    return from_paginated_result(result, message="ai conversations listed")
 
 
 @router.post("/conversations")

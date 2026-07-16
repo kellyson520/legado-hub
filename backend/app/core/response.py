@@ -15,6 +15,7 @@
 }
 """
 
+from collections.abc import Mapping
 from typing import Any, Optional, Dict, TypeVar, Generic
 from pydantic import BaseModel, Field
 from pydantic.generics import GenericModel
@@ -95,6 +96,15 @@ def paginated(
         "meta": pagination_meta(page, page_size, total),
         "trace_id": get_trace_id(),
     }
+
+
+def from_paginated_result(result: Mapping[str, Any], message: str = "success") -> Dict:
+    """Adapt a service ``items/meta`` result to the public API envelope."""
+    return ok(
+        data=result["items"],
+        message=message,
+        meta=result["meta"],
+    )
 
 
 def fail(

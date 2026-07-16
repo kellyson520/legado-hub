@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.core.permissions import Permission
+from app.core.response import from_paginated_result
 from app.infrastructure.persistence.factory import build_novel_agent_service, build_novel_app_service
 from app.interfaces.http.deps import require_permission
 
@@ -18,7 +19,7 @@ async def list_books(
 ):
     service = build_novel_app_service()
     result = await service.list_books_page(page=page, page_size=page_size, search=search, status=status)
-    return {"success": True, "code": "OK", "message": "novels listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
+    return from_paginated_result(result, message="novels listed")
 
 
 @router.post("/books/{novel_id}/analysis")

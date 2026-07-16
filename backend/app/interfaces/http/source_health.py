@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.permissions import Permission
+from app.core.response import from_paginated_result
 from app.infrastructure.persistence.factory import build_source_health_admin_service
 from app.interfaces.http.deps import require_permission
 
@@ -42,14 +43,7 @@ async def list_book_source_health(
         )
     finally:
         await service.aclose()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source health listed",
-        "data": data["items"],
-        "meta": data["meta"],
-        "trace_id": None,
-    }
+    return from_paginated_result(data, message="source health listed")
 
 
 @router.get("/book-sources/{source_id}")

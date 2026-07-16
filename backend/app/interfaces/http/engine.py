@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
+from app.core.response import from_paginated_result
 from app.infrastructure.persistence.factory import (
     build_engine_service,
     build_source_build_service,
@@ -184,14 +185,7 @@ async def list_console_source_builds(
     result = await build_source_runtime_service().list_recent_versions_page(
         status="candidate", page=page, page_size=page_size, search=search
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "engine source builds listed",
-        "data": result["items"],
-        "meta": result["meta"],
-        "trace_id": None,
-    }
+    return from_paginated_result(result, message="engine source builds listed")
 
 
 @router.get("/runs")
@@ -203,7 +197,7 @@ async def list_runs(
 ):
     service = build_source_runtime_service()
     result = await service.list_runs_page(page=page, page_size=page_size, search=search)
-    return {"success": True, "code": "OK", "message": "engine runs listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
+    return from_paginated_result(result, message="engine runs listed")
 
 
 @router.get("/deployments")
@@ -216,11 +210,4 @@ async def list_deployments(
 ):
     service = build_source_runtime_service()
     result = await service.list_deployments_page(page=page, page_size=page_size, search=search, status=status)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "engine deployments listed",
-        "data": result["items"],
-        "meta": result["meta"],
-        "trace_id": None,
-    }
+    return from_paginated_result(result, message="engine deployments listed")

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, model_validator
 
 from app.core.permissions import Permission
+from app.core.response import from_paginated_result
 from app.infrastructure.persistence.factory import build_translation_service
 from app.interfaces.http.deps import require_permission
 
@@ -32,7 +33,7 @@ async def list_jobs(
 ):
     service = build_translation_service()
     result = await service.list_jobs_page(page=page, page_size=page_size, search=search, status=status)
-    return {"success": True, "code": "OK", "message": "translation jobs listed", "data": result["items"], "meta": result["meta"], "trace_id": None}
+    return from_paginated_result(result, message="translation jobs listed")
 
 
 @router.post("/jobs")

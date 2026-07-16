@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.core.permissions import Permission
+from app.core.response import from_paginated_result
 from app.infrastructure.persistence.factory import build_source_runtime_service, build_source_service
 from app.interfaces.http.deps import RequestIdentity, get_current_identity, require_permission
 
@@ -85,14 +86,7 @@ async def list_book_sources(
 ):
     service = build_source_service()
     result = await service.list_book_sources(page=page, page_size=page_size, enabled_only=enabled_only)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "book sources listed",
-        "data": result["items"],
-        "meta": result["meta"],
-        "trace_id": None,
-    }
+    return from_paginated_result(result, message="book sources listed")
 
 
 @router.get("/visible")
@@ -109,14 +103,7 @@ async def list_visible_source_versions(
         page_size=page_size,
         search=search,
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "visible source inventory listed",
-        "data": result["items"],
-        "meta": result["meta"],
-        "trace_id": None,
-    }
+    return from_paginated_result(result, message="visible source inventory listed")
 
 
 @router.post("/book_sources")
