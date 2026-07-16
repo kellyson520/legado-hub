@@ -570,7 +570,7 @@ def test_operations_review_queue_rejects_legacy_unmarked_source_build_candidate_
     )
 
     assert response.status_code == 422
-    assert 'live probe' in response.json()['message'].lower()
+    assert 'source audit is missing' in response.json()['message'].lower()
     assert repo.get_version(version.id).status == 'candidate'
 
 

@@ -720,10 +720,10 @@ class SourceRuntimeService:
 
     def _assert_source_audit_publishable(self, version) -> None:
         payload = version.payload if isinstance(version.payload, dict) else {}
-        if "source_audit" not in payload:
-            return
-        audit = payload["source_audit"]
-        if not isinstance(audit, dict) or audit.get("status") != "passed":
+        audit = payload.get("source_audit")
+        if not isinstance(audit, dict):
+            raise ValidationException("source audit is missing; queue audit before publication")
+        if audit.get("status") not in {"approved_for_publish", "passed"}:
             raise ValidationException("source audit must pass before publication")
         if audit.get("test_run_pending"):
             raise ValidationException("source audit test-run checkpoint must settle before publication")

@@ -194,6 +194,30 @@ async def test_rule_publish_rejects_shape_only_validation_without_live_probe(tmp
 
 
 @pytest.mark.asyncio
+async def test_rule_publish_rejects_candidate_without_unified_audit_record(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-rule-missing-audit.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_runtime_service import SourceRuntimeService
+    from app.core.exceptions import ValidationException
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
+
+    bootstrap_sqlite()
+    repo = SQLiteSourceRuntimeRepository()
+    candidate = repo.create_candidate_version(
+        "book",
+        "https://example.test/missing-audit",
+        _valid_source_payload(bookSourceUrl="https://example.test/missing-audit"),
+        "7",
+    )
+
+    with pytest.raises(ValidationException, match="source audit is missing"):
+        await SourceRuntimeService(repo).publish_rule_version(candidate.id, "7")
+
+
+@pytest.mark.asyncio
 async def test_live_probe_validation_persists_only_safe_evidence_summary(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "source-rule-safe-evidence.sqlite3"))
