@@ -21,3 +21,13 @@ class AdjudicationOutcome:
     verdict: str
     claim_status: str
     reasons: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TaskProcessingResult:
+    """Bounded result of one evidence-first analysis task execution."""
+
+    claim_ids: tuple[str, ...] = ()
+    outcomes: tuple[AdjudicationOutcome, ...] = ()
+    token_count: int = 0
+    reasons: tuple[str, ...] = ()

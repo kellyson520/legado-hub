@@ -79,6 +79,10 @@ class NarrativeKnowledgeService:
                 self._serialize_claim(claim)
                 for claim in self._repo.list_claims(work_id=work_id, status="published")
             ],
+            "candidate_claims": [
+                self._serialize_claim(claim)
+                for claim in self._repo.list_claims(work_id=work_id, status="candidate")
+            ],
             "open_conflicts": [
                 {
                     "id": conflict.id,

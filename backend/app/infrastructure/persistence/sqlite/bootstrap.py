@@ -95,6 +95,29 @@ def _ensure_sqlite_provider_columns() -> None:
             connection.exec_driver_sql("ALTER TABLE provider_accounts ADD COLUMN default_model VARCHAR NOT NULL DEFAULT ''")
 
 
+def _ensure_sqlite_novel_analysis_columns() -> None:
+    required_columns = {
+        "task_id": "VARCHAR",
+        "role": "VARCHAR NOT NULL DEFAULT 'adjudicator'",
+        "evidence_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+        "provider_group": "VARCHAR",
+        "provider_name": "VARCHAR",
+        "model": "VARCHAR",
+        "prompt_version": "VARCHAR",
+        "policy_json": "TEXT NOT NULL DEFAULT '{}'",
+    }
+    with engine.begin() as connection:
+        rows = connection.exec_driver_sql("PRAGMA table_info(knowledge_adjudications)").fetchall()
+        if not rows:
+            return
+        columns = {row[1] for row in rows}
+        for column, ddl in required_columns.items():
+            if column not in columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE knowledge_adjudications ADD COLUMN {column} {ddl}"
+                )
+
+
 def _ensure_default_provider_routes() -> None:
     from app.application.services.provider_platform_service import PROVIDER_ROUTE_GROUPS
 
@@ -138,6 +161,7 @@ def bootstrap_sqlite() -> None:
     _ensure_sqlite_job_columns()
     _ensure_sqlite_translation_columns()
     _ensure_sqlite_provider_columns()
+    _ensure_sqlite_novel_analysis_columns()
     _ensure_default_provider_routes()
     _ensure_sqlite_event_delivery_indexes()
     db = SessionLocal()

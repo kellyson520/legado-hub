@@ -802,8 +802,16 @@ class KnowledgeAdjudicationModel(Base):
     id = Column(String, primary_key=True)
     claim_id = Column(String, ForeignKey("knowledge_claims.id"), nullable=False, index=True)
     tenant_id = Column(String, nullable=False, index=True)
+    task_id = Column(String, ForeignKey("agent_analysis_tasks.id"), nullable=True, index=True)
+    role = Column(String, nullable=False, default="adjudicator", index=True)
     verdict = Column(String, nullable=False, index=True)
     reasons_json = Column(Text, nullable=False, default="[]")
+    evidence_ids_json = Column(Text, nullable=False, default="[]")
+    provider_group = Column(String, nullable=True)
+    provider_name = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    prompt_version = Column(String, nullable=True)
+    policy_json = Column(Text, nullable=False, default="{}")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 

@@ -188,7 +188,13 @@ def build_novel_analysis_task_service() -> NovelAnalysisTaskService:
 
 
 def build_novel_analysis_pipeline_service() -> NovelAnalysisPipelineService:
-    return NovelAnalysisPipelineService(knowledge_service=build_narrative_knowledge_service())
+    return NovelAnalysisPipelineService(
+        knowledge_service=build_narrative_knowledge_service(),
+        evidence_service=build_evidence_service(),
+        platform=build_provider_platform_service(),
+        settings_service=build_system_settings_service(),
+        decision_recorder=build_novel_analysis_task_repository(),
+    )
 
 
 def build_novel_analysis_audit_service() -> NovelAnalysisAuditService:

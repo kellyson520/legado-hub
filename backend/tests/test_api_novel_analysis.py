@@ -77,6 +77,7 @@ def test_snapshot_returns_published_claims_and_open_conflicts(monkeypatch, tmp_p
 
     assert response.status_code == 200
     assert response.json()["data"]["published_claims"]
+    assert response.json()["data"]["candidate_claims"]
     assert response.json()["data"]["open_conflicts"]
 
 
