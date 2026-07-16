@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import {
   listReviewQueueCandidates,
@@ -182,15 +183,25 @@ export function ReviewQueuePage() {
                     <td className="px-4 py-3 text-muted-foreground">{getCreatedBy(row)}</td>
                     <td className="px-4 py-3">
                       {canResolve(row) ? (
-                        <button
-                          type="button"
-                          className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={() => void handleResolve(row)}
-                          disabled={resolving}
-                          aria-label={`${actionLabel} ${getProposalType(row)}`}
-                        >
-                          {resolving ? 'Processing…' : actionLabel}
-                        </button>
+                        <div className="flex flex-wrap gap-2">
+                          {itemType === 'source_version' ? (
+                            <Link
+                              to={`/sources/rules/${row.id}`}
+                              className="rounded-lg border border-primary px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary hover:text-primary-foreground"
+                            >
+                              审核规则
+                            </Link>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                            onClick={() => void handleResolve(row)}
+                            disabled={resolving}
+                            aria-label={`${actionLabel} ${getProposalType(row)}`}
+                          >
+                            {resolving ? 'Processing…' : actionLabel}
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-xs text-muted-foreground">No action</span>
                       )}
