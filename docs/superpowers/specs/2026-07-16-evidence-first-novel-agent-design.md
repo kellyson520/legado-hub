@@ -121,7 +121,7 @@ The policy records role, provider route, actual model, prompt version, policy ve
 
 ## 7. System Settings Information Architecture
 
-Settings use stable URL paths in the form `/settings/{domain}/{tab}` and a registry-driven back end and front end. A setting domain declares its ID, display metadata, access permission, typed schema, defaults, secret fields, redaction rules, side effects, and audit event. A tab is a child of a domain. New configuration areas register themselves instead of adding isolated pages and hand-written persistence.
+Settings use stable URL paths in the form `/system/settings/{domain}/{tab}` and a registry-driven back end and front end. The existing `/system/settings` route redirects to the default tab. A setting domain declares its ID, display metadata, access permission, typed schema, defaults, secret fields, redaction rules, side effects, and audit event. A tab is a child of a domain. New configuration areas register themselves instead of adding isolated pages and hand-written persistence.
 
 Top-level domains:
 
