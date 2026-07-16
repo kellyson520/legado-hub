@@ -1,7 +1,7 @@
 from dataclasses import replace
 from uuid import uuid4
 
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.source_review import SourceReviewItem, utcnow
 from app.domain.repositories.source_review_repo import SourceReviewRepository
@@ -102,10 +102,7 @@ class SourceReviewService:
             page_size=page_size,
             search=search,
         )
-        return {
-            "items": rows,
-            "meta": pagination_meta(page, page_size, total, search=search),
-        }
+        return paginated_result(rows, page=page, page_size=page_size, total=total, search=search)
 
     def list_items(
         self,

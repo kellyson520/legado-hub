@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.domain.repositories.source_repo import SourceRepository
 from app.services.fetcher import SourceFetcher
 
@@ -11,10 +11,7 @@ class SourceAppService:
 
     async def list_book_sources(self, page: int, page_size: int, enabled_only: bool = False) -> dict:
         items, total = await self._repo.list_book_sources(page=page, page_size=page_size, enabled_only=enabled_only)
-        return {
-            "items": items,
-            "meta": pagination_meta(page, page_size, total),
-        }
+        return paginated_result(items, page=page, page_size=page_size, total=total)
 
     async def create_book_source(self, payload: dict, actor_id: int) -> dict:
         return await self._repo.create_book_source(payload, actor_id)

@@ -30,6 +30,21 @@ def pagination_meta(
     return metadata
 
 
+def paginated_result(
+    items: Any,
+    *,
+    page: int,
+    page_size: int,
+    total: int,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Compose a list payload with the canonical pagination metadata."""
+    return {
+        "items": items,
+        "meta": pagination_meta(page, page_size, total, **extra),
+    }
+
+
 def like_pattern(value: str) -> str:
     """Create a SQL LIKE/ILIKE pattern for a literal user search string.
 

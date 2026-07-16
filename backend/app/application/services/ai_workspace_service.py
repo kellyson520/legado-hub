@@ -1,7 +1,7 @@
 import json
 from uuid import uuid4
 
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from pydantic import BaseModel, ConfigDict
 
 from app.application.services.ai_service import AIService
@@ -103,10 +103,13 @@ class AIWorkspaceService:
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
-        return {
-            "items": [self._serialize_conversation(item) for item in rows],
-            "meta": pagination_meta(page, page_size, total, search=search),
-        }
+        return paginated_result(
+            [self._serialize_conversation(item) for item in rows],
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+        )
 
     def get_conversation(self, conversation_id: str, actor_id: str) -> dict:
         conversation = self._conversations.get_conversation(conversation_id, str(actor_id))

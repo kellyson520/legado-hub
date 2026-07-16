@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from app.core.exceptions import AuthenticationException, NotFoundException, ValidationException
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -125,10 +125,14 @@ class AuthAppService:
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
-        return {
-            "items": [self._serialize_user(item) for item in rows],
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+        return paginated_result(
+            [self._serialize_user(item) for item in rows],
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+            status=status,
+        )
 
     @staticmethod
     def _serialize_user(user: User) -> dict:
@@ -233,10 +237,14 @@ class AuthAppService:
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
-        return {
-            "items": [asdict(item) for item in rows],
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+        return paginated_result(
+            [asdict(item) for item in rows],
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+            status=status,
+        )
 
     async def create_api_key(self, name: str, permissions: list[str], actor_id: int) -> dict:
         raw_key = generate_api_key()
@@ -282,10 +290,13 @@ class AuthAppService:
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
-        return {
-            "items": [asdict(item) for item in rows],
-            "meta": pagination_meta(page, page_size, total, search=search),
-        }
+        return paginated_result(
+            [asdict(item) for item in rows],
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+        )
 
     async def revoke_user_sessions(self, target_user_id: int, actor_id: int) -> None:
         await self._repo.revoke_all_refresh_sessions(target_user_id)

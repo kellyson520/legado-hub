@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.domain.entities.job import Job
 from sqlalchemy.exc import IntegrityError
 
@@ -81,10 +81,7 @@ class JobService:
             search=search,
             status=status,
         )
-        return {
-            "items": rows,
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+        return paginated_result(rows, page=page, page_size=page_size, total=total, search=search, status=status)
 
     def list_events(self, job_id: str, *, tenant_id: str):
         if self.get(job_id, tenant_id=tenant_id) is None:

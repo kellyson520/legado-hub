@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import httpx
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.core.config import settings
 from app.domain.entities.event_delivery import EventDelivery, EventDeliveryAttempt, PreparedEventDelivery
 from app.domain.repositories.event_delivery_repo import EventDeliveryRepository
@@ -216,10 +216,7 @@ class EventDeliveryService:
             search=search,
             status=status,
         )
-        return {
-            "items": rows,
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+        return paginated_result(rows, page=page, page_size=page_size, total=total, search=search, status=status)
 
     def list_stream_events(self, tenant_id: str | None = None, limit: int = 20) -> list[EventDeliveryStreamEvent]:
         return self._stream_broker.recent_events(tenant_id=tenant_id, limit=limit)

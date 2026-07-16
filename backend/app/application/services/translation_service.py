@@ -2,7 +2,7 @@ from uuid import uuid4
 
 import httpx
 
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.core.exceptions import NotFoundException
 from app.domain.entities.translation_runtime import TranslationChunk, TranslationJob
 
@@ -65,10 +65,14 @@ class TranslationService:
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
-        return {
-            "items": [self._serialize_job(item) for item in rows],
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+        return paginated_result(
+            [self._serialize_job(item) for item in rows],
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+            status=status,
+        )
 
     async def review_job(self, job_id: str, *, reviewer_id: str, memory_note: dict) -> dict:
         if self._repo is None:

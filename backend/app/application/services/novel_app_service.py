@@ -1,5 +1,5 @@
 from app.domain.entities.novel_runtime import NovelIngestion
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 
 
 class NovelAppService:
@@ -36,10 +36,14 @@ class NovelAppService:
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
-        return {
-            "items": [self._serialize(item) for item in rows],
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+        return paginated_result(
+            [self._serialize(item) for item in rows],
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+            status=status,
+        )
 
     @staticmethod
     def _serialize(ingestion: NovelIngestion) -> dict:

@@ -2,7 +2,7 @@ import asyncio
 from copy import deepcopy
 
 from app.core.exceptions import NotFoundException, ValidationException
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.domain.entities.auth import AuditEvent
 from app.domain.repositories.source_runtime_repo import SourceRuntimeRepository
 
@@ -239,10 +239,7 @@ class SourceRuntimeService:
                     "errorMsg": None,
                 }
             )
-        return {
-            "items": rows,
-            "meta": pagination_meta(page, page_size, total, search=search),
-        }
+        return paginated_result(rows, page=page, page_size=page_size, total=total, search=search)
 
     async def get_version_detail(self, source_version_id: str) -> dict:
         version = self._repo.get_version(source_version_id)
@@ -632,8 +629,8 @@ class SourceRuntimeService:
 
     async def list_runs_page(self, *, page: int = 1, page_size: int = 50, search: str = "") -> dict:
         rows, total = self._repo.list_test_runs_page(page=page, page_size=page_size, search=search)
-        return {
-            "items": [
+        return paginated_result(
+            [
                 {
                     "id": item.id,
                     "source_version_id": item.source_version_id,
@@ -646,8 +643,11 @@ class SourceRuntimeService:
                 }
                 for item in rows
             ],
-            "meta": pagination_meta(page, page_size, total, search=search),
-        }
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+        )
 
     async def list_deployments(self) -> list[dict]:
         return [
@@ -677,8 +677,8 @@ class SourceRuntimeService:
             search=search,
             status=status,
         )
-        return {
-            "items": [
+        return paginated_result(
+            [
                 {
                     "id": item.id,
                     "source_version_id": item.source_version_id,
@@ -690,8 +690,12 @@ class SourceRuntimeService:
                 }
                 for item in rows
             ],
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+            status=status,
+        )
 
     async def list_versions(self, source_type: str, source_id: str) -> list[dict]:
         return [
@@ -780,10 +784,7 @@ class SourceRuntimeService:
                     ),
                 }
             )
-        return {
-            "items": rows,
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+        return paginated_result(rows, page=page, page_size=page_size, total=total, search=search, status=status)
 
     @staticmethod
     def _validate_rule_payload(payload: dict) -> None:

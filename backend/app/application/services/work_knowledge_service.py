@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.work_knowledge import WorkKnowledgeProposal
 
@@ -164,10 +164,7 @@ class WorkKnowledgeService:
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
-        return {
-            "items": rows,
-            "meta": pagination_meta(page, page_size, total, search=search),
-        }
+        return paginated_result(rows, page=page, page_size=page_size, total=total, search=search)
 
     def resolve_review(
         self,

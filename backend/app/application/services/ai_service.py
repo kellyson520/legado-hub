@@ -2,7 +2,7 @@ from uuid import uuid4
 import re
 from collections.abc import Awaitable, Callable
 
-from app.core.pagination import pagination_meta
+from app.core.pagination import paginated_result
 from app.domain.entities.ai_runtime import AITask
 
 
@@ -43,10 +43,14 @@ class AIService:
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
-        return {
-            "items": [self._serialize(task) for task in rows],
-            "meta": pagination_meta(page, page_size, total, search=search, status=status),
-        }
+        return paginated_result(
+            [self._serialize(task) for task in rows],
+            page=page,
+            page_size=page_size,
+            total=total,
+            search=search,
+            status=status,
+        )
 
     async def run_character_analysis(self, payload: dict, actor_id: str = "system") -> dict:
         invocation = await self._platform.invoke_chat(
