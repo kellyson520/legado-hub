@@ -10,6 +10,7 @@ import {
   type SourceVersionResponse,
 } from '@/api/modules/sources'
 import { testEngineRegex, type RegexTestResult } from '@/api/modules/engine'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -167,8 +168,8 @@ export function SourceRuleEditorPage() {
       actions={<Button asChild variant="outline"><Link to="/sources">返回书源库</Link></Button>}
     >
       {loading ? <Card className="p-6 text-sm text-muted-foreground">正在加载书源版本…</Card> : null}
-      {error ? <p role="alert" className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">{error}</p> : null}
-      {message ? <p className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{message}</p> : null}
+      <StatusMessage tone="error" message={error} className="rounded-md border border-rose-200 bg-rose-50 p-3 text-rose-700" />
+      <StatusMessage tone="success" message={message} className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-700" />
 
       {!loading && version ? (
         <div className="grid gap-5">

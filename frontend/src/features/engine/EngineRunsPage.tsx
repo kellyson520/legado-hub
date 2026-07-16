@@ -14,6 +14,7 @@ import {
 } from '@/api/modules/engine'
 import { RunTimeline } from '@/components/diagnostics/RunTimeline'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -159,8 +160,8 @@ export function EngineRunsPage() {
               <Button type="submit" disabled={submitting}>
                 Start source build
               </Button>
-              {feedback ? <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{feedback}</span> : null}
-              {error ? <span className="text-sm font-medium text-rose-600 dark:text-rose-400">{error}</span> : null}
+              <StatusMessage tone="success" message={feedback} as="span" className="font-medium" />
+              <StatusMessage tone="error" message={error} as="span" className="font-medium text-rose-600 dark:text-rose-400" />
             </div>
           </form>
         </section>

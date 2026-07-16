@@ -8,6 +8,7 @@ import {
   type OperationReviewQueueRow,
 } from '@/api/modules/operations'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { SourceAuditSummary } from './SourceBuildsPage'
@@ -136,8 +137,8 @@ export function ReviewQueuePage() {
       description="聚合低置信度对齐、自动修复阻断与人工审核入口，当前承载 work knowledge、translation review 与 source version publish 候选项。"
     >
       <div className="space-y-3">
-        {feedback ? <p className="text-sm text-emerald-600">{feedback}</p> : null}
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <StatusMessage tone="success" message={feedback} />
+        <StatusMessage tone="error" message={error} />
         <PaginatedListControls
           pagination={pagination}
           empty={!pagination.loading && visibleRows.length === 0}

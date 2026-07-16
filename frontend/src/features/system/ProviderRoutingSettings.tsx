@@ -13,6 +13,7 @@ import {
   type ProviderRouteEntry,
   type ProviderRow,
 } from '@/api/modules/system'
+import { StatusMessage } from '@/components/data/StatusMessage'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -292,7 +293,7 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
           </datalist>
           <div className="flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save channel'}</Button>
-            {message ? <span role="status" className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{message}</span> : null}
+            <StatusMessage tone="success" message={message} as="span" className="font-medium" />
           </div>
         </form>
 
@@ -318,7 +319,7 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
             ))}
           </div>
         </div>
-        {error ? <p role="alert" className="mt-3 text-sm font-medium text-destructive">{error}</p> : null}
+        <StatusMessage tone="error" message={error} className="mt-3 font-medium" />
       </section>
 
       <section className="border border-border bg-card p-5 shadow-sm" aria-labelledby="functional-routes-heading">
