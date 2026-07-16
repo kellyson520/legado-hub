@@ -205,7 +205,7 @@ async def test_workspace_message_persists_reply_and_sanitizes_tool_result(tmp_pa
     reply = await service.send_message(
         conversation["id"],
         "7",
-        "character",
+        "chat",
         "列出书源",
         [{"name": "list_visible_sources", "arguments": {}}],
     )
@@ -331,5 +331,124 @@ async def test_workspace_model_can_call_a_read_only_system_tool(tmp_path, monkey
     assert [item["id"] for item in reply["tool_calls"][0]["result"]] == ["owned-candidate", "published-source"]
     assert {item["function"]["name"] for item in platform.calls[0]["payload"]["tools"]} == {
         "list_visible_sources", "get_source_rule_summary", "list_ai_analysis_results",
+        "source.search", "toc.get", "chapter.fetch",
     }
     assert platform.calls[1]["payload"]["messages"][-1]["role"] == "tool"
+
+
+@pytest.mark.asyncio
+async def test_character_workspace_requires_retrieved_chapter_evidence_before_answering(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-character-evidence.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    def tool_call(call_id: str, name: str, arguments: dict) -> dict:
+        return {
+            "id": call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(arguments)},
+        }
+
+    class RetrievalPlatform:
+        def __init__(self):
+            self.calls = []
+            self.responses = [
+                {"output": {"message": {"role": "assistant", "content": "", "tool_calls": [
+                    tool_call("search-1", "source.search", {"keyword": "剑来"}),
+                ]}}},
+                {"output": {"message": {"role": "assistant", "content": "", "tool_calls": [
+                    tool_call("toc-1", "toc.get", {
+                        "source_id": 1,
+                        "book_url": "https://example.test/jianshen",
+                        "book_name": "剑来",
+                    }),
+                ]}}},
+                {"output": {"message": {"role": "assistant", "content": "", "tool_calls": [
+                    tool_call("chapter-1", "chapter.fetch", {
+                        "source_id": 1,
+                        "book_url": "https://example.test/jianshen",
+                        "book_name": "剑来",
+                        "chapter_index": 0,
+                    }),
+                ]}}},
+                {"output": {"text": "陈平安的经历仅基于已检索章节中的证据。"}},
+            ]
+
+        async def invoke_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.responses.pop(0)
+
+    class RetrievalExecutor:
+        def __init__(self):
+            self.calls = []
+
+        async def ainvoke(self, name, arguments):
+            self.calls.append((name, arguments))
+            data = {
+                "source.search": {"items": [{"source_id": 1, "book_url": "https://example.test/jianshen"}]},
+                "toc.get": {"chapters": [{"index": 0, "title": "第一章"}]},
+                "chapter.fetch": {
+                    "canonical_chapter_id": "chapter-1",
+                    "evidence_span_ids": ["evidence-1"],
+                    "content_preview": "陈平安在此章作出选择。",
+                },
+            }[name]
+            return type("ToolResult", (), {"status": "accepted", "data": data, "error_code": None})()
+
+    bootstrap_sqlite()
+    platform = RetrievalPlatform()
+    executor = RetrievalExecutor()
+    service = AIWorkspaceService(
+        platform,
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        novel_tool_executor=executor,
+    )
+    conversation = await service.create_conversation("7", "人物介绍")
+
+    reply = await service.send_message(conversation["id"], "7", "character", "介绍《剑来》的陈平安")
+
+    assert reply["content"] == "陈平安的经历仅基于已检索章节中的证据。"
+    assert [item["name"] for item in reply["tool_calls"]] == ["source.search", "toc.get", "chapter.fetch"]
+    assert executor.calls[0] == ("source.search", {"keyword": "剑来", "tenant_id": "7"})
+    assert platform.calls[0]["payload"]["tool_choice"] == "required"
+    assert {item["function"]["name"] for item in platform.calls[0]["payload"]["tools"]} == {"source.search"}
+
+
+@pytest.mark.asyncio
+async def test_character_workspace_rejects_a_memory_only_model_answer(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-character-no-evidence.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class MemoryOnlyPlatform:
+        def __init__(self):
+            self.calls = []
+
+        async def invoke_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"output": {"text": "陈平安的人生经历是……"}}
+
+    bootstrap_sqlite()
+    platform = MemoryOnlyPlatform()
+    service = AIWorkspaceService(
+        platform,
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        novel_tool_executor=object(),
+    )
+    conversation = await service.create_conversation("7", "人物介绍")
+
+    reply = await service.send_message(conversation["id"], "7", "character", "介绍《剑来》的陈平安")
+
+    assert "不能基于模型记忆" in reply["content"]
+    assert reply["tool_calls"] == []
+    assert platform.calls[0]["payload"]["tool_choice"] == "required"
