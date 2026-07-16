@@ -34,6 +34,7 @@ class SourceAuditWorkflowService:
         )
         audit.update({
             "status": "queued",
+            "workflow": "unified",
             "job_id": job.id,
             "trigger": trigger,
             "reason_code": None,
