@@ -637,6 +637,20 @@ class ContentVariantModel(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class EvidenceSpanModel(Base):
+    __tablename__ = "evidence_spans"
+
+    id = Column(String, primary_key=True)
+    canonical_chapter_id = Column(String, ForeignKey("canonical_chapters.id"), nullable=False, index=True)
+    content_variant_id = Column(String, ForeignKey("content_variants.id"), nullable=False, index=True)
+    start_offset = Column(Integer, nullable=False)
+    end_offset = Column(Integer, nullable=False)
+    excerpt = Column(Text, nullable=False)
+    excerpt_sha256 = Column(String, nullable=False, index=True)
+    content_sha256 = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class RouteDecisionModel(Base):
     __tablename__ = "route_decisions"
 

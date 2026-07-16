@@ -9,6 +9,7 @@ from app.application.services.content_distribution_service import ContentDistrib
 from app.application.services.dashboard_service import DashboardService
 from app.application.services.event_delivery_service import EventDeliveryService
 from app.application.services.engine_service import EngineService
+from app.application.services.evidence_service import EvidenceService
 from app.application.services.job_service import JobService
 from app.application.services.interactive_browser_service import InteractiveBrowserService
 from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
@@ -44,6 +45,7 @@ from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLi
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_runtime_repo_impl import SQLiteNovelRuntimeRepository
 from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLiteEventDeliveryRepository
+from app.infrastructure.persistence.sqlite.evidence_repo_impl import SQLiteEvidenceRepository
 from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
 from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
 from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
@@ -112,6 +114,11 @@ def build_canonical_content_repository() -> SQLiteCanonicalContentRepository:
     return SQLiteCanonicalContentRepository()
 
 
+def build_evidence_repository() -> SQLiteEvidenceRepository:
+    bootstrap_sqlite()
+    return SQLiteEvidenceRepository()
+
+
 def build_provider_repository() -> SQLiteProviderRepository:
     bootstrap_sqlite()
     return SQLiteProviderRepository()
@@ -142,6 +149,13 @@ def build_source_review_service() -> SourceReviewService:
 
 def build_canonical_content_service() -> CanonicalContentService:
     return CanonicalContentService(build_canonical_content_repository())
+
+
+def build_evidence_service() -> EvidenceService:
+    return EvidenceService(
+        repo=build_evidence_repository(),
+        canonical_repo=build_canonical_content_repository(),
+    )
 
 
 def build_content_distribution_service() -> ContentDistributionService:
