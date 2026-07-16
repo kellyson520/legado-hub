@@ -38,6 +38,11 @@ def _loads_list(raw: str | None) -> list[str]:
     return value if isinstance(value, list) else []
 
 
+def _like_pattern(value: str) -> str:
+    escaped = value.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return f'%{escaped}%'
+
+
 class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
     _SQLITE_IN_BATCH_SIZE = 800
     def __init__(self, session=None):
@@ -302,13 +307,14 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
                 )
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = _like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        SourceVersionModel.id.ilike(pattern),
-                        SourceVersionModel.source_id.ilike(pattern),
-                        SourceVersionModel.created_by.ilike(pattern),
-                        SourceVersionModel.payload.ilike(pattern),
+                        SourceVersionModel.id.ilike(pattern, escape='\\'),
+                        SourceVersionModel.source_type.ilike(pattern, escape='\\'),
+                        SourceVersionModel.source_id.ilike(pattern, escape='\\'),
+                        SourceVersionModel.created_by.ilike(pattern, escape='\\'),
+                        SourceVersionModel.payload.ilike(pattern, escape='\\'),
                     )
                 )
             total = query.count()

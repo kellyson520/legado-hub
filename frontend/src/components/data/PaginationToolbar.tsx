@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import type { FormEvent } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -37,6 +38,7 @@ export function PaginationToolbar({
   onPageChange,
 }: PaginationToolbarProps) {
   const safeTotalPages = Math.max(1, totalPages)
+  const searchId = useId()
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -48,11 +50,11 @@ export function PaginationToolbar({
       {showSearch ? (
         <form className="flex flex-col gap-2 sm:flex-row sm:items-end" onSubmit={handleSubmit}>
           <div className="min-w-0 flex-1">
-            <label className="text-sm font-medium" htmlFor="pagination-search">
+            <label className="text-sm font-medium" htmlFor={searchId}>
               {searchLabel}
             </label>
             <Input
-              id="pagination-search"
+              id={searchId}
               aria-label={searchLabel}
               className="mt-2"
               value={searchInput}

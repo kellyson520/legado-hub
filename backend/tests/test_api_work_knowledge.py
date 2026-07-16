@@ -179,6 +179,62 @@ def test_operations_review_queue_lists_candidate_proposals(monkeypatch, tmp_path
     assert translation_row['status'] == 'candidate'
     assert translation_row['created_by'] == 'translator-1'
 
+    actor_search = client.get(
+        '/api/events/review-queue?search=translator-1',
+        headers=headers,
+    )
+    assert actor_search.status_code == 200
+    assert actor_search.json()['meta']['total'] == 1
+    assert actor_search.json()['data'][0]['id'] == 'translation-review-1'
+
+
+def test_operations_review_queue_paginates_all_source_candidates(monkeypatch, tmp_path):
+    monkeypatch.setenv('APP_ENV', 'test')
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'api-review-queue-pagination.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.main import app
+
+    bootstrap_sqlite()
+    repo = build_source_runtime_repository()
+    for index in range(55):
+        repo.create_candidate_version(
+            source_type='book',
+            source_id=f'https://example.test/books/{index:02d}',
+            payload={'canonical_url': f'https://example.test/books/{index:02d}'},
+            created_by='pagination-test',
+        )
+
+    token = create_access_token({'sub': '1', 'permissions': ['agent_runs.read']})
+    response = TestClient(app).get(
+        '/api/events/review-queue?page=2&page_size=50',
+        headers={'Authorization': f'Bearer {token}'},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload['meta']['total'] == 55
+    assert payload['meta']['total_pages'] == 2
+    assert len(payload['data']) == 5
+    assert all(item['item_type'] == 'source_version' for item in payload['data'])
+
+    source_type_search = TestClient(app).get(
+        '/api/events/review-queue?page=2&page_size=50&search=book',
+        headers={'Authorization': f'Bearer {token}'},
+    )
+    assert source_type_search.status_code == 200
+    assert source_type_search.json()['meta']['total'] == 55
+    assert len(source_type_search.json()['data']) == 5
+
+    oversized_page = TestClient(app).get(
+        '/api/events/review-queue?page=101&page_size=200',
+        headers={'Authorization': f'Bearer {token}'},
+    )
+    assert oversized_page.status_code == 422
+
 
 def test_operations_review_queue_can_publish_knowledge_proposal(monkeypatch, tmp_path):
     monkeypatch.setenv('APP_ENV', 'test')

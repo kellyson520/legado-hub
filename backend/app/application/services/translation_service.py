@@ -27,6 +27,7 @@ class TranslationService:
         page_size: int = 50,
         search: str = "",
         status: str | None = None,
+        review_status: str | None = None,
     ) -> dict:
         if hasattr(self._repo, "list_jobs_page"):
             rows, total = self._repo.list_jobs_page(
@@ -34,14 +35,33 @@ class TranslationService:
                 page_size=page_size,
                 search=search,
                 status=status,
+                review_status=review_status,
             )
         else:
             all_rows = self._repo.list_jobs()
             normalized = search.strip().lower()
             filtered = [
                 item for item in all_rows
-                if (not normalized or normalized in f"{item.id} {item.source_language} {item.target_language} {item.provider}".lower())
+                if (
+                    not normalized
+                    or normalized in ' '.join(
+                        str(value or '')
+                        for value in (
+                            item.id,
+                            item.actor_id,
+                            item.source_language,
+                            item.target_language,
+                            item.provider,
+                            item.model,
+                            item.source_text,
+                            item.result_text,
+                            item.content_variant_id,
+                            item.memory_payload,
+                        )
+                    ).lower()
+                )
                 and (not status or item.status == status)
+                and (not review_status or item.review_status == review_status)
             ]
             total = len(filtered)
             rows = filtered[(page - 1) * page_size : page * page_size]
@@ -204,6 +224,7 @@ class TranslationService:
         progress = "100%" if job.status == "succeeded" else "0%"
         return {
             "id": job.id,
+            "actor_id": job.actor_id,
             "name": f"{job.source_language}->{job.target_language}",
             "status": job.status,
             "provider": job.provider,

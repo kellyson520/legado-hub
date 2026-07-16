@@ -10,6 +10,11 @@ from app.domain.repositories.source_review_repo import SourceReviewRepository
 from .schema import SourceReviewItemModel
 
 
+def _like_pattern(value: str) -> str:
+    escaped = value.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return f'%{escaped}%'
+
+
 class SQLiteSourceReviewRepository(SourceReviewRepository):
     def __init__(self, session=None):
         self._session = session
@@ -116,13 +121,16 @@ class SQLiteSourceReviewRepository(SourceReviewRepository):
                 query = query.filter(SourceReviewItemModel.review_type == review_type)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = _like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        SourceReviewItemModel.id.ilike(pattern),
-                        SourceReviewItemModel.review_type.ilike(pattern),
-                        SourceReviewItemModel.source_url.ilike(pattern),
-                        SourceReviewItemModel.summary.ilike(pattern),
+                        SourceReviewItemModel.id.ilike(pattern, escape='\\'),
+                        SourceReviewItemModel.review_type.ilike(pattern, escape='\\'),
+                        SourceReviewItemModel.source_version_id.ilike(pattern, escape='\\'),
+                        SourceReviewItemModel.source_url.ilike(pattern, escape='\\'),
+                        SourceReviewItemModel.summary.ilike(pattern, escape='\\'),
+                        SourceReviewItemModel.created_by.ilike(pattern, escape='\\'),
+                        SourceReviewItemModel.payload_json.ilike(pattern, escape='\\'),
                     )
                 )
             total = query.count()

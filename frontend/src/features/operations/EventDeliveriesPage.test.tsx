@@ -7,6 +7,7 @@ const operationsMocks = vi.hoisted(() => {
       event: string
       data: {
         event_id: string
+        event_type?: string
         status: string
         attempt_count: number
         tenant_id: string
@@ -99,6 +100,113 @@ test('event deliveries page shows initial rows and applies stream updates', asyn
 
   expect(await screen.findByText('retrying')).toBeInTheDocument()
   expect(screen.getByText('upstream unavailable')).toBeInTheDocument()
+})
+
+test('event deliveries page keeps unknown stream events outside the current server page', async () => {
+  render(<EventDeliveriesPage />)
+
+  expect(await screen.findByText('chapter.ready')).toBeInTheDocument()
+  await waitFor(() => expect(operationsMocks.state.streamHandler).not.toBeNull())
+
+  await act(async () => {
+    operationsMocks.state.streamHandler?.({
+      event: 'event.delivery',
+      data: {
+        event_id: 'evt-outside-page',
+        event_type: 'chapter.updated',
+        tenant_id: 'tenant-other',
+        status: 'pending',
+        attempt_count: 0,
+      },
+    })
+  })
+
+  expect(screen.queryByText('evt-outside-page')).not.toBeInTheDocument()
+  expect(screen.getByText('chapter.ready')).toBeInTheDocument()
+})
+
+test('event deliveries page resets stream scope after pagination and search', async () => {
+  operationsMocks.listEventDeliveries
+    .mockResolvedValueOnce({
+      success: true,
+      code: 'OK',
+      message: 'ok',
+      data: [
+        {
+          eventId: 'evt-page-1',
+          eventType: 'chapter.page.one',
+          tenantId: 'tenant-page',
+          status: 'pending',
+          attemptCount: 0,
+          lastError: null,
+        },
+      ],
+      meta: { page: 1, page_size: 20, total: 2, total_pages: 2 },
+      trace_id: null,
+    })
+    .mockResolvedValueOnce({
+      success: true,
+      code: 'OK',
+      message: 'ok',
+      data: [
+        {
+          eventId: 'evt-page-2',
+          eventType: 'chapter.page.two',
+          tenantId: 'tenant-page',
+          status: 'pending',
+          attemptCount: 0,
+          lastError: null,
+        },
+      ],
+      meta: { page: 2, page_size: 20, total: 2, total_pages: 2 },
+      trace_id: null,
+    })
+    .mockResolvedValueOnce({
+      success: true,
+      code: 'OK',
+      message: 'ok',
+      data: [
+        {
+          eventId: 'evt-search',
+          eventType: 'chapter.search.result',
+          tenantId: 'tenant-search',
+          status: 'pending',
+          attemptCount: 0,
+          lastError: null,
+        },
+      ],
+      meta: { page: 1, page_size: 20, total: 1, total_pages: 1 },
+      trace_id: null,
+    })
+
+  render(<EventDeliveriesPage />)
+
+  expect(await screen.findByText('chapter.page.one')).toBeInTheDocument()
+  await waitFor(() => expect(operationsMocks.state.streamHandler).not.toBeNull())
+
+  fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+  expect(await screen.findByText('chapter.page.two')).toBeInTheDocument()
+  expect(screen.queryByText('chapter.page.one')).not.toBeInTheDocument()
+
+  fireEvent.change(screen.getByRole('textbox', { name: '搜索事件投递' }), { target: { value: 'search' } })
+  fireEvent.click(screen.getByRole('button', { name: '搜索' }))
+  expect(await screen.findByText('chapter.search.result')).toBeInTheDocument()
+  expect(screen.queryByText('chapter.page.two')).not.toBeInTheDocument()
+
+  await act(async () => {
+    operationsMocks.state.streamHandler?.({
+      event: 'event.delivery',
+      data: {
+        event_id: 'evt-page-1',
+        event_type: 'chapter.stale',
+        tenant_id: 'tenant-page',
+        status: 'retrying',
+        attempt_count: 1,
+      },
+    })
+  })
+  expect(screen.queryByText('chapter.stale')).not.toBeInTheDocument()
+  expect(operationsMocks.listEventDeliveries).toHaveBeenLastCalledWith({ page: 1, page_size: 20, search: 'search' })
 })
 
 test('event deliveries page loads attempts for the selected delivery', async () => {

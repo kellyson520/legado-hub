@@ -10,6 +10,11 @@ from app.domain.repositories.translation_runtime_repo import TranslationRuntimeR
 from .schema import TranslationChunkModel, TranslationTaskModel
 
 
+def _like_pattern(value: str) -> str:
+    escaped = value.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return f'%{escaped}%'
+
+
 class SQLiteTranslationRuntimeRepository(TranslationRuntimeRepository):
     def __init__(self, session=None):
         self._session = session
@@ -76,23 +81,30 @@ class SQLiteTranslationRuntimeRepository(TranslationRuntimeRepository):
         page_size: int = 50,
         search: str = "",
         status: str | None = None,
+        review_status: str | None = None,
     ) -> tuple[list[TranslationJob], int]:
         db = self._db()
         try:
             query = db.query(TranslationTaskModel)
             if status:
                 query = query.filter(TranslationTaskModel.status == status)
+            if review_status:
+                query = query.filter(TranslationTaskModel.review_status == review_status)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = _like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        TranslationTaskModel.id.ilike(pattern),
-                        TranslationTaskModel.source_language.ilike(pattern),
-                        TranslationTaskModel.target_language.ilike(pattern),
-                        TranslationTaskModel.provider_name.ilike(pattern),
-                        TranslationTaskModel.model_name.ilike(pattern),
-                        TranslationTaskModel.content_variant_id.ilike(pattern),
+                        TranslationTaskModel.id.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.actor_id.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.source_language.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.target_language.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.provider_name.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.model_name.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.source_text.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.result_text.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.content_variant_id.ilike(pattern, escape='\\'),
+                        TranslationTaskModel.memory_payload.ilike(pattern, escape='\\'),
                     )
                 )
             total = query.count()

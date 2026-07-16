@@ -64,7 +64,7 @@ function mergeDeliveryRow(current: OperationDeliveryRow[], event: OperationStrea
   }
 
   const index = current.findIndex((item) => getDeliveryId(item) === eventId)
-  if (index === -1) return [nextRow, ...current]
+  if (index === -1) return current
 
   const merged = [...current]
   merged[index] = { ...merged[index], ...nextRow }
@@ -131,6 +131,10 @@ export function EventDeliveriesPage() {
     }
   }, [])
 
+  useEffect(() => {
+    setStreamRows(rows)
+  }, [rows])
+
   const deliveries = useMemo(() => {
     return streamRows.reduce((current, event) => {
       const streamEvent: OperationStreamEvent = {
@@ -142,7 +146,12 @@ export function EventDeliveriesPage() {
   }, [rows, streamRows])
 
   useEffect(() => {
-    setSelectedEventId((current) => current ?? getDeliveryId(deliveries[0] ?? {}))
+    setSelectedEventId((current) => {
+      if (current && deliveries.some((delivery) => getDeliveryId(delivery) === current)) {
+        return current
+      }
+      return getDeliveryId(deliveries[0] ?? {}) || null
+    })
   }, [deliveries])
 
   useEffect(() => {

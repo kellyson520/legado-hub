@@ -16,7 +16,6 @@ from app.infrastructure.persistence.factory import (
     build_source_review_service,
     build_source_runtime_service,
     build_translation_service,
-    build_translation_runtime_repository,
     build_work_knowledge_service,
 )
 from app.interfaces.http.deps import RequestIdentity, get_current_identity, require_permission
@@ -48,6 +47,10 @@ def _source_review_evidence(payload: dict, source_url: str) -> str:
     if isinstance(reason_tags, list) and reason_tags:
         return ', '.join(str(tag) for tag in reason_tags)
     return source_url
+
+
+def _review_search_text(values: list[object]) -> str:
+    return ' '.join(str(value or '') for value in values).lower()
 
 
 def _serialize_agent_tool_history(history) -> list[dict]:
@@ -293,14 +296,31 @@ async def get_operations_agent_run(
 
 @router.get('/review-queue')
 async def list_review_queue(
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=100),
     page_size: int = Query(default=50, ge=1, le=200),
     search: str = Query(default="", max_length=200),
     _=Depends(require_permission(Permission.AGENT_RUNS_READ)),
 ):
-    items = build_work_knowledge_service().list_review_queue()
-    source_build_candidates = await build_source_runtime_service().list_recent_versions(status='candidate', limit=50)
-    source_review_items = build_source_review_service().list_review_queue()
+    query_limit = page * page_size
+    knowledge_result = build_work_knowledge_service().list_review_queue_page(
+        page=1,
+        page_size=query_limit,
+        search=search,
+    )
+    source_build_result = await build_source_runtime_service().list_recent_versions_page(
+        status='candidate',
+        page=1,
+        page_size=query_limit,
+        search=search,
+    )
+    source_review_result = build_source_review_service().list_review_queue_page(
+        page=1,
+        page_size=query_limit,
+        search=search,
+    )
+    items = knowledge_result["items"]
+    source_build_candidates = source_build_result["items"]
+    source_review_items = source_review_result["items"]
     data = [
         {
             'id': item.id,
@@ -319,6 +339,17 @@ async def list_review_queue(
             'reviewed_by': item.reviewed_by,
             'created_at': item.created_at.isoformat() if item.created_at else None,
             'published_at': item.published_at.isoformat() if item.published_at else None,
+            '_search_fields': [
+                item.id,
+                item.work_id,
+                item.source_chapter_id,
+                item.proposal_type,
+                item.subject,
+                item.relation,
+                item.object_name,
+                item.evidence,
+                item.created_by,
+            ],
         }
         for item in items
     ]
@@ -347,6 +378,13 @@ async def list_review_queue(
             'reviewed_by': None,
             'created_at': item['created_at'],
             'published_at': None,
+            '_search_fields': [
+                item['id'],
+                item['source_type'],
+                item['source_id'],
+                item['created_by'],
+                json.dumps(item['payload'], ensure_ascii=False),
+            ],
         }
         for item in source_build_candidates
     )
@@ -368,52 +406,76 @@ async def list_review_queue(
             'reviewed_by': item.reviewed_by,
             'created_at': _iso(item.created_at),
             'published_at': None,
+            '_search_fields': [
+                item.id,
+                item.review_type,
+                item.source_version_id,
+                item.source_url,
+                item.summary,
+                item.created_by,
+                json.dumps(item.payload, ensure_ascii=False),
+            ],
         }
         for item in source_review_items
     )
-    translation_jobs = [
-        job for job in build_translation_runtime_repository().list_jobs()
-        if job.review_status == 'candidate'
-    ]
+    translation_result = await build_translation_service().list_jobs_page(
+        page=1,
+        page_size=query_limit,
+        search=search,
+        review_status='candidate',
+    )
+    translation_jobs = translation_result["items"]
     data.extend(
         {
-            'id': job.id,
+            'id': job['id'],
             'item_type': 'translation_job',
             'work_id': None,
-            'source_chapter_id': job.content_variant_id,
+            'source_chapter_id': job.get('content_variant_id'),
             'proposal_type': 'translation_review',
-            'subject': f'{job.source_language} -> {job.target_language}',
+            'subject': f"{job.get('source_language', '')} -> {job.get('target_language', '')}",
             'relation': 'review',
-            'object_name': job.content_variant_id,
-            'evidence': (job.result_text or job.source_text or '').strip() or 'Translation review pending',
-            'summary': f'Translation memory review ({job.chunk_count} chunks)',
+            'object_name': job.get('content_variant_id'),
+            'evidence': (job.get('result_text') or job.get('source_text') or '').strip() or 'Translation review pending',
+            'summary': f"Translation memory review ({job.get('chunk_count', 0)} chunks)",
             'payload': {
-                'provider': job.provider,
-                'model': job.model,
-                'chunk_count': job.chunk_count,
-                'content_variant_id': job.content_variant_id,
-                'memory_payload': job.memory_payload,
+                'provider': job.get('provider'),
+                'model': job.get('model'),
+                'chunk_count': job.get('chunk_count', 0),
+                'content_variant_id': job.get('content_variant_id'),
+                'memory_payload': job.get('memory_payload', {}),
             },
-            'status': job.review_status,
-            'created_by': job.actor_id,
+            'status': job.get('review_status', 'candidate'),
+            'created_by': job.get('actor_id'),
             'reviewed_by': None,
-            'created_at': job.created_at.isoformat() if job.created_at else None,
+            'created_at': job.get('created_at'),
             'published_at': None,
+            '_search_fields': [
+                job.get('id'),
+                job.get('actor_id'),
+                job.get('source_language'),
+                job.get('target_language'),
+                job.get('provider'),
+                job.get('model'),
+                job.get('source_text'),
+                job.get('result_text'),
+                job.get('content_variant_id'),
+                json.dumps(job.get('memory_payload', {}), ensure_ascii=False),
+            ],
         }
         for job in translation_jobs
     )
     data.sort(key=lambda item: item.get('created_at') or '', reverse=True)
     normalized_search = search.strip().lower()
     if normalized_search:
-        data = [
-            item
-            for item in data
-            if normalized_search in ' '.join(
-                str(item.get(field) or '')
-                for field in ('id', 'item_type', 'proposal_type', 'summary', 'evidence', 'created_by')
-            ).lower()
-        ]
-    total = len(data)
+        data = [item for item in data if normalized_search in _review_search_text(item['_search_fields'])]
+    for item in data:
+        item.pop('_search_fields', None)
+    total = (
+        knowledge_result["meta"]["total"]
+        + source_build_result["meta"]["total"]
+        + source_review_result["meta"]["total"]
+        + translation_result["meta"]["total"]
+    )
     data = data[(page - 1) * page_size : page * page_size]
     return {
         'success': True,

@@ -1,3 +1,4 @@
+from math import ceil
 from uuid import uuid4
 
 from app.core.exceptions import NotFoundException, ValidationException
@@ -132,6 +133,47 @@ class WorkKnowledgeService:
 
     def list_review_queue(self) -> list[WorkKnowledgeProposal]:
         return self._repo.list_proposals(status='candidate')
+
+    def list_review_queue_page(self, *, page: int = 1, page_size: int = 50, search: str = "") -> dict:
+        if hasattr(self._repo, "list_proposals_page"):
+            rows, total = self._repo.list_proposals_page(
+                status="candidate",
+                page=page,
+                page_size=page_size,
+                search=search,
+            )
+        else:
+            all_rows = self._repo.list_proposals(status="candidate")
+            normalized = search.strip().lower()
+            filtered = [
+                item for item in all_rows
+                if not normalized or normalized in ' '.join(
+                    str(value or '')
+                    for value in (
+                        item.id,
+                        item.work_id,
+                        item.source_chapter_id,
+                        item.proposal_type,
+                        item.subject,
+                        item.relation,
+                        item.object_name,
+                        item.evidence,
+                        item.created_by,
+                    )
+                ).lower()
+            ]
+            total = len(filtered)
+            rows = filtered[(page - 1) * page_size : page * page_size]
+        return {
+            "items": rows,
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": ceil(total / page_size) if total else 0,
+                "search": search,
+            },
+        }
 
     def resolve_review(
         self,
