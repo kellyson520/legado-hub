@@ -10,6 +10,7 @@ import {
   type AIConversationSummary,
   type AIWorkspaceMode,
 } from '@/api/modules/ai'
+import { ListStatus } from '@/components/data/ListStatus'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Button } from '@/components/ui/button'
@@ -177,8 +178,15 @@ export function AIWorkspacePage() {
             <Button className="w-full" onClick={() => void createConversation()} disabled={sending}>新建对话</Button>
           </div>
           <div className="max-h-[290px] space-y-1 overflow-y-auto p-3 lg:max-h-[610px]">
-            {loadingConversations ? <p className="px-2 py-4 text-sm text-muted-foreground">正在加载对话…</p> : null}
-            {!loadingConversations && conversations.length === 0 ? <p className="px-2 py-4 text-sm text-muted-foreground">尚无对话，点击“新建对话”开始分析。</p> : null}
+            <ListStatus
+              loading={loadingConversations}
+              error={listError}
+              empty={!loadingConversations && conversations.length === 0}
+              onRetry={pagination.retry}
+              loadingLabel="正在加载对话…"
+              errorLabel="加载 AI 对话失败，请稍后重试。"
+              emptyLabel="尚无对话，点击“新建对话”开始分析。"
+            />
             <PaginationToolbar
               page={meta.page}
               totalPages={meta.total_pages}
@@ -192,7 +200,6 @@ export function AIWorkspacePage() {
               onClearSearch={pagination.clearSearch}
               onPageChange={pagination.goToPage}
             />
-            {listError ? <p role="alert" className="px-2 text-sm text-destructive">加载 AI 对话失败，请稍后重试。<button type="button" className="ml-2 underline" onClick={() => pagination.retry()}>重试</button></p> : null}
             {conversations.map((item) => (
               <button
                 key={item.id}

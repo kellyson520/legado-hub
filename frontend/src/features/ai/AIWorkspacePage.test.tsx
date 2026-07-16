@@ -54,7 +54,15 @@ const aiMocks = vi.hoisted(() => ({
   }),
 }))
 
+const statusMocks = vi.hoisted(() => ({
+  ListStatus: vi.fn((props: { loading: boolean; empty: boolean }) => {
+    void props
+    return null
+  }),
+}))
+
 vi.mock('@/api/modules/ai', () => aiMocks)
+vi.mock('@/components/data/ListStatus', () => statusMocks)
 
 import { AIWorkspacePage } from './AIWorkspacePage'
 
@@ -63,6 +71,7 @@ test('工作台按中文模式发送消息并显示工具引用', async () => {
 
   expect((await screen.findAllByText('书源助手')).length).toBeGreaterThan(0)
   expect(await screen.findByText('引用的工具结果')).toBeInTheDocument()
+  expect(statusMocks.ListStatus.mock.calls.some(([props]) => props.loading === false && props.empty === false)).toBe(true)
 
   fireEvent.click(screen.getByRole('button', { name: '人物介绍' }))
   fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '介绍主角' } })

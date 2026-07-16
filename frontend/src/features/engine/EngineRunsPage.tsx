@@ -13,11 +13,11 @@ import {
   type RegexTestResult,
 } from '@/api/modules/engine'
 import { RunTimeline } from '@/components/diagnostics/RunTimeline'
+import { ListStatus } from '@/components/data/ListStatus'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useServerPagination } from '@/hooks/useServerPagination'
@@ -195,7 +195,6 @@ export function EngineRunsPage() {
             onClearSearch={sourceBuildsPagination.clearSearch}
             onPageChange={sourceBuildsPagination.goToPage}
           />
-          {sourceBuildsError ? <Card className="mt-3 flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>Failed to load source builds.</span><button type="button" className="underline" onClick={() => sourceBuildsPagination.retry()}>重试</button></Card> : null}
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
@@ -206,6 +205,18 @@ export function EngineRunsPage() {
             <Badge variant="outline" className="px-3 py-1">
               {sourceBuilds.length} candidates
             </Badge>
+          </div>
+
+          <div className="mt-5">
+            <ListStatus
+              loading={sourceBuildsLoading}
+              error={sourceBuildsError}
+              empty={!sourceBuildsLoading && sourceBuilds.length === 0}
+              onRetry={sourceBuildsPagination.retry}
+              loadingLabel="正在加载规则候选…"
+              errorLabel="加载规则候选失败，请稍后重试。"
+              emptyLabel="暂无规则候选。"
+            />
           </div>
 
           <div className="mt-5 grid gap-3">
@@ -251,11 +262,6 @@ export function EngineRunsPage() {
                 </article>
               )
             })}
-            {!sourceBuildsLoading && sourceBuilds.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground">
-                No console source build candidates yet
-              </div>
-            ) : null}
           </div>
         </section>
       </div>
@@ -283,6 +289,17 @@ export function EngineRunsPage() {
               onClearSearch={runsPagination.clearSearch}
               onPageChange={runsPagination.goToPage}
             />
+            <div className="mt-3">
+              <ListStatus
+                loading={runsLoading}
+                error={runsError}
+                empty={!runsLoading && runs.length === 0}
+                onRetry={runsPagination.retry}
+                loadingLabel="正在加载运行记录…"
+                errorLabel="加载运行记录失败，请稍后重试。"
+                emptyLabel="暂无运行记录。"
+              />
+            </div>
           </div>
           <div>
             <p className="mb-2 text-xs font-medium text-muted-foreground">Deployments</p>
@@ -299,9 +316,19 @@ export function EngineRunsPage() {
               onClearSearch={deploymentsPagination.clearSearch}
               onPageChange={deploymentsPagination.goToPage}
             />
+            <div className="mt-3">
+              <ListStatus
+                loading={deploymentsLoading}
+                error={deploymentsError}
+                empty={!deploymentsLoading && deployments.length === 0}
+                onRetry={deploymentsPagination.retry}
+                loadingLabel="正在加载部署记录…"
+                errorLabel="加载部署记录失败，请稍后重试。"
+                emptyLabel="暂无部署记录。"
+              />
+            </div>
           </div>
         </div>
-        {runsError || deploymentsError ? <Card className="flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>Failed to load engine diagnostics.</span><button type="button" className="underline" onClick={() => { runsPagination.retry(); deploymentsPagination.retry() }}>重试</button></Card> : null}
         <RunTimeline runs={runs} deployments={deployments} />
       </section>
     </ConsoleLayout>

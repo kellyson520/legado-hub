@@ -9,10 +9,10 @@ import {
   type AdminUserRow,
 } from '@/api/modules/admin'
 import { useAuth } from '@/app/providers/AuthProvider'
+import { ListStatus } from '@/components/data/ListStatus'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { roleText, statusText } from '@/lib/i18n'
 
@@ -255,8 +255,15 @@ export function AdminUsersPage() {
       ) : null}
 
       {error ? <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{error}</p> : null}
-      {loadError ? <Card className="flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>加载用户失败，请稍后重试</span><button type="button" className="underline" onClick={() => pagination.retry()}>重试</button></Card> : null}
-      {!loading && !error && !loadError && users.length === 0 ? <p className="rounded-md border border-dashed p-5 text-sm text-muted-foreground">暂无用户</p> : null}
+      <ListStatus
+        loading={loading}
+        error={loadError}
+        empty={!loading && !error && users.length === 0}
+        onRetry={pagination.retry}
+        loadingLabel="正在加载用户…"
+        errorLabel="加载用户失败，请稍后重试"
+        emptyLabel="暂无用户"
+      />
 
       <div className="space-y-3">
         {users.map((user) => (

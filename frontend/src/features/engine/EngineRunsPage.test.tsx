@@ -89,6 +89,13 @@ const engineMocks = vi.hoisted(() => ({
   }),
 }))
 
+const statusMocks = vi.hoisted(() => ({
+  ListStatus: vi.fn((props: { loading: boolean; empty: boolean }) => {
+    void props
+    return null
+  }),
+}))
+
 vi.mock('@/api/modules/engine', () => ({
   listEngineRuns: engineMocks.listEngineRuns,
   listEngineDeployments: engineMocks.listEngineDeployments,
@@ -96,6 +103,7 @@ vi.mock('@/api/modules/engine', () => ({
   submitEngineSourceBuild: engineMocks.submitEngineSourceBuild,
   testEngineRegex: engineMocks.testEngineRegex,
 }))
+vi.mock('@/components/data/ListStatus', () => statusMocks)
 
 vi.mock('@/api/modules/admin', () => ({
   listUsers: vi.fn().mockResolvedValue({
@@ -126,6 +134,7 @@ test('engine runs page shows step timeline and deployment decision', async () =>
   expect(await screen.findByText('Rule writing studio')).toBeInTheDocument()
   expect(screen.getByText('https://console.test/books')).toBeInTheDocument()
   expect(screen.getByText('validation A / 96')).toBeInTheDocument()
+  expect(statusMocks.ListStatus.mock.calls.some(([props]) => props.loading === false && props.empty === false)).toBe(true)
   expect(await screen.findByText('search')).toBeInTheDocument()
   expect(await screen.findByText('deployment decision')).toBeInTheDocument()
 })
