@@ -7,9 +7,9 @@ import {
   type OperationAgentRunRow,
   type OperationAgentToolInvocationRow,
 } from '@/api/modules/operations'
+import { ListStatus } from '@/components/data/ListStatus'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
-import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 function getAgentKind(row: OperationAgentRunRow | OperationAgentRunDetail) {
@@ -106,12 +106,15 @@ export function AgentRunsPage() {
           onClearSearch={pagination.clearSearch}
           onPageChange={pagination.goToPage}
         />
-        {listError ? (
-          <Card className="flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
-            <span>Failed to load agent runs.</span>
-            <button type="button" className="underline" onClick={() => pagination.retry()}>重试</button>
-          </Card>
-        ) : null}
+        <ListStatus
+          loading={loading}
+          error={listError}
+          empty={!loading && rows.length === 0}
+          onRetry={pagination.retry}
+          loadingLabel="正在加载 Agent runs…"
+          errorLabel="Failed to load agent runs."
+          emptyLabel="No agent runs yet"
+        />
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
           <table className="min-w-full divide-y divide-border text-sm">
             <thead className="bg-muted/40 text-left text-muted-foreground">
@@ -156,13 +159,6 @@ export function AgentRunsPage() {
                   </tr>
                 )
               })}
-              {!loading && rows.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-muted-foreground" colSpan={5}>
-                    No agent runs yet
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
         </div>

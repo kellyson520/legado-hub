@@ -8,9 +8,9 @@ import {
   type OperationDeliveryRow,
   type OperationStreamEvent,
 } from '@/api/modules/operations'
+import { ListStatus } from '@/components/data/ListStatus'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 const STREAM_RETRY_DELAY_MS = 2_000
@@ -205,12 +205,15 @@ export function EventDeliveriesPage() {
             onClearSearch={pagination.clearSearch}
             onPageChange={pagination.goToPage}
           />
-          {loadError ? (
-            <Card className="m-4 flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
-              <span>Failed to load event deliveries.</span>
-              <button type="button" className="underline" onClick={() => pagination.retry()}>重试</button>
-            </Card>
-          ) : null}
+          <ListStatus
+            loading={loading}
+            error={loadError}
+            empty={!loading && deliveries.length === 0}
+            onRetry={pagination.retry}
+            loadingLabel="正在加载事件投递…"
+            errorLabel="Failed to load event deliveries."
+            emptyLabel="No event deliveries yet"
+          />
           <table className="min-w-full divide-y divide-border text-sm">
             <thead className="bg-muted/40 text-left text-muted-foreground">
               <tr>
@@ -245,13 +248,6 @@ export function EventDeliveriesPage() {
                   </tr>
                 )
               })}
-              {!loading && deliveries.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-muted-foreground" colSpan={5}>
-                    No event deliveries yet
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
         </div>

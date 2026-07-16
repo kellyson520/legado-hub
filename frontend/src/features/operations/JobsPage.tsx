@@ -1,7 +1,7 @@
 import { listOperationsJobs, type OperationJobRow } from '@/api/modules/operations'
+import { ListStatus } from '@/components/data/ListStatus'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 const PAGE_SIZE = 20
@@ -32,12 +32,15 @@ export function JobsPage() {
         onClearSearch={pagination.clearSearch}
         onPageChange={pagination.goToPage}
       />
-      {error ? (
-        <Card className="flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
-          <span>Failed to load operations jobs.</span>
-          <button type="button" className="underline" onClick={() => pagination.retry()}>重试</button>
-        </Card>
-      ) : null}
+      <ListStatus
+        loading={loading}
+        error={error}
+        empty={!loading && jobs.length === 0}
+        onRetry={pagination.retry}
+        loadingLabel="正在加载后台任务…"
+        errorLabel="Failed to load operations jobs."
+        emptyLabel="No operations jobs yet"
+      />
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
         <table className="min-w-full divide-y divide-border text-sm">
           <thead className="bg-muted/40 text-left text-muted-foreground">
@@ -57,13 +60,6 @@ export function JobsPage() {
                 <td className="px-4 py-3">{job.attemptCount ?? job.attempt_count ?? 0}</td>
               </tr>
             ))}
-            {!loading && jobs.length === 0 ? (
-              <tr>
-                <td className="px-4 py-6 text-muted-foreground" colSpan={4}>
-                  No operations jobs yet
-                </td>
-              </tr>
-            ) : null}
           </tbody>
         </table>
       </div>

@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Copy, KeyRound, Trash2 } from 'lucide-react'
 import { createApiKey, deleteApiKey, disableApiKey, listApiKeys, type ApiKeyRow } from '@/api/modules/admin'
+import { ListStatus } from '@/components/data/ListStatus'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
@@ -37,7 +37,15 @@ export function ApiKeysPage() {
       onPageChange={pagination.goToPage}
     />
     {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-    {loadError ? <Card className="flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>无法加载 API Key</span><button type="button" className="underline" onClick={() => pagination.retry()}>重试</button></Card> : null}
+    <ListStatus
+      loading={loading}
+      error={loadError}
+      empty={!loading && keys.length === 0}
+      onRetry={pagination.retry}
+      loadingLabel="正在加载 API Key…"
+      errorLabel="无法加载 API Key"
+      emptyLabel="暂无 API Key"
+    />
     <div className="space-y-3">{keys.map((key) => <article key={key.id} className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-4"><div><p className="font-medium">{key.name}</p><p className="mt-1 text-xs text-muted-foreground">{key.permissions.join(' · ') || '无权限'} · {key.is_enabled ? '启用' : '已禁用'}</p></div><div className="flex gap-2">{key.is_enabled ? <Button size="sm" variant="outline" onClick={() => void disableApiKey(key.id).then(load)}>禁用</Button> : null}<Button size="icon" variant="destructive" aria-label={`删除 ${key.name}`} onClick={() => void deleteApiKey(key.id).then(load)}><Trash2 className="h-4 w-4" /></Button></div></article>)}</div>
   </ConsoleLayout>
 }

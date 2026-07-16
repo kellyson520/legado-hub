@@ -1,7 +1,7 @@
 import { listAuditLogs, type AuditLogRow } from '@/api/modules/admin'
+import { ListStatus } from '@/components/data/ListStatus'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
-import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 export function AdminAuditPage() {
@@ -30,22 +30,24 @@ export function AdminAuditPage() {
         onClearSearch={pagination.clearSearch}
         onPageChange={pagination.goToPage}
       />
-      {error ? <Card className="flex items-center gap-3 p-4 text-sm text-destructive" role="alert"><span>Failed to load audit rows.</span><button type="button" className="underline" onClick={() => pagination.retry()}>重试</button></Card> : null}
+      <ListStatus
+        loading={loading}
+        error={error}
+        empty={!loading && logs.length === 0}
+        onRetry={pagination.retry}
+        loadingLabel="正在加载审计记录…"
+        errorLabel="Failed to load audit rows."
+        emptyLabel="No audit rows loaded yet."
+      />
       <div className="space-y-3">
-        {!loading && logs.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border bg-muted/30 p-6 text-sm text-muted-foreground">
-            No audit rows loaded yet.
-          </div>
-        ) : (
-          logs.map((log) => (
+        {logs.map((log) => (
             <div key={log.id} className="rounded-md border border-border bg-card p-4 shadow-sm">
               <p className="text-sm font-medium text-foreground">
                 {log.action} / {log.resource}
               </p>
               <p className="mt-2 text-sm text-muted-foreground">{log.detail}</p>
             </div>
-          ))
-        )}
+        ))}
       </div>
     </ConsoleLayout>
   )

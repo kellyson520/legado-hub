@@ -7,9 +7,9 @@ import {
   type OperationSourceBuildAuditSummary,
   type OperationReviewQueueRow,
 } from '@/api/modules/operations'
+import { ListStatus } from '@/components/data/ListStatus'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
-import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { SourceAuditSummary } from './SourceBuildsPage'
 
@@ -152,12 +152,15 @@ export function ReviewQueuePage() {
           onClearSearch={pagination.clearSearch}
           onPageChange={pagination.goToPage}
         />
-        {loadError ? (
-          <Card className="flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
-            <span>Failed to load review queue.</span>
-            <button type="button" className="underline" onClick={() => pagination.retry()}>重试</button>
-          </Card>
-        ) : null}
+        <ListStatus
+          loading={loading}
+          error={loadError}
+          empty={!loading && visibleRows.length === 0}
+          onRetry={pagination.retry}
+          loadingLabel="正在加载审核队列…"
+          errorLabel="Failed to load review queue."
+          emptyLabel="No review candidates yet"
+        />
         <div className="overflow-hidden rounded-2xl border border-border bg-card">
           <table className="min-w-full divide-y divide-border text-sm">
             <thead className="bg-muted/40 text-left text-muted-foreground">
@@ -230,13 +233,6 @@ export function ReviewQueuePage() {
                   </tr>
                 )
               })}
-              {!loading && visibleRows.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-muted-foreground" colSpan={6}>
-                    No review candidates yet
-                  </td>
-                </tr>
-              ) : null}
             </tbody>
           </table>
         </div>
