@@ -17,6 +17,7 @@ export interface SourceRow {
 export interface SourceListParams {
   page?: number
   page_size?: number
+  search?: string
 }
 
 export interface LegadoImportItem {

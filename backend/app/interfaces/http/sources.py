@@ -99,6 +99,7 @@ async def list_book_sources(
 async def list_visible_source_versions(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
     identity: RequestIdentity = Depends(get_current_identity),
     _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
 ):
@@ -106,6 +107,7 @@ async def list_visible_source_versions(
         str(identity.user_id),
         page=page,
         page_size=page_size,
+        search=search,
     )
     return {
         "success": True,

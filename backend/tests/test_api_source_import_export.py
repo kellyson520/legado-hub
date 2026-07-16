@@ -172,6 +172,21 @@ def test_visible_source_inventory_matches_agent_visible_candidates_and_published
     assert rows[published.id]["sourceStatus"] == "published"
 
 
+def test_visible_source_inventory_searches_name_and_url_before_pagination(tmp_path, monkeypatch):
+    client, headers = _client_and_headers(tmp_path, monkeypatch)
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+
+    repo = build_source_runtime_repository()
+    repo.create_candidate_version("book", "https://alpha.example.test", {"bookSourceName": "Alpha 源"}, "7")
+    repo.create_candidate_version("book", "https://beta.example.test", {"bookSourceName": "Beta 源"}, "7")
+
+    response = client.get("/api/sources/visible?search=beta", headers=headers)
+
+    assert response.status_code == 200
+    assert [row["bookSourceName"] for row in response.json()["data"]] == ["Beta 源"]
+    assert response.json()["meta"]["total"] == 1
+
+
 def test_visible_source_inventory_uses_database_pagination_without_loading_every_version(tmp_path, monkeypatch):
     client, headers = _client_and_headers(tmp_path, monkeypatch)
     from app.infrastructure.persistence.factory import build_source_runtime_repository
@@ -194,5 +209,5 @@ def test_visible_source_inventory_uses_database_pagination_without_loading_every
     response = client.get("/api/sources/visible?page=2&page_size=1", headers=headers)
 
     assert response.status_code == 200
-    assert response.json()["meta"] == {"page": 2, "page_size": 1, "total": 3}
+    assert response.json()["meta"] == {"page": 2, "page_size": 1, "total": 3, "search": ""}
     assert len(response.json()["data"]) == 1

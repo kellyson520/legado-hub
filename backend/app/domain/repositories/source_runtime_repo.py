@@ -61,6 +61,7 @@ class SourceRuntimeRepository(ABC):
         *,
         page: int,
         page_size: int,
+        search: str = "",
     ) -> tuple[list[SourceVersion], int]:
         raise NotImplementedError
 

@@ -289,6 +289,7 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
         *,
         page: int,
         page_size: int,
+        search: str = "",
     ) -> tuple[list[SourceVersion], int]:
         db = self._db()
         try:
@@ -300,6 +301,15 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
                 ),
             )
             query = db.query(SourceVersionModel.id).filter(visibility_filter)
+            normalized_search = search.strip()
+            if normalized_search:
+                pattern = f"%{normalized_search}%"
+                query = query.filter(
+                    or_(
+                        SourceVersionModel.source_id.ilike(pattern),
+                        SourceVersionModel.payload.ilike(pattern),
+                    )
+                )
             total = query.count()
             page_ids = [row[0] for row in (
                 query.order_by(SourceVersionModel.created_at.desc(), SourceVersionModel.id.desc())
