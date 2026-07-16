@@ -187,3 +187,30 @@ def test_knowledge_proposal_with_evidence_is_accepted(registry):
     )
 
     assert result.status == 'accepted'
+
+
+@pytest.mark.asyncio
+async def test_knowledge_agent_can_use_the_audited_chapter_fetch_handler_only():
+    from app.application.services.agent_tool_registry import AgentToolRegistry
+    from app.domain.entities.agent_runtime import ToolResult
+
+    async def fetch_chapter(arguments):
+        return ToolResult(status='accepted', data={'chapter_index': arguments['chapter_index']})
+
+    registry = AgentToolRegistry(novel_analysis_handlers={'chapter.fetch': fetch_chapter})
+
+    result = await registry.ainvoke(
+        agent_kind='knowledge',
+        tool_name='chapter.fetch',
+        arguments={'chapter_index': 0},
+        tenant_id='tenant-1',
+    )
+
+    assert result.status == 'accepted'
+    with pytest.raises(AuthorizationException):
+        await registry.ainvoke(
+            agent_kind='source_build',
+            tool_name='chapter.fetch',
+            arguments={'chapter_index': 0},
+            tenant_id='tenant-1',
+        )

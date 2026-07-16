@@ -62,3 +62,17 @@ class SQLiteEvidenceRepository:
             return self._entity(model) if model is not None else None
         finally:
             self._close(db)
+
+    def list_spans_for_chapter(self, canonical_chapter_id: str, limit: int = 20) -> list[EvidenceSpan]:
+        db = self._db()
+        try:
+            models = (
+                db.query(EvidenceSpanModel)
+                .filter(EvidenceSpanModel.canonical_chapter_id == canonical_chapter_id)
+                .order_by(EvidenceSpanModel.start_offset.asc())
+                .limit(limit)
+                .all()
+            )
+            return [self._entity(model) for model in models]
+        finally:
+            self._close(db)

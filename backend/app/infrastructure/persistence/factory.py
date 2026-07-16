@@ -37,6 +37,8 @@ from app.application.services.source_runtime_service import SourceRuntimeService
 from app.application.services.system_settings_service import SystemSettingsService
 from app.application.services.translation_service import TranslationService
 from app.application.services.work_knowledge_service import WorkKnowledgeService
+from app.application.services.work_ingestion_service import WorkIngestionService
+from app.application.services.novel_analysis_tool_executor import NovelAnalysisToolExecutor
 from app.core.config import settings
 from app.infrastructure.browser.playwright_driver import PlaywrightBrowserDriver
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
@@ -155,6 +157,34 @@ def build_evidence_service() -> EvidenceService:
     return EvidenceService(
         repo=build_evidence_repository(),
         canonical_repo=build_canonical_content_repository(),
+    )
+
+
+def build_work_ingestion_service() -> WorkIngestionService:
+    canonical_repo = build_canonical_content_repository()
+    return WorkIngestionService(
+        reader=build_source_read_service(),
+        source_repo=build_source_repository(),
+        source_runtime_repo=build_source_runtime_repository(),
+        source_health_repo=build_source_health_repository(),
+        canonical_repo=canonical_repo,
+        evidence_service=EvidenceService(build_evidence_repository(), canonical_repo),
+    )
+
+
+def build_novel_analysis_tool_executor() -> NovelAnalysisToolExecutor:
+    return NovelAnalysisToolExecutor(
+        ingestion_service=build_work_ingestion_service(),
+        evidence_service=build_evidence_service(),
+        agent_runtime=build_agent_runtime_service(),
+    )
+
+
+def build_novel_analysis_tool_registry():
+    from app.application.services.agent_tool_registry import AgentToolRegistry
+
+    return AgentToolRegistry(
+        novel_analysis_handlers=build_novel_analysis_tool_executor().handlers(),
     )
 
 

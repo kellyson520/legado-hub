@@ -50,6 +50,24 @@ class EvidenceService:
         current_content_hash = self._sha256(self._normalize_content(variant.content))
         return span if current_content_hash == span.content_sha256 else None
 
+    def list_verified_spans(
+        self,
+        canonical_chapter_id: str,
+        *,
+        query: str = "",
+        limit: int = 20,
+    ) -> list[EvidenceSpan]:
+        normalized_query = self._normalize_content(query).strip().lower()
+        spans = []
+        for span in self._repo.list_spans_for_chapter(canonical_chapter_id, max(1, min(limit, 50))):
+            verified = self.get_verified_span(span.id)
+            if verified is None:
+                continue
+            if normalized_query and normalized_query not in verified.excerpt.lower():
+                continue
+            spans.append(verified)
+        return spans
+
     @staticmethod
     def _normalize_content(content: str) -> str:
         return unicodedata.normalize("NFC", (content or "").replace("\r\n", "\n").replace("\r", "\n"))
