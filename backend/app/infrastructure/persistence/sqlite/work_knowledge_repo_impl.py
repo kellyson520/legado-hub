@@ -3,14 +3,10 @@ import json
 from sqlalchemy import or_
 
 from app.database import SessionLocal
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.domain.entities.work_knowledge import WorkKnowledgeProposal
 
 from .schema import WorkKnowledgeProposalModel
-
-
-def _like_pattern(value: str) -> str:
-    escaped = value.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-    return f'%{escaped}%'
 
 
 class SQLiteWorkKnowledgeRepository:
@@ -121,18 +117,18 @@ class SQLiteWorkKnowledgeRepository:
                 query = query.filter(WorkKnowledgeProposalModel.status == status)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = _like_pattern(normalized_search)
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        WorkKnowledgeProposalModel.id.ilike(pattern, escape='\\'),
-                        WorkKnowledgeProposalModel.work_id.ilike(pattern, escape='\\'),
-                        WorkKnowledgeProposalModel.source_chapter_id.ilike(pattern, escape='\\'),
-                        WorkKnowledgeProposalModel.proposal_type.ilike(pattern, escape='\\'),
-                        WorkKnowledgeProposalModel.subject.ilike(pattern, escape='\\'),
-                        WorkKnowledgeProposalModel.relation.ilike(pattern, escape='\\'),
-                        WorkKnowledgeProposalModel.object_name.ilike(pattern, escape='\\'),
-                        WorkKnowledgeProposalModel.evidence.ilike(pattern, escape='\\'),
-                        WorkKnowledgeProposalModel.created_by.ilike(pattern, escape='\\'),
+                        WorkKnowledgeProposalModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        WorkKnowledgeProposalModel.work_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        WorkKnowledgeProposalModel.source_chapter_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        WorkKnowledgeProposalModel.proposal_type.ilike(pattern, escape=LIKE_ESCAPE),
+                        WorkKnowledgeProposalModel.subject.ilike(pattern, escape=LIKE_ESCAPE),
+                        WorkKnowledgeProposalModel.relation.ilike(pattern, escape=LIKE_ESCAPE),
+                        WorkKnowledgeProposalModel.object_name.ilike(pattern, escape=LIKE_ESCAPE),
+                        WorkKnowledgeProposalModel.evidence.ilike(pattern, escape=LIKE_ESCAPE),
+                        WorkKnowledgeProposalModel.created_by.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

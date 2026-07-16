@@ -2,6 +2,7 @@ import json
 
 from sqlalchemy import func, or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
 from app.domain.repositories.source_health_repo import SourceHealthRepository
@@ -104,7 +105,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
         try:
             derived_status = func.coalesce(SourceHealthSnapshotModel.health_status, "unknown")
             normalized_search = search.strip()
-            search_pattern = f"%{normalized_search}%"
+            search_pattern = like_pattern(normalized_search)
             count_query = db.query(func.count(BookSourceModel.id)).outerjoin(
                 SourceHealthSnapshotModel,
                 SourceHealthSnapshotModel.source_id == BookSourceModel.id,
@@ -114,8 +115,8 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             if normalized_search:
                 count_query = count_query.filter(
                     or_(
-                        BookSourceModel.bookSourceName.ilike(search_pattern),
-                        BookSourceModel.bookSourceUrl.ilike(search_pattern),
+                        BookSourceModel.bookSourceName.ilike(search_pattern, escape=LIKE_ESCAPE),
+                        BookSourceModel.bookSourceUrl.ilike(search_pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = int(count_query.scalar() or 0)
@@ -154,8 +155,8 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             if normalized_search:
                 query = query.filter(
                     or_(
-                        BookSourceModel.bookSourceName.ilike(search_pattern),
-                        BookSourceModel.bookSourceUrl.ilike(search_pattern),
+                        BookSourceModel.bookSourceName.ilike(search_pattern, escape=LIKE_ESCAPE),
+                        BookSourceModel.bookSourceUrl.ilike(search_pattern, escape=LIKE_ESCAPE),
                     )
                 )
             rows = query.offset(offset).limit(limit).all()

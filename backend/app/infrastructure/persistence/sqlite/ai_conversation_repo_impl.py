@@ -2,6 +2,7 @@ import json
 
 from sqlalchemy import or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 from app.domain.repositories.ai_conversation_repo import AIConversationRepository
@@ -57,11 +58,11 @@ class SQLiteAIConversationRepository(AIConversationRepository):
             query = db.query(AIConversationModel).filter(AIConversationModel.actor_id == actor_id)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        AIConversationModel.id.ilike(pattern),
-                        AIConversationModel.title.ilike(pattern),
+                        AIConversationModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        AIConversationModel.title.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

@@ -2,6 +2,7 @@ import json
 
 from sqlalchemy import or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.agent_runtime import AgentRun, ToolEvidence, ToolInvocation, ToolResult
 from app.domain.repositories.agent_runtime_repo import AgentRuntimeRepository
@@ -143,12 +144,12 @@ class SQLiteAgentRuntimeRepository(AgentRuntimeRepository):
                 query = query.filter(AgentRunModel.status == status)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        AgentRunModel.id.ilike(pattern),
-                        AgentRunModel.agent_kind.ilike(pattern),
-                        AgentRunModel.tenant_id.ilike(pattern),
+                        AgentRunModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        AgentRunModel.agent_kind.ilike(pattern, escape=LIKE_ESCAPE),
+                        AgentRunModel.tenant_id.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

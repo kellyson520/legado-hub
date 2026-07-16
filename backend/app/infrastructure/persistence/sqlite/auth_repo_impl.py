@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.auth import ApiKey, AuditEvent, RefreshSession, Role, User
 from app.domain.repositories.auth_repo import AuthRepository
@@ -102,11 +103,11 @@ class SQLiteAuthRepository(AuthRepository):
                 query = query.filter(UserModel.is_active == False)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        UserModel.username.ilike(pattern),
-                        UserModel.display_name.ilike(pattern),
+                        UserModel.username.ilike(pattern, escape=LIKE_ESCAPE),
+                        UserModel.display_name.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()
@@ -340,7 +341,7 @@ class SQLiteAuthRepository(AuthRepository):
                 query = query.filter(ApiKeyModel.is_enabled == False)
             normalized_search = search.strip()
             if normalized_search:
-                query = query.filter(ApiKeyModel.name.ilike(f"%{normalized_search}%"))
+                query = query.filter(ApiKeyModel.name.ilike(like_pattern(normalized_search), escape=LIKE_ESCAPE))
             total = query.count()
             models = (
                 query.order_by(ApiKeyModel.id.asc())
@@ -471,12 +472,12 @@ class SQLiteAuthRepository(AuthRepository):
             query = db.query(AuditLogModel)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        AuditLogModel.action.ilike(pattern),
-                        AuditLogModel.resource.ilike(pattern),
-                        AuditLogModel.detail.ilike(pattern),
+                        AuditLogModel.action.ilike(pattern, escape=LIKE_ESCAPE),
+                        AuditLogModel.resource.ilike(pattern, escape=LIKE_ESCAPE),
+                        AuditLogModel.detail.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

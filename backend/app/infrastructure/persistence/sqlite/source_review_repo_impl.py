@@ -4,15 +4,11 @@ from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 
 from app.database import SessionLocal
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.domain.entities.source_review import SourceReviewItem
 from app.domain.repositories.source_review_repo import SourceReviewRepository
 
 from .schema import SourceReviewItemModel
-
-
-def _like_pattern(value: str) -> str:
-    escaped = value.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-    return f'%{escaped}%'
 
 
 class SQLiteSourceReviewRepository(SourceReviewRepository):
@@ -121,16 +117,16 @@ class SQLiteSourceReviewRepository(SourceReviewRepository):
                 query = query.filter(SourceReviewItemModel.review_type == review_type)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = _like_pattern(normalized_search)
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        SourceReviewItemModel.id.ilike(pattern, escape='\\'),
-                        SourceReviewItemModel.review_type.ilike(pattern, escape='\\'),
-                        SourceReviewItemModel.source_version_id.ilike(pattern, escape='\\'),
-                        SourceReviewItemModel.source_url.ilike(pattern, escape='\\'),
-                        SourceReviewItemModel.summary.ilike(pattern, escape='\\'),
-                        SourceReviewItemModel.created_by.ilike(pattern, escape='\\'),
-                        SourceReviewItemModel.payload_json.ilike(pattern, escape='\\'),
+                        SourceReviewItemModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceReviewItemModel.review_type.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceReviewItemModel.source_version_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceReviewItemModel.source_url.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceReviewItemModel.summary.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceReviewItemModel.created_by.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceReviewItemModel.payload_json.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

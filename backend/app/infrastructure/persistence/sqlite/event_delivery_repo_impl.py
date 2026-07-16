@@ -3,6 +3,7 @@ from datetime import timezone
 
 from sqlalchemy import or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.event_delivery import EventDelivery, EventDeliveryAttempt
 from app.domain.repositories.event_delivery_repo import EventDeliveryRepository
@@ -126,13 +127,13 @@ class SQLiteEventDeliveryRepository(EventDeliveryRepository):
                 query = query.filter(EventDeliveryModel.status == status)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        EventDeliveryModel.event_id.ilike(pattern),
-                        EventDeliveryModel.event_type.ilike(pattern),
-                        EventDeliveryModel.tenant_id.ilike(pattern),
-                        EventDeliveryModel.target_url.ilike(pattern),
+                        EventDeliveryModel.event_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        EventDeliveryModel.event_type.ilike(pattern, escape=LIKE_ESCAPE),
+                        EventDeliveryModel.tenant_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        EventDeliveryModel.target_url.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

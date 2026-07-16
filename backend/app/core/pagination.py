@@ -3,6 +3,8 @@
 from math import ceil
 from typing import Any
 
+LIKE_ESCAPE = "\\"
+
 
 def pagination_meta(
     page: int,
@@ -31,7 +33,7 @@ def pagination_meta(
 def like_pattern(value: str) -> str:
     """Create a SQL LIKE/ILIKE pattern for a literal user search string.
 
-    Callers must pass ``escape="\\"`` to SQLAlchemy's ``like``/``ilike``
+    Callers must pass ``escape=LIKE_ESCAPE`` to SQLAlchemy's ``like``/``ilike``
     operator when using this pattern.
     """
     escaped = value.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

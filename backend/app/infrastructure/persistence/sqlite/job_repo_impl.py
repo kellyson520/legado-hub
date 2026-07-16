@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from sqlalchemy import or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.job import Job, JobEvent
 
@@ -83,12 +84,12 @@ class SQLiteJobRepository:
                 query = query.filter(JobModel.status == status)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        JobModel.id.ilike(pattern),
-                        JobModel.kind.ilike(pattern),
-                        JobModel.tenant_id.ilike(pattern),
+                        JobModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        JobModel.kind.ilike(pattern, escape=LIKE_ESCAPE),
+                        JobModel.tenant_id.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

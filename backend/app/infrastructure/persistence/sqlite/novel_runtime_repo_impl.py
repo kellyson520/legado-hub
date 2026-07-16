@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from sqlalchemy import or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.novel_runtime import NovelAnalysisTask, NovelIngestion
 from app.domain.repositories.novel_runtime_repo import NovelRuntimeRepository
@@ -62,13 +63,13 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
                 query = query.filter(NovelIngestionModel.status == status)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        NovelIngestionModel.id.ilike(pattern),
-                        NovelIngestionModel.title.ilike(pattern),
-                        NovelIngestionModel.provider.ilike(pattern),
-                        NovelIngestionModel.pipeline.ilike(pattern),
+                        NovelIngestionModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        NovelIngestionModel.title.ilike(pattern, escape=LIKE_ESCAPE),
+                        NovelIngestionModel.provider.ilike(pattern, escape=LIKE_ESCAPE),
+                        NovelIngestionModel.pipeline.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

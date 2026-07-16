@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from sqlalchemy import or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.ai_runtime import AITask
 from app.domain.repositories.ai_runtime_repo import AIRuntimeRepository
@@ -66,14 +67,14 @@ class SQLiteAIRuntimeRepository(AIRuntimeRepository):
                 query = query.filter(AITaskModel.status == status)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        AITaskModel.id.ilike(pattern),
-                        AITaskModel.task_type.ilike(pattern),
-                        AITaskModel.actor_id.ilike(pattern),
-                        AITaskModel.provider_name.ilike(pattern),
-                        AITaskModel.model_name.ilike(pattern),
+                        AITaskModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        AITaskModel.task_type.ilike(pattern, escape=LIKE_ESCAPE),
+                        AITaskModel.actor_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        AITaskModel.provider_name.ilike(pattern, escape=LIKE_ESCAPE),
+                        AITaskModel.model_name.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()

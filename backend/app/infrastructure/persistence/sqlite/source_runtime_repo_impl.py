@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from sqlalchemy import and_, or_
 
+from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
 from app.domain.entities.source_runtime import (
     SourceDefinition,
@@ -36,11 +37,6 @@ def _loads_list(raw: str | None) -> list[str]:
         return []
     value = json.loads(raw)
     return value if isinstance(value, list) else []
-
-
-def _like_pattern(value: str) -> str:
-    escaped = value.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
-    return f'%{escaped}%'
 
 
 class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
@@ -307,14 +303,14 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
                 )
             normalized_search = search.strip()
             if normalized_search:
-                pattern = _like_pattern(normalized_search)
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        SourceVersionModel.id.ilike(pattern, escape='\\'),
-                        SourceVersionModel.source_type.ilike(pattern, escape='\\'),
-                        SourceVersionModel.source_id.ilike(pattern, escape='\\'),
-                        SourceVersionModel.created_by.ilike(pattern, escape='\\'),
-                        SourceVersionModel.payload.ilike(pattern, escape='\\'),
+                        SourceVersionModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceVersionModel.source_type.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceVersionModel.source_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceVersionModel.created_by.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceVersionModel.payload.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()
@@ -348,11 +344,11 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
             query = db.query(SourceVersionModel.id).filter(visibility_filter)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        SourceVersionModel.source_id.ilike(pattern),
-                        SourceVersionModel.payload.ilike(pattern),
+                        SourceVersionModel.source_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceVersionModel.payload.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()
@@ -449,13 +445,13 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
                 query = query.filter(SourceTestRunModel.source_version_id == source_version_id)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        SourceTestRunModel.id.ilike(pattern),
-                        SourceTestRunModel.source_version_id.ilike(pattern),
-                        SourceTestRunModel.trigger.ilike(pattern),
-                        SourceTestRunModel.grade.ilike(pattern),
+                        SourceTestRunModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceTestRunModel.source_version_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceTestRunModel.trigger.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceTestRunModel.grade.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()
@@ -589,13 +585,13 @@ class SQLiteSourceRuntimeRepository(SourceRuntimeRepository):
                 query = query.filter(SourceDeploymentModel.status == status)
             normalized_search = search.strip()
             if normalized_search:
-                pattern = f"%{normalized_search}%"
+                pattern = like_pattern(normalized_search)
                 query = query.filter(
                     or_(
-                        SourceDeploymentModel.id.ilike(pattern),
-                        SourceDeploymentModel.source_version_id.ilike(pattern),
-                        SourceDeploymentModel.action.ilike(pattern),
-                        SourceDeploymentModel.actor_id.ilike(pattern),
+                        SourceDeploymentModel.id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceDeploymentModel.source_version_id.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceDeploymentModel.action.ilike(pattern, escape=LIKE_ESCAPE),
+                        SourceDeploymentModel.actor_id.ilike(pattern, escape=LIKE_ESCAPE),
                     )
                 )
             total = query.count()
