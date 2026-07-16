@@ -61,7 +61,7 @@ export interface SourceVersionResponse {
 }
 
 export async function listBookSources(params: SourceListParams = {}) {
-  return apiClient.get<SourceRow[]>('/sources/book_sources', { params }) as Promise<ApiEnvelope<SourceRow[]>>
+  return apiClient.get<SourceRow[]>('/sources/visible', { params }) as Promise<ApiEnvelope<SourceRow[]>>
 }
 
 export function importLegadoSources(payload: LegadoSource | LegadoSource[]): Promise<ApiEnvelope<{ items: LegadoImportItem[] }>> {

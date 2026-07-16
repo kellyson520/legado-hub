@@ -97,6 +97,28 @@ class VisibleSourceRepository:
                     "payload": {"bookSourceName": "published", "bookSourceUrl": "https://published.example"},
                 },
             )(),
+            type(
+                "Version",
+                (),
+                {
+                    "id": "owned-failed",
+                    "source_id": "https://failed.example",
+                    "status": "failed",
+                    "created_by": "7",
+                    "payload": {"bookSourceName": "failed", "bookSourceUrl": "https://failed.example"},
+                },
+            )(),
+            type(
+                "Version",
+                (),
+                {
+                    "id": "owned-superseded",
+                    "source_id": "https://superseded.example",
+                    "status": "superseded",
+                    "created_by": "7",
+                    "payload": {"bookSourceName": "superseded", "bookSourceUrl": "https://superseded.example"},
+                },
+            )(),
         ]
 
     def get_version(self, version_id):

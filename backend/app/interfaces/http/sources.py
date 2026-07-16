@@ -61,6 +61,28 @@ async def list_book_sources(
     }
 
 
+@router.get("/visible")
+async def list_visible_source_versions(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
+):
+    result = await build_source_runtime_service().list_visible_sources(
+        str(identity.user_id),
+        page=page,
+        page_size=page_size,
+    )
+    return {
+        "success": True,
+        "code": "OK",
+        "message": "visible source inventory listed",
+        "data": result["items"],
+        "meta": result["meta"],
+        "trace_id": None,
+    }
+
+
 @router.post("/book_sources")
 async def create_book_source(
     payload: BookSourcePayload,

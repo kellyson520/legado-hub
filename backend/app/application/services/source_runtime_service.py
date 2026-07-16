@@ -183,6 +183,38 @@ class SourceRuntimeService:
             exported_urls.add(url)
         return result
 
+    async def list_visible_sources(self, actor_id: str, *, page: int = 1, page_size: int = 20) -> dict:
+        visible = [
+            version
+            for version in self._repo.list_recent_versions(limit=10_000)
+            if version.status == "published"
+            or (version.status == "candidate" and str(version.created_by) == str(actor_id))
+        ]
+        total = len(visible)
+        start = (page - 1) * page_size
+        rows = []
+        for version in visible[start:start + page_size]:
+            payload = _sanitize_legado_value(version.payload)
+            name = payload.get("bookSourceName", version.source_id)
+            url = payload.get("bookSourceUrl", version.source_id)
+            rows.append(
+                {
+                    "id": version.id,
+                    "bookSourceName": str(name),
+                    "bookSourceUrl": str(url),
+                    "bookSourceGroup": str(payload.get("bookSourceGroup") or "default"),
+                    "enabled": bool(payload.get("enabled", True)),
+                    "sourceStatus": version.status,
+                    "sourceOrigin": "runtime_version",
+                    "lastCheckTime": (version.published_at or version.created_at).isoformat(),
+                    "errorMsg": None,
+                }
+            )
+        return {
+            "items": rows,
+            "meta": {"page": page, "page_size": page_size, "total": total},
+        }
+
     async def get_version_detail(self, source_version_id: str) -> dict:
         version = self._repo.get_version(source_version_id)
         if version is None:
