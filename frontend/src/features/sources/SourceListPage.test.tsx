@@ -77,6 +77,91 @@ test('source list renders legacy runtime name, URL, and source status', async ()
   expect(screen.getByRole('link', { name: '打开书源健康控制台' })).toHaveClass('inline-flex')
 })
 
+test('source list keeps a review link for persisted candidate versions', async () => {
+  const { listBookSources } = await import('@/api/modules/sources')
+  vi.mocked(listBookSources).mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{
+      id: 'candidate-version-1',
+      bookSourceName: '待审核书源',
+      bookSourceUrl: 'https://candidate.example.test',
+      bookSourceGroup: '测试',
+      enabled: true,
+      sourceStatus: 'candidate',
+      sourceOrigin: 'runtime_version',
+      lastCheckTime: '2026-07-16T10:00:00Z',
+      errorMsg: null,
+      payload: {},
+    }],
+    meta: { page: 1, total: 1 },
+    trace_id: null,
+  })
+
+  render(<MemoryRouter><SourceListPage /></MemoryRouter>)
+
+  expect(await screen.findByRole('link', { name: '审核规则' })).toHaveAttribute(
+    'href',
+    '/sources/rules/candidate-version-1'
+  )
+})
+
+test('source list loads further pages when the visible inventory exceeds the initial page', async () => {
+  const { listBookSources } = await import('@/api/modules/sources')
+  vi.mocked(listBookSources)
+    .mockResolvedValueOnce({
+      success: true,
+      code: 'OK',
+      message: 'ok',
+      data: [{
+        id: 'candidate-version-1',
+        bookSourceName: '第一个候选书源',
+        bookSourceUrl: 'https://first.example.test',
+        bookSourceGroup: '测试',
+        enabled: true,
+        sourceStatus: 'candidate',
+        sourceOrigin: 'runtime_version',
+        lastCheckTime: '2026-07-16T10:00:00Z',
+        errorMsg: null,
+        payload: {},
+      }],
+      meta: { page: 1, page_size: 100, total: 2 },
+      trace_id: null,
+    })
+
+  render(<MemoryRouter><SourceListPage /></MemoryRouter>)
+
+  expect(await screen.findByText('第一个候选书源')).toBeInTheDocument()
+  expect(screen.getByText('已显示 1 / 2 个书源')).toBeInTheDocument()
+  vi.mocked(listBookSources).mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{
+      id: 'candidate-version-2',
+      bookSourceName: '第二个候选书源',
+      bookSourceUrl: 'https://second.example.test',
+      bookSourceGroup: '测试',
+      enabled: true,
+      sourceStatus: 'candidate',
+      sourceOrigin: 'runtime_version',
+      lastCheckTime: '2026-07-16T10:00:00Z',
+      errorMsg: null,
+      payload: {},
+    }],
+    meta: { page: 2, page_size: 100, total: 2 },
+    trace_id: null,
+  })
+  fireEvent.click(screen.getByRole('button', { name: '加载更多书源' }))
+
+  await waitFor(() => {
+    expect(listBookSources).toHaveBeenLastCalledWith({ page: 2, page_size: 100 })
+  })
+  expect(await screen.findByText('第二个候选书源')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '加载更多书源' })).not.toBeInTheDocument()
+})
+
 test('source list stops loading and explains when the runtime inventory cannot be loaded', async () => {
   const { listBookSources } = await import('@/api/modules/sources')
   vi.mocked(listBookSources).mockRejectedValueOnce(new Error('network unavailable'))
