@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope, PaginatedQueryParams } from '@/api/types'
+import type { PaginatedEnvelope, PaginatedQueryParams } from '@/api/types'
 
 export interface SourceHealthRow {
   source_id: number
@@ -64,10 +64,10 @@ export interface SourceHealthListParams extends PaginatedQueryParams {
   statuses?: string
 }
 
-export async function listSourceHealth(params: SourceHealthListParams = {}) {
+export async function listSourceHealth(params: SourceHealthListParams = {}): Promise<PaginatedEnvelope<SourceHealthRow>> {
   return apiClient.get<SourceHealthRow[]>('/source-health/book-sources', {
     params,
-  }) as Promise<ApiEnvelope<SourceHealthRow[]>>
+  })
 }
 
 export async function getSourceHealth(sourceId: number) {

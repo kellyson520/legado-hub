@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope, PaginatedStatusQueryParams } from '@/api/types'
+import type { ApiEnvelope, PaginatedEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
 export interface AIListParams extends PaginatedStatusQueryParams {}
 
@@ -51,7 +51,7 @@ interface BackendAITaskRow {
 }
 
 export async function listAITasks(params: AIListParams = {}) {
-  const response = (await apiClient.get<BackendAITaskRow[]>('/ai/tasks', { params })) as ApiEnvelope<BackendAITaskRow[]>
+  const response = await apiClient.get<BackendAITaskRow[]>('/ai/tasks', { params })
   return {
     ...response,
     data: response.data.map((task) => ({
@@ -62,10 +62,10 @@ export async function listAITasks(params: AIListParams = {}) {
       model: task.model ?? 'n/a',
       cost: typeof task.cost === 'number' ? `$${task.cost.toFixed(2)}` : (task.cost ?? '$0.00'),
     })),
-  } satisfies ApiEnvelope<AITaskRow[]>
+  } satisfies PaginatedEnvelope<AITaskRow>
 }
 
-export function listAIConversations(params: AIListParams = {}): Promise<ApiEnvelope<AIConversationSummary[]>> {
+export function listAIConversations(params: AIListParams = {}): Promise<PaginatedEnvelope<AIConversationSummary>> {
   return apiClient.get('/ai/conversations', { params })
 }
 

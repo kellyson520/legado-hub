@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope, PaginatedQueryParams } from '@/api/types'
+import type { ApiEnvelope, PaginatedEnvelope, PaginatedQueryParams } from '@/api/types'
 
 export interface SourceRow {
   id: number | string
@@ -57,8 +57,8 @@ export interface SourceVersionResponse {
   publish_allowed: boolean
 }
 
-export async function listBookSources(params: SourceListParams = {}) {
-  return apiClient.get<SourceRow[]>('/sources/visible', { params }) as Promise<ApiEnvelope<SourceRow[]>>
+export async function listBookSources(params: SourceListParams = {}): Promise<PaginatedEnvelope<SourceRow>> {
+  return apiClient.get<SourceRow[]>('/sources/visible', { params })
 }
 
 export function importLegadoSources(payload: LegadoSource | LegadoSource[]): Promise<ApiEnvelope<{ items: LegadoImportItem[] }>> {

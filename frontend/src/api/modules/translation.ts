@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope, PaginatedStatusQueryParams } from '@/api/types'
+import type { PaginatedEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
 export interface TranslationListParams extends PaginatedStatusQueryParams {}
 
@@ -24,9 +24,7 @@ interface BackendTranslationJobRow {
 }
 
 export async function listTranslationJobs(params: TranslationListParams = {}) {
-  const response = (await apiClient.get<BackendTranslationJobRow[]>('/translation/jobs', { params })) as ApiEnvelope<
-    BackendTranslationJobRow[]
-  >
+  const response = await apiClient.get<BackendTranslationJobRow[]>('/translation/jobs', { params })
   return {
     ...response,
     data: response.data.map((job) => {
@@ -41,5 +39,5 @@ export async function listTranslationJobs(params: TranslationListParams = {}) {
         progress: job.progress ?? '0%',
       }
     }),
-  } satisfies ApiEnvelope<TranslationJobRow[]>
+  } satisfies PaginatedEnvelope<TranslationJobRow>
 }

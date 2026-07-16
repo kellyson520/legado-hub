@@ -7,6 +7,8 @@ export interface ApiEnvelope<T> {
   trace_id: string | null
 }
 
+export type PaginatedEnvelope<T> = ApiEnvelope<T[]>
+
 export interface PaginatedMeta {
   page: number
   page_size: number

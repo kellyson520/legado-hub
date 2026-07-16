@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope, PaginatedStatusQueryParams } from '@/api/types'
+import type { ApiEnvelope, PaginatedEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
 export interface EngineRunRow {
   id: string
@@ -80,15 +80,15 @@ export interface RegexTestResult {
 
 export interface EngineListParams extends PaginatedStatusQueryParams {}
 
-export async function listEngineRuns(params: EngineListParams = {}) {
-  return apiClient.get<EngineRunRow[]>('/engine/runs', { params }) as Promise<ApiEnvelope<EngineRunRow[]>>
+export async function listEngineRuns(params: EngineListParams = {}): Promise<PaginatedEnvelope<EngineRunRow>> {
+  return apiClient.get<EngineRunRow[]>('/engine/runs', { params })
 }
 
-export async function listEngineDeployments(params: EngineListParams = {}) {
-  return apiClient.get<EngineDeploymentRow[]>('/engine/deployments', { params }) as Promise<ApiEnvelope<EngineDeploymentRow[]>>
+export async function listEngineDeployments(params: EngineListParams = {}): Promise<PaginatedEnvelope<EngineDeploymentRow>> {
+  return apiClient.get<EngineDeploymentRow[]>('/engine/deployments', { params })
 }
 
-export function listEngineSourceBuilds(params: EngineListParams = {}): Promise<ApiEnvelope<EngineSourceBuildRow[]>> {
+export function listEngineSourceBuilds(params: EngineListParams = {}): Promise<PaginatedEnvelope<EngineSourceBuildRow>> {
   return apiClient.get<EngineSourceBuildRow[]>('/engine/source-builds', { params })
 }
 
