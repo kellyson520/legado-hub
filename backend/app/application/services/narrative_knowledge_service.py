@@ -71,6 +71,25 @@ class NarrativeKnowledgeService:
             )
         return None
 
+    def build_work_snapshot(self, work_id: str, *, chapter_limit: int) -> dict:
+        return {
+            "work_id": work_id,
+            "chapter_limit": chapter_limit,
+            "published_claims": [
+                self._serialize_claim(claim)
+                for claim in self._repo.list_claims(work_id=work_id, status="published")
+            ],
+            "open_conflicts": [
+                {
+                    "id": conflict.id,
+                    "incumbent_claim_id": conflict.incumbent_claim_id,
+                    "conflicting_claim_id": conflict.conflicting_claim_id,
+                    "status": conflict.status,
+                }
+                for conflict in self._repo.list_conflicts(work_id=work_id, status="open")
+            ],
+        }
+
     def _verified_evidence_ids(self, evidence_ids: list[str]) -> list[str]:
         verified = []
         for evidence_id in dict.fromkeys(evidence_ids):
@@ -89,3 +108,16 @@ class NarrativeKnowledgeService:
         if left.scalar_value is not None or right.scalar_value is not None:
             return left.scalar_value != right.scalar_value
         return left.object_entity_id != right.object_entity_id
+
+    @staticmethod
+    def _serialize_claim(claim: KnowledgeClaim) -> dict:
+        return {
+            "id": claim.id,
+            "subject_entity_id": claim.subject_entity_id,
+            "predicate": claim.predicate,
+            "object_entity_id": claim.object_entity_id,
+            "scalar_value": claim.scalar_value,
+            "epistemic": claim.epistemic,
+            "status": claim.status,
+            "evidence_ids": claim.evidence_ids,
+        }

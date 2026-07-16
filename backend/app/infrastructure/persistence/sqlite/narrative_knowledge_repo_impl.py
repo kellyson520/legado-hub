@@ -173,3 +173,35 @@ class SQLiteNarrativeKnowledgeRepository:
             return self._conflict(model)
         finally:
             self._close(db)
+
+    def list_claims(self, *, work_id: str, status: str | None = None) -> list[KnowledgeClaim]:
+        db = self._db()
+        try:
+            query = db.query(KnowledgeClaimModel).filter(KnowledgeClaimModel.work_id == work_id)
+            if status is not None:
+                query = query.filter(KnowledgeClaimModel.status == status)
+            models = query.order_by(KnowledgeClaimModel.created_at.asc()).all()
+            result = []
+            for model in models:
+                evidence_ids = [
+                    row.evidence_span_id
+                    for row in db.query(ClaimEvidenceModel)
+                    .filter(ClaimEvidenceModel.claim_id == model.id)
+                    .order_by(ClaimEvidenceModel.created_at.asc())
+                    .all()
+                ]
+                result.append(self._claim(model, evidence_ids))
+            return result
+        finally:
+            self._close(db)
+
+    def list_conflicts(self, *, work_id: str, status: str | None = None) -> list[KnowledgeConflict]:
+        db = self._db()
+        try:
+            query = db.query(KnowledgeConflictModel).filter(KnowledgeConflictModel.work_id == work_id)
+            if status is not None:
+                query = query.filter(KnowledgeConflictModel.status == status)
+            models = query.order_by(KnowledgeConflictModel.created_at.asc()).all()
+            return [self._conflict(model) for model in models]
+        finally:
+            self._close(db)

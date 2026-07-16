@@ -68,6 +68,26 @@ class EvidenceService:
             spans.append(verified)
         return spans
 
+    def get_verified_evidence_or_raise(self, span_id: str) -> dict:
+        span = self.get_verified_span(span_id)
+        if span is None:
+            raise LookupError("verified evidence span not found")
+        chapter = self._canonical_repo.get_canonical_chapter(span.canonical_chapter_id)
+        variant = self._canonical_repo.get_content_variant(span.content_variant_id)
+        return {
+            "id": span.id,
+            "canonical_chapter_id": span.canonical_chapter_id,
+            "canonical_chapter_title": chapter.title if chapter is not None else "",
+            "content_variant_id": span.content_variant_id,
+            "source_id": variant.source_id if variant is not None else "",
+            "start_offset": span.start_offset,
+            "end_offset": span.end_offset,
+            "excerpt": span.excerpt,
+            "excerpt_sha256": span.excerpt_sha256,
+            "content_sha256": span.content_sha256,
+            "created_at": span.created_at.isoformat() if span.created_at else None,
+        }
+
     @staticmethod
     def _normalize_content(content: str) -> str:
         return unicodedata.normalize("NFC", (content or "").replace("\r\n", "\n").replace("\r", "\n"))
