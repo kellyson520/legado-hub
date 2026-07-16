@@ -213,11 +213,12 @@ class SourceRuntimeService:
             exported_urls.add(url)
         return result
 
-    async def list_visible_sources(self, actor_id: str, *, page: int = 1, page_size: int = 20) -> dict:
+    async def list_visible_sources(self, actor_id: str, *, page: int = 1, page_size: int = 20, search: str = "") -> dict:
         visible, total = self._repo.list_visible_versions(
             str(actor_id),
             page=page,
             page_size=page_size,
+            search=search,
         )
         rows = []
         for version in visible:
@@ -239,7 +240,7 @@ class SourceRuntimeService:
             )
         return {
             "items": rows,
-            "meta": {"page": page, "page_size": page_size, "total": total},
+            "meta": {"page": page, "page_size": page_size, "total": total, "search": search},
         }
 
     async def get_version_detail(self, source_version_id: str) -> dict:
