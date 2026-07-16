@@ -64,3 +64,23 @@ test('source list imports Legado JSON as candidate sources', async () => {
   })
   expect(await screen.findByText('已创建 1 个候选书源')).toBeInTheDocument()
 })
+
+test('source list reads a local JSON file before importing it as candidates', async () => {
+  const { importLegadoSources } = await import('@/api/modules/sources')
+  render(<MemoryRouter><SourceListPage /></MemoryRouter>)
+
+  const content = '[{"bookSourceName":"文件书源","bookSourceUrl":"https://file.example.test"}]'
+  const file = new File([content], 'legado-sources.json', { type: 'application/json' })
+  Object.defineProperty(file, 'text', { value: async () => content })
+
+  fireEvent.change(await screen.findByLabelText('选择 JSON 文件'), { target: { files: [file] } })
+  expect(await screen.findByText('已读取 legado-sources.json，点击导入书源。')).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '导入书源' }))
+
+  await waitFor(() => {
+    expect(importLegadoSources).toHaveBeenCalledWith([
+      { bookSourceName: '文件书源', bookSourceUrl: 'https://file.example.test' },
+    ])
+  })
+})

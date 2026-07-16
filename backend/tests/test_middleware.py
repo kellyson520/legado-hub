@@ -211,8 +211,8 @@ async def test_rate_limit_middleware_skips_static_paths():
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_middleware_uses_api_key_for_key():
-    """测试 RateLimitMiddleware — 使用 API Key 前缀构建限流 key"""
+async def test_rate_limit_middleware_does_not_trust_unverified_api_key_prefix():
+    """未经过认证的 API Key 外观值必须仍按客户端 IP 限流。"""
     async def mock_call_next(request):
         return Response(status_code=200, content=b"ok")
 
@@ -227,10 +227,11 @@ async def test_rate_limit_middleware_uses_api_key_for_key():
 
         await middleware.dispatch(request, mock_call_next)
 
-        # 验证限流 key 使用 API Key 前缀
+        # 认证依赖在路由阶段才会验证 API Key；中间件不得把任意 lh_ 值
+        # 当成独立限流主体，否则攻击者可不断更换伪造值绕过 IP 限流。
         call_args = mock_redis.check_rate_limit.call_args
         key = call_args[0][0]
-        assert key.startswith("ratelimit:api:lh_abcde")
+        assert key == "ratelimit:ip:192.168.1.1"
 
 
 @pytest.mark.asyncio

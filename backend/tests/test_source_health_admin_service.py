@@ -22,6 +22,54 @@ class FakeProbeService:
 
 
 @pytest.mark.asyncio
+async def test_health_inventory_includes_unprobed_book_sources(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-inventory.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "未探测书源", "bookSourceUrl": "https://unprobed.example", "enabled": True},
+        actor_id=1,
+    )
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=None,
+        classifier=None,
+    )
+
+    result = await service.list_book_source_health(page=1, page_size=20)
+
+    assert result["meta"] == {"page": 1, "page_size": 20, "total": 1}
+    assert result["items"] == [
+        {
+            "source_id": source["id"],
+            "source_name": "未探测书源",
+            "source_url": "https://unprobed.example",
+            "health_status": "unknown",
+            "search_status": "unknown",
+            "toc_status": "unknown",
+            "content_status": "unknown",
+            "failure_reason": "not_probed",
+            "decision_confidence": "low",
+            "route_policy": "probe_only",
+            "route_score": 10.0,
+            "last_probe_at": None,
+            "next_probe_at": None,
+            "metadata": {},
+        }
+    ]
+    assert health_repo.get_snapshot(source["id"]) is None
+
+
+@pytest.mark.asyncio
 async def test_admin_service_persists_snapshot_and_mirrors_book_source_fields(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-admin.sqlite3"))

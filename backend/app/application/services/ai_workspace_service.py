@@ -257,7 +257,7 @@ class AIWorkspaceService:
                 "status": row.status,
             }
             for row in rows
-            if row.status == "published" or str(row.created_by) == actor_id
+            if row.status == "published" or (row.status == "candidate" and str(row.created_by) == actor_id)
         ]
 
     def _get_source_rule_summary(self, source_version_id: str, actor_id: str) -> dict:

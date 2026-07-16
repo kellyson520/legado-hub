@@ -113,13 +113,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path.startswith("/static") or path in self.SKIP_PATHS:
             return await call_next(request)
 
-        # 构建限流 key
+        # 认证依赖在路由处理阶段才会验证 Bearer 值。中间件不能根据
+        # 未验证的 `lh_` 前缀拆分主体，否则攻击者可不断伪造前缀绕过限流。
+        # 因此认证前的第一道限流稳定地按客户端 IP 执行。
         client_ip = request.client.host if request.client else "unknown"
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer lh_"):
-            key = f"ratelimit:api:{auth_header[7:15]}"
-        else:
-            key = f"ratelimit:ip:{client_ip}"
+        key = f"ratelimit:ip:{client_ip}"
 
         # 检查限流
         allowed, remaining, reset_after = await redis_client.check_rate_limit(

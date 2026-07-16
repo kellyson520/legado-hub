@@ -23,7 +23,7 @@ class SourceHealthAdminService:
         page_size: int = 20,
         statuses: list[str] | None = None,
     ) -> dict:
-        rows, total = self._health_repo.list_snapshots(
+        rows, total = self._health_repo.list_book_source_health_inventory(
             statuses=statuses,
             limit=page_size,
             offset=(page - 1) * page_size,

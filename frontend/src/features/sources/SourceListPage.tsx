@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { ChangeEvent, FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { exportLegadoSources, importLegadoSources, listBookSources, type SourceRow } from '@/api/modules/sources'
@@ -43,6 +43,28 @@ export function SourceListPage() {
     } catch { setError('导入失败，请检查登录权限和书源内容。') } finally { setSubmitting(false) }
   }
 
+  async function handleFileSelect(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setError(null)
+    setFeedback(null)
+    setCreatedVersionIds([])
+    try {
+      const content = await file.text()
+      const parsed: unknown = JSON.parse(content)
+      if (!Array.isArray(parsed) && (typeof parsed !== 'object' || parsed === null)) {
+        setError('导入文件必须包含一个书源对象或书源数组。')
+        return
+      }
+      setLegadoJson(content)
+      setFeedback(`已读取 ${file.name}，点击导入书源。`)
+    } catch {
+      setError('无法读取 JSON 文件，请确认文件编码和格式。')
+    }
+  }
+
   async function handleExport() {
     setError(null)
     try {
@@ -57,7 +79,7 @@ export function SourceListPage() {
   return <ConsoleLayout eyebrow="书源" title="书源运行库存" description="查看已发布书源与候选版本。Legado JSON 导入始终作为候选版本，验证完成后才可发布。">
     <div className="flex justify-end"><Link to="/sources/health" className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90">打开书源健康控制台</Link></div>
     <Card className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Legado 书源导入与导出</h2><p className="mt-1 text-sm text-muted-foreground">导入仅创建候选书源，并移除 cookie、令牌和 Provider 等敏感字段。</p></div><Button type="button" variant="outline" onClick={() => void handleExport()}>导出可见书源</Button></div>
-      <form className="mt-4 space-y-3" onSubmit={handleImport}><label className="text-sm font-medium" htmlFor="legado-json">Legado JSON</label><Textarea id="legado-json" value={legadoJson} onChange={(event) => setLegadoJson(event.target.value)} placeholder={'[{"bookSourceName":"示例书源","bookSourceUrl":"https://example.com"}]'} /><div className="flex flex-wrap items-center gap-3"><Button type="submit" disabled={submitting}>导入书源</Button>{feedback ? <span className="text-sm text-emerald-600">{feedback}</span> : null}{error ? <span className="text-sm text-rose-600">{error}</span> : null}</div>{createdVersionIds.length > 0 ? <div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span className="text-muted-foreground">候选书源已创建，可继续：</span>{createdVersionIds.map((sourceVersionId) => <Link key={sourceVersionId} to={`/sources/rules/${sourceVersionId}`} className="font-medium text-primary underline-offset-4 hover:underline">编辑规则</Link>)}</div> : null}</form>
+      <form className="mt-4 space-y-3" onSubmit={handleImport}><label className="text-sm font-medium" htmlFor="legado-json">Legado JSON</label><Textarea id="legado-json" value={legadoJson} onChange={(event) => setLegadoJson(event.target.value)} placeholder={'[{"bookSourceName":"示例书源","bookSourceUrl":"https://example.com"}]'} /><div className="flex flex-wrap items-center gap-3"><input id="legado-json-file" className="sr-only" type="file" accept="application/json,.json" onChange={(event) => void handleFileSelect(event)} /><Button asChild variant="outline"><label htmlFor="legado-json-file">选择 JSON 文件</label></Button><Button type="submit" disabled={submitting}>导入书源</Button>{feedback ? <span className="text-sm text-emerald-600">{feedback}</span> : null}{error ? <span role="alert" className="text-sm text-rose-600">{error}</span> : null}</div>{createdVersionIds.length > 0 ? <div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span className="text-muted-foreground">候选书源已创建，可继续：</span>{createdVersionIds.map((sourceVersionId) => <Link key={sourceVersionId} to={`/sources/rules/${sourceVersionId}`} className="font-medium text-primary underline-offset-4 hover:underline">编辑规则</Link>)}</div> : null}</form>
     </Card>
     <div className="grid gap-4">{loading ? <Card className="p-6 text-sm text-muted-foreground">正在加载书源…</Card> : rows.map((row) => <Card key={row.id} className="grid gap-4 p-5 md:grid-cols-[1.6fr_1fr_1fr]"><div><p className="text-xs font-medium text-muted-foreground">书源</p><h3 className="mt-2 text-lg font-semibold">{row.name}</h3><p className="mt-2 text-sm text-muted-foreground">状态：{row.status}</p></div><div className="rounded-md border border-border bg-muted/40 p-4"><p className="text-xs font-medium text-muted-foreground">已发布版本</p><p className="mt-2 text-lg font-medium text-primary">{row.publishedVersion}</p></div><div className="rounded-md border border-border bg-muted/40 p-4"><p className="text-xs font-medium text-muted-foreground">最近评分</p><p className="mt-2 text-lg font-medium text-emerald-600">{row.latestGrade}</p></div></Card>)}</div>
   </ConsoleLayout>

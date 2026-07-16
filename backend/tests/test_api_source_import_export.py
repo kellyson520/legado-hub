@@ -86,3 +86,61 @@ def test_export_is_whitelisted_and_only_includes_own_candidates_or_published(tmp
         "ruleSearch": {"bookList": ".x"},
     }
     assert "apiKey" not in exported[own.source_id]
+
+
+def test_visible_source_inventory_matches_agent_visible_candidates_and_published_sources(tmp_path, monkeypatch):
+    client, headers = _client_and_headers(tmp_path, monkeypatch)
+    from app.infrastructure.persistence.factory import build_source_runtime_repository
+
+    repo = build_source_runtime_repository()
+    own = repo.create_candidate_version(
+        "book",
+        "https://own-visible.test/books",
+        {"bookSourceName": "我的候选", "bookSourceUrl": "https://own-visible.test/books"},
+        "7",
+    )
+    hidden = repo.create_candidate_version(
+        "book",
+        "https://other-visible.test/books",
+        {"bookSourceName": "他人的候选", "bookSourceUrl": "https://other-visible.test/books"},
+        "8",
+    )
+    published = repo.create_candidate_version(
+        "book",
+        "https://published-visible.test/books",
+        {"bookSourceName": "已发布书源", "bookSourceUrl": "https://published-visible.test/books"},
+        "8",
+    )
+    failed = repo.create_candidate_version(
+        "book",
+        "https://failed-visible.test/books",
+        {"bookSourceName": "失败书源", "bookSourceUrl": "https://failed-visible.test/books"},
+        "7",
+    )
+    superseded = repo.create_candidate_version(
+        "book",
+        "https://superseded-visible.test/books",
+        {"bookSourceName": "已替代书源", "bookSourceUrl": "https://superseded-visible.test/books"},
+        "7",
+    )
+    repo.update_version_status(published.id, "published")
+    repo.update_version_status(failed.id, "failed")
+    repo.update_version_status(superseded.id, "superseded")
+
+    response = client.get("/api/sources/visible", headers=headers)
+
+    assert response.status_code == 200
+    rows = {item["id"]: item for item in response.json()["data"]}
+    assert set(rows) == {own.id, published.id}
+    assert hidden.id not in rows
+    assert failed.id not in rows
+    assert superseded.id not in rows
+    assert rows[own.id] == {
+        "id": own.id,
+        "name": "我的候选",
+        "url": own.source_id,
+        "status": "candidate",
+        "publishedVersion": "-",
+        "latestGrade": "-",
+    }
+    assert rows[published.id]["publishedVersion"] == published.id
