@@ -7,6 +7,14 @@ export interface ApiEnvelope<T> {
   trace_id: string | null
 }
 
+export interface PaginatedMeta {
+  page: number
+  page_size: number
+  total: number
+  total_pages: number
+  search?: string
+}
+
 export interface AuthUser {
   id: string
   username: string
