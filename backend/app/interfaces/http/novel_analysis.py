@@ -4,6 +4,7 @@ from app.core.permissions import Permission
 from app.infrastructure.persistence.factory import (
     build_evidence_service,
     build_narrative_knowledge_service,
+    build_novel_analysis_task_service,
     build_source_repository,
 )
 from app.interfaces.http.deps import require_permission
@@ -47,3 +48,40 @@ async def get_evidence(
     else:
         data["source_name"] = ""
     return _envelope("evidence loaded", data)
+
+
+def _task_data(task) -> dict:
+    return {
+        "id": task.id,
+        "work_id": task.work_id,
+        "status": task.status,
+        "checkpoint": task.checkpoint,
+        "tool_call_count": task.tool_call_count,
+        "policy": task.policy,
+    }
+
+
+@router.post("/tasks/{task_id}/pause")
+async def pause_task(
+    task_id: str,
+    identity=Depends(require_permission(Permission.NOVEL_MANAGE)),
+):
+    try:
+        task = build_novel_analysis_task_service().pause(task_id, tenant_id=str(identity.user_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _envelope("analysis task paused", _task_data(task))
+
+
+@router.post("/tasks/{task_id}/resume")
+async def resume_task(
+    task_id: str,
+    identity=Depends(require_permission(Permission.NOVEL_MANAGE)),
+):
+    try:
+        task = build_novel_analysis_task_service().resume(task_id, tenant_id=str(identity.user_id))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _envelope("analysis task resumed", _task_data(task))

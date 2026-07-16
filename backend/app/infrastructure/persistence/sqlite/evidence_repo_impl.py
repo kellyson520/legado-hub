@@ -76,3 +76,16 @@ class SQLiteEvidenceRepository:
             return [self._entity(model) for model in models]
         finally:
             self._close(db)
+
+    def list_spans_for_variant(self, content_variant_id: str) -> list[EvidenceSpan]:
+        db = self._db()
+        try:
+            models = (
+                db.query(EvidenceSpanModel)
+                .filter(EvidenceSpanModel.content_variant_id == content_variant_id)
+                .order_by(EvidenceSpanModel.start_offset.asc())
+                .all()
+            )
+            return [self._entity(model) for model in models]
+        finally:
+            self._close(db)

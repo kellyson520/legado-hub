@@ -205,3 +205,18 @@ class SQLiteNarrativeKnowledgeRepository:
             return [self._conflict(model) for model in models]
         finally:
             self._close(db)
+
+    def list_claim_ids_for_evidence(self, evidence_ids: list[str]) -> list[str]:
+        if not evidence_ids:
+            return []
+        db = self._db()
+        try:
+            rows = (
+                db.query(ClaimEvidenceModel.claim_id)
+                .filter(ClaimEvidenceModel.evidence_span_id.in_(evidence_ids))
+                .distinct()
+                .all()
+            )
+            return [row[0] for row in rows]
+        finally:
+            self._close(db)

@@ -15,6 +15,7 @@ from app.application.services.interactive_browser_service import InteractiveBrow
 from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
 from app.application.services.novel_agent_service import NovelAgentService
 from app.application.services.novel_analysis_pipeline_service import NovelAnalysisPipelineService
+from app.application.services.novel_analysis_audit_service import NovelAnalysisAuditService
 from app.application.services.novel_analysis_task_service import NovelAnalysisTaskService
 from app.application.services.narrative_knowledge_service import NarrativeKnowledgeService
 from app.application.services.novel_app_service import NovelAppService
@@ -188,6 +189,10 @@ def build_novel_analysis_task_service() -> NovelAnalysisTaskService:
 
 def build_novel_analysis_pipeline_service() -> NovelAnalysisPipelineService:
     return NovelAnalysisPipelineService(knowledge_service=build_narrative_knowledge_service())
+
+
+def build_novel_analysis_audit_service() -> NovelAnalysisAuditService:
+    return NovelAnalysisAuditService(build_evidence_repository(), build_narrative_knowledge_repository())
 
 
 def build_work_ingestion_service() -> WorkIngestionService:
