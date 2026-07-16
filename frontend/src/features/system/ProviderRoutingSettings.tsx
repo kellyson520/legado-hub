@@ -22,6 +22,10 @@ const ROUTE_GROUPS = [
   { id: 'source_build', label: 'Source build Agent' },
   { id: 'translation', label: 'Translation' },
   { id: 'novel', label: 'Novel analysis' },
+  { id: 'novel_extract', label: 'Novel extractor' },
+  { id: 'novel_verify', label: 'Novel verifier' },
+  { id: 'novel_adjudicate', label: 'Novel adjudicator' },
+  { id: 'novel_audit', label: 'Novel auditor' },
 ] as const
 
 type ProviderForm = ProviderConfigurationInput & { id: string | null; apiKeyMasked: string }

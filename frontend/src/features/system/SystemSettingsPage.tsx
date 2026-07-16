@@ -36,7 +36,7 @@ function isSourceBuildAgentProviderConfigured(settings: SourceBuildAgentSettings
   return Boolean(settings?.providerConfigured ?? settings?.provider_configured)
 }
 
-export function SystemSettingsPage() {
+export function ProviderSettingsContent() {
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [quotas, setQuotas] = useState<QuotaPolicyRow[]>([])
   const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null)
@@ -200,11 +200,7 @@ export function SystemSettingsPage() {
   }
 
   return (
-    <ConsoleLayout
-      eyebrow="System"
-      title="Provider control room"
-      description="统一展示 provider 健康、配额策略和 LLM API 配置，保证写源、AI、translation、novel 任务都有真实模型调用入口。"
-    >
+    <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)]">
         <section className="rounded-md border border-border bg-card p-5 shadow-sm">
           <h3 className="text-lg font-semibold text-foreground">LLM API configuration</h3>
@@ -472,6 +468,18 @@ export function SystemSettingsPage() {
         </div>
       </div>
       <ProviderRoutingSettings onProviderSaved={handleProviderSaved} />
+    </div>
+  )
+}
+
+export function SystemSettingsPage() {
+  return (
+    <ConsoleLayout
+      eyebrow="System"
+      title="Provider control room"
+      description="统一展示 provider 健康、配额策略和 LLM API 配置，保证写源、AI、translation、novel 任务都有真实模型调用入口。"
+    >
+      <ProviderSettingsContent />
     </ConsoleLayout>
   )
 }

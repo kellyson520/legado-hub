@@ -17,7 +17,7 @@ import { SourceHealthPage } from '@/features/sources/SourceHealthPage'
 import { SourceHealthDetailPage } from '@/features/sources/SourceHealthDetailPage'
 import { SourceListPage } from '@/features/sources/SourceListPage'
 import { SourceRuleEditorPage } from '@/features/sources/SourceRuleEditorPage'
-import { SystemSettingsPage } from '@/features/system/SystemSettingsPage'
+import { SystemSettingsRoutePage } from '@/features/system/SystemSettingsRoutePage'
 import { TranslationJobsPage } from '@/features/translation/TranslationJobsPage'
 import { RequireAuth } from '@/app/router/RequireAuth'
 import { RequirePermission } from '@/app/router/RequirePermission'
@@ -41,7 +41,8 @@ export const appRoutes = [
   { path: '/operations/deliveries', element: <EventDeliveriesPage /> },
   { path: '/operations/source-builds', element: <SourceBuildsPage /> },
   { path: '/operations/review-queue', element: <ReviewQueuePage /> },
-  { path: '/system/settings', element: <SystemSettingsPage /> },
+  { path: '/system/settings', element: <Navigate to="/system/settings/models/providers" replace /> },
+  { path: '/system/settings/:domain/:tab', element: <SystemSettingsRoutePage /> },
 ]
 
 export function AppRoutes() {
@@ -70,7 +71,10 @@ export function AppRoutes() {
         <Route element={<RequirePermission permission="system.jobs.manage" />}><Route path="/operations/deliveries" element={<EventDeliveriesPage />} /></Route>
         <Route element={<RequirePermission permission="book_sources.read" />}><Route path="/operations/source-builds" element={<SourceBuildsPage />} /></Route>
         <Route element={<RequirePermission permission="agent_runs.read" />}><Route path="/operations/review-queue" element={<ReviewQueuePage />} /></Route>
-        <Route element={<RequirePermission permission="system.settings.manage" />}><Route path="/system/settings" element={<SystemSettingsPage />} /></Route>
+        <Route element={<RequirePermission permission="system.settings.manage" />}>
+          <Route path="/system/settings" element={<Navigate to="/system/settings/models/providers" replace />} />
+          <Route path="/system/settings/:domain/:tab" element={<SystemSettingsRoutePage />} />
+        </Route>
       </Route>
       <Route path="/" element={<Navigate to="/login" replace />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
