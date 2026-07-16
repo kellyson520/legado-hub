@@ -1,12 +1,12 @@
 import asyncio
 import json
-from math import ceil
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 from fastapi.responses import StreamingResponse
 
 from app.core.exceptions import AuthorizationException, NotFoundException, ValidationException
+from app.core.pagination import pagination_meta
 from app.core.permissions import Permission
 from app.application.services.event_delivery_service import get_event_delivery_stream_broker
 from app.infrastructure.persistence.factory import (
@@ -482,13 +482,7 @@ async def list_review_queue(
         'code': 'OK',
         'message': 'review queue listed',
         'data': data,
-        'meta': {
-            'page': page,
-            'page_size': page_size,
-            'total': total,
-            'total_pages': ceil(total / page_size) if total else 0,
-            'search': search,
-        },
+        'meta': pagination_meta(page, page_size, total, search=search),
         'trace_id': None,
     }
 

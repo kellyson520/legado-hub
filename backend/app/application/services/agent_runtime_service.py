@@ -1,6 +1,6 @@
 from uuid import uuid4
-from math import ceil
 
+from app.core.pagination import pagination_meta
 from app.domain.entities.agent_runtime import AgentRun, ToolEvidence, ToolInvocation, ToolResult
 
 
@@ -50,14 +50,7 @@ class AgentRuntimeService:
         )
         return {
             "items": rows,
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-                **({"status": status} if status else {}),
-            },
+            "meta": pagination_meta(page, page_size, total, search=search, status=status),
         }
 
     def record_tool_invocation(

@@ -1,7 +1,7 @@
 import json
-from math import ceil
 from uuid import uuid4
 
+from app.core.pagination import pagination_meta
 from pydantic import BaseModel, ConfigDict
 
 from app.application.services.ai_service import AIService
@@ -105,13 +105,7 @@ class AIWorkspaceService:
             rows = filtered[(page - 1) * page_size : page * page_size]
         return {
             "items": [self._serialize_conversation(item) for item in rows],
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-            },
+            "meta": pagination_meta(page, page_size, total, search=search),
         }
 
     def get_conversation(self, conversation_id: str, actor_id: str) -> dict:

@@ -1,8 +1,8 @@
 from uuid import uuid4
-from math import ceil
 
 import httpx
 
+from app.core.pagination import pagination_meta
 from app.core.exceptions import NotFoundException
 from app.domain.entities.translation_runtime import TranslationChunk, TranslationJob
 
@@ -67,14 +67,7 @@ class TranslationService:
             rows = filtered[(page - 1) * page_size : page * page_size]
         return {
             "items": [self._serialize_job(item) for item in rows],
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-                **({"status": status} if status else {}),
-            },
+            "meta": pagination_meta(page, page_size, total, search=search, status=status),
         }
 
     async def review_job(self, job_id: str, *, reviewer_id: str, memory_note: dict) -> dict:

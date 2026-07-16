@@ -1,6 +1,6 @@
-from math import ceil
 from uuid import uuid4
 
+from app.core.pagination import pagination_meta
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.work_knowledge import WorkKnowledgeProposal
 
@@ -166,13 +166,7 @@ class WorkKnowledgeService:
             rows = filtered[(page - 1) * page_size : page * page_size]
         return {
             "items": rows,
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-            },
+            "meta": pagination_meta(page, page_size, total, search=search),
         }
 
     def resolve_review(

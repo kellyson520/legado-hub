@@ -19,6 +19,7 @@ from typing import Any, Optional, Dict, TypeVar, Generic
 from pydantic import BaseModel, Field
 from pydantic.generics import GenericModel
 from .logging import get_trace_id
+from .pagination import pagination_meta
 
 T = TypeVar("T")
 
@@ -86,18 +87,12 @@ def paginated(
     message: str = "success"
 ) -> Dict:
     """构造分页响应"""
-    total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
     return {
         "success": True,
         "code": "OK",
         "message": message,
         "data": items,
-        "meta": {
-            "page": page,
-            "page_size": page_size,
-            "total": total,
-            "total_pages": total_pages,
-        },
+        "meta": pagination_meta(page, page_size, total),
         "trace_id": get_trace_id(),
     }
 

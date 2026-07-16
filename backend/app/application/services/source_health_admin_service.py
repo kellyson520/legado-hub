@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from math import ceil
 
+from app.core.pagination import pagination_meta
 from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
 
 
@@ -34,13 +34,7 @@ class SourceHealthAdminService:
         )
         return {
             "items": [self._snapshot_to_dict(item) for item in rows],
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-            },
+            "meta": pagination_meta(page, page_size, total, search=search),
         }
 
     async def get_book_source_health(self, source_id: int) -> dict:

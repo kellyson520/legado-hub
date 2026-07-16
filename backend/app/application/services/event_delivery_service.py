@@ -2,13 +2,13 @@ import hashlib
 import hmac
 import json
 import asyncio
-from math import ceil
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import httpx
+from app.core.pagination import pagination_meta
 from app.core.config import settings
 from app.domain.entities.event_delivery import EventDelivery, EventDeliveryAttempt, PreparedEventDelivery
 from app.domain.repositories.event_delivery_repo import EventDeliveryRepository
@@ -218,14 +218,7 @@ class EventDeliveryService:
         )
         return {
             "items": rows,
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-                **({"status": status} if status else {}),
-            },
+            "meta": pagination_meta(page, page_size, total, search=search, status=status),
         }
 
     def list_stream_events(self, tenant_id: str | None = None, limit: int = 20) -> list[EventDeliveryStreamEvent]:

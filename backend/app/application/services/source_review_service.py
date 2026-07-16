@@ -1,7 +1,7 @@
 from dataclasses import replace
-from math import ceil
 from uuid import uuid4
 
+from app.core.pagination import pagination_meta
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.source_review import SourceReviewItem, utcnow
 from app.domain.repositories.source_review_repo import SourceReviewRepository
@@ -104,13 +104,7 @@ class SourceReviewService:
         )
         return {
             "items": rows,
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-            },
+            "meta": pagination_meta(page, page_size, total, search=search),
         }
 
     def list_items(

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
-from math import ceil
 from uuid import uuid4
 
+from app.core.pagination import pagination_meta
 from app.domain.entities.job import Job
 from sqlalchemy.exc import IntegrityError
 
@@ -83,14 +83,7 @@ class JobService:
         )
         return {
             "items": rows,
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-                **({"status": status} if status else {}),
-            },
+            "meta": pagination_meta(page, page_size, total, search=search, status=status),
         }
 
     def list_events(self, job_id: str, *, tenant_id: str):

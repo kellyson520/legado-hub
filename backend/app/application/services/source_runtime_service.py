@@ -1,8 +1,8 @@
 import asyncio
 from copy import deepcopy
-from math import ceil
 
 from app.core.exceptions import NotFoundException, ValidationException
+from app.core.pagination import pagination_meta
 from app.domain.entities.auth import AuditEvent
 from app.domain.repositories.source_runtime_repo import SourceRuntimeRepository
 
@@ -241,13 +241,7 @@ class SourceRuntimeService:
             )
         return {
             "items": rows,
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-            },
+            "meta": pagination_meta(page, page_size, total, search=search),
         }
 
     async def get_version_detail(self, source_version_id: str) -> dict:
@@ -652,13 +646,7 @@ class SourceRuntimeService:
                 }
                 for item in rows
             ],
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-            },
+            "meta": pagination_meta(page, page_size, total, search=search),
         }
 
     async def list_deployments(self) -> list[dict]:
@@ -702,14 +690,7 @@ class SourceRuntimeService:
                 }
                 for item in rows
             ],
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-                **({"status": status} if status else {}),
-            },
+            "meta": pagination_meta(page, page_size, total, search=search, status=status),
         }
 
     async def list_versions(self, source_type: str, source_id: str) -> list[dict]:
@@ -801,14 +782,7 @@ class SourceRuntimeService:
             )
         return {
             "items": rows,
-            "meta": {
-                "page": page,
-                "page_size": page_size,
-                "total": total,
-                "total_pages": ceil(total / page_size) if total else 0,
-                "search": search,
-                **({"status": status} if status else {}),
-            },
+            "meta": pagination_meta(page, page_size, total, search=search, status=status),
         }
 
     @staticmethod

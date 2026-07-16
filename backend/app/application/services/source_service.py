@@ -1,6 +1,6 @@
 from pathlib import Path
-from math import ceil
 
+from app.core.pagination import pagination_meta
 from app.domain.repositories.source_repo import SourceRepository
 from app.services.fetcher import SourceFetcher
 
@@ -11,10 +11,9 @@ class SourceAppService:
 
     async def list_book_sources(self, page: int, page_size: int, enabled_only: bool = False) -> dict:
         items, total = await self._repo.list_book_sources(page=page, page_size=page_size, enabled_only=enabled_only)
-        total_pages = ceil(total / page_size) if total else 0
         return {
             "items": items,
-            "meta": {"page": page, "page_size": page_size, "total": total, "total_pages": total_pages},
+            "meta": pagination_meta(page, page_size, total),
         }
 
     async def create_book_source(self, payload: dict, actor_id: int) -> dict:
