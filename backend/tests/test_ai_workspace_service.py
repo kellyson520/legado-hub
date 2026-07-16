@@ -452,3 +452,37 @@ async def test_character_workspace_rejects_a_memory_only_model_answer(tmp_path, 
     assert "不能基于模型记忆" in reply["content"]
     assert reply["tool_calls"] == []
     assert platform.calls[0]["payload"]["tool_choice"] == "required"
+
+
+@pytest.mark.asyncio
+async def test_chat_workspace_requires_evidence_for_a_character_biography_request(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-chat-character-evidence.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class MemoryOnlyPlatform:
+        def __init__(self):
+            self.calls = []
+
+        async def invoke_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"output": {"text": "陈平安的人物生平是……"}}
+
+    bootstrap_sqlite()
+    platform = MemoryOnlyPlatform()
+    service = AIWorkspaceService(
+        platform,
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        novel_tool_executor=object(),
+    )
+    conversation = await service.create_conversation("7", "通用问答")
+
+    reply = await service.send_message(conversation["id"], "7", "chat", "介绍《剑来》陈平安的人物生平")
+
+    assert "不能基于模型记忆" in reply["content"]
+    assert platform.calls[0]["payload"]["tool_choice"] == "required"

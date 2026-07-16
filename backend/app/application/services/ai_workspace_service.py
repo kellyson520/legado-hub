@@ -12,6 +12,10 @@ from app.domain.entities.auth import AuditEvent
 _SENSITIVE_KEY_PARTS = ("cookie", "token", "authorization", "provider", "internal", "api_key", "apikey")
 _MAX_MODEL_TOOL_TURNS = 4
 _CONTENT_RETRIEVAL_TOOL_NAMES = frozenset({"source.search", "toc.get", "chapter.fetch"})
+_CONTENT_ANALYSIS_TERMS = (
+    "人物", "角色", "生平", "经历", "身世", "主角", "配角", "剧情", "情节",
+    "世界观", "设定", "时间线", "结局", "故事内容", "发生了什么",
+)
 _DEFAULT_TOOL_NAMES = frozenset({
     "list_visible_sources", "get_source_rule_summary", "list_ai_analysis_results",
 }) | _CONTENT_RETRIEVAL_TOOL_NAMES
@@ -111,9 +115,10 @@ class AIWorkspaceService:
             )
         )
         tools = _DEFAULT_TOOL_NAMES if allowed_tool_names is None else frozenset(allowed_tool_names)
+        require_content_evidence = self._requires_content_evidence(mode, content)
         tool_calls = await self._execute_tools(actor_id, tool_requests or [], tools)
         messages = [
-            {"role": "system", "content": self._system_prompt(mode, tools)},
+            {"role": "system", "content": self._system_prompt(mode, tools, require_content_evidence)},
             {"role": "user", "content": user_message.content},
         ]
         if tool_calls:
@@ -128,7 +133,7 @@ class AIWorkspaceService:
                 actor_id=str(actor_id),
                 messages=messages,
                 allowed_tool_names=tools,
-                require_content_evidence=mode in {"character", "storyline", "world"},
+                require_content_evidence=require_content_evidence,
             )
             tool_calls.extend(model_tool_calls)
             assistant = self._conversations.append_message(
@@ -312,6 +317,12 @@ class AIWorkspaceService:
         return False
 
     @staticmethod
+    def _requires_content_evidence(mode: str, content: str) -> bool:
+        if mode in {"character", "storyline", "world"}:
+            return True
+        return mode == "chat" and any(term in content for term in _CONTENT_ANALYSIS_TERMS)
+
+    @staticmethod
     def _tool_schemas(allowed_tool_names: frozenset[str] = _DEFAULT_TOOL_NAMES) -> list[dict]:
         def schema(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
             parameters = {"type": "object", "properties": properties, "additionalProperties": False}
@@ -354,7 +365,7 @@ class AIWorkspaceService:
         return [item for item in schemas if item["function"]["name"] in allowed_tool_names]
 
     @staticmethod
-    def _system_prompt(mode: str, allowed_tool_names: frozenset[str]) -> str:
+    def _system_prompt(mode: str, allowed_tool_names: frozenset[str], require_content_evidence: bool = False) -> str:
         candidate_draft_allowed = bool(_SOURCE_WRITE_TOOL_NAMES & allowed_tool_names)
         return (
             MODE_PROMPTS[mode]
@@ -362,7 +373,7 @@ class AIWorkspaceService:
             + (
                 " For character, storyline, and world analysis, you must retrieve source.search, toc.get, and chapter.fetch evidence before answering. "
                 "Never use parametric knowledge; if chapter evidence is unavailable, state that no conclusion can be made."
-                if mode in {"character", "storyline", "world"} else ""
+                if require_content_evidence else ""
             )
             + (" Candidate rule drafts may be created but never published." if candidate_draft_allowed else "")
             + " Never request secrets, publish sources, browse arbitrary URLs, or run code."
