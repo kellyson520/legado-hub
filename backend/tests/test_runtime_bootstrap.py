@@ -51,3 +51,21 @@ def test_status_is_the_only_public_baseline(monkeypatch):
 
     protected = client.get("/api/dashboard")
     assert protected.status_code in {401, 403, 404}
+
+
+def test_cached_sqlite_bootstrap_runs_once_per_engine(monkeypatch):
+    from app.infrastructure.persistence.sqlite import bootstrap as bootstrap_module
+
+    calls = 0
+
+    def fake_bootstrap():
+        nonlocal calls
+        calls += 1
+
+    monkeypatch.setattr(bootstrap_module, 'bootstrap_sqlite', fake_bootstrap)
+    monkeypatch.setattr(bootstrap_module, '_bootstrapped_engine_url', None)
+
+    bootstrap_module.ensure_sqlite_bootstrap()
+    bootstrap_module.ensure_sqlite_bootstrap()
+
+    assert calls == 1

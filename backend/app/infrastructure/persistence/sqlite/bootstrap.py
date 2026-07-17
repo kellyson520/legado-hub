@@ -1,8 +1,14 @@
+from threading import Lock
+
 from app.core.permissions import DEFAULT_ROLE_NAME, build_permission_matrix
 from app.database import Base, SessionLocal, engine
 
 from . import schema as _schema
 from .schema import PermissionModel, RoleModel, RolePermissionModel
+
+
+_bootstrap_lock = Lock()
+_bootstrapped_engine_url: str | None = None
 
 
 def _ensure_sqlite_source_columns() -> None:
@@ -194,3 +200,18 @@ def bootstrap_sqlite() -> None:
         db.commit()
     finally:
         db.close()
+
+
+def ensure_sqlite_bootstrap() -> None:
+    """Run the full SQLite bootstrap once for the active engine."""
+    global _bootstrapped_engine_url
+
+    engine_url = str(engine.url)
+    if _bootstrapped_engine_url == engine_url:
+        return
+
+    with _bootstrap_lock:
+        if _bootstrapped_engine_url == engine_url:
+            return
+        bootstrap_sqlite()
+        _bootstrapped_engine_url = engine_url

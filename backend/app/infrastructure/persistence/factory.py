@@ -59,7 +59,7 @@ from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProvi
 from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
 from app.infrastructure.providers.registry import ProviderRegistry, ProviderSelection
 from app.infrastructure.persistence.sqlite.auth_repo_impl import SQLiteAuthRepository
-from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+from app.infrastructure.persistence.sqlite.bootstrap import ensure_sqlite_bootstrap
 from app.infrastructure.persistence.sqlite.canonical_content_repo_impl import SQLiteCanonicalContentRepository
 from app.infrastructure.persistence.sqlite.source_repo_impl import SQLiteSourceRepository
 from app.infrastructure.persistence.sqlite.source_health_repo_impl import SQLiteSourceHealthRepository
@@ -78,77 +78,77 @@ _interactive_browser_service_lock = Lock()
 
 
 def build_auth_repository() -> SQLiteAuthRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteAuthRepository()
 
 
 def build_job_service() -> JobService:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return JobService(SQLiteJobRepository())
 
 
 def build_job_repository() -> SQLiteJobRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteJobRepository()
 
 
 def build_agent_runtime_service() -> AgentRuntimeService:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return AgentRuntimeService(SQLiteAgentRuntimeRepository())
 
 
 def build_source_repository() -> SQLiteSourceRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteSourceRepository()
 
 
 def build_source_health_repository() -> SQLiteSourceHealthRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteSourceHealthRepository()
 
 
 def build_source_runtime_repository() -> SQLiteSourceRuntimeRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteSourceRuntimeRepository()
 
 
 def build_source_review_repository() -> SQLiteSourceReviewRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteSourceReviewRepository()
 
 
 def build_canonical_content_repository() -> SQLiteCanonicalContentRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteCanonicalContentRepository()
 
 
 def build_evidence_repository() -> SQLiteEvidenceRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteEvidenceRepository()
 
 
 def build_narrative_knowledge_repository() -> SQLiteNarrativeKnowledgeRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteNarrativeKnowledgeRepository()
 
 
 def build_novel_analysis_task_repository() -> SQLiteNovelAnalysisTaskRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteNovelAnalysisTaskRepository()
 
 
 def build_provider_repository() -> SQLiteProviderRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteProviderRepository()
 
 
 def build_system_settings_repository() -> SQLiteSystemSettingsRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteSystemSettingsRepository()
 
 
 def build_interactive_browser_repository() -> SQLiteInteractiveBrowserRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteInteractiveBrowserRepository()
 
 
@@ -341,7 +341,7 @@ def build_dashboard_service() -> DashboardService:
 
 
 def build_event_delivery_service() -> EventDeliveryService:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return EventDeliveryService(SQLiteEventDeliveryRepository())
 
 
@@ -461,22 +461,22 @@ def close_interactive_browser_supervisor() -> None:
 
 
 def build_ai_runtime_repository() -> SQLiteAIRuntimeRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteAIRuntimeRepository()
 
 
 def build_translation_runtime_repository() -> SQLiteTranslationRuntimeRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteTranslationRuntimeRepository()
 
 
 def build_work_knowledge_repository() -> SQLiteWorkKnowledgeRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteWorkKnowledgeRepository()
 
 
 def build_novel_runtime_repository() -> SQLiteNovelRuntimeRepository:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return SQLiteNovelRuntimeRepository()
 
 
@@ -488,7 +488,7 @@ def build_ai_service() -> AIService:
 
 
 def build_ai_workspace_service() -> AIWorkspaceService:
-    bootstrap_sqlite()
+    ensure_sqlite_bootstrap()
     return AIWorkspaceService(
         platform=build_provider_platform_service(),
         conversations=SQLiteAIConversationRepository(),
