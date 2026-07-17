@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { AppShell } from './app/AppShell'
 import { AuthProvider } from './app/providers/AuthProvider'
+import { LanguageProvider } from './app/providers/LanguageProvider'
 import { ThemeProvider } from './app/providers/ThemeProvider'
 import { AppRoutes } from './app/router'
 import './index.css'
@@ -11,14 +12,16 @@ import './index.css'
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-      <ThemeProvider>
-        <Toaster position="top-right" />
-        <AuthProvider>
-          <AppShell>
-            <AppRoutes />
-          </AppShell>
-        </AuthProvider>
-      </ThemeProvider>
+      <LanguageProvider>
+        <ThemeProvider>
+          <Toaster position="top-right" />
+          <AuthProvider>
+            <AppShell>
+              <AppRoutes />
+            </AppShell>
+          </AuthProvider>
+        </ThemeProvider>
+      </LanguageProvider>
     </BrowserRouter>
   </React.StrictMode>
 )
