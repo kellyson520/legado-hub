@@ -69,6 +69,12 @@ def test_source_rule_editor_api_requires_write_permission_and_blocks_verificatio
     assert validation.status_code == 200
     assert validation.json()["data"]["content_status"] == "verification_wall"
 
+    draft_version = repo.get_version(draft_id)
+    repo.update_version_payload(
+        draft_id,
+        {**draft_version.payload, "source_audit": {"status": "approved_for_publish"}},
+    )
+
     from app.infrastructure.persistence.sqlite.auth_repo_impl import SQLiteAuthRepository
 
     audit_events = asyncio.run(SQLiteAuthRepository().list_audit_events())

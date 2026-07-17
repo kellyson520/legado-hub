@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 
 from app.core.permissions import Permission
-from app.core.response import from_paginated_result
+from app.core.response import from_paginated_result, ok
 from app.infrastructure.persistence.factory import build_novel_agent_service, build_novel_app_service
 from app.interfaces.http.deps import require_permission
 
@@ -26,4 +26,4 @@ async def list_books(
 async def analyze_book(novel_id: str, identity=Depends(require_permission(Permission.NOVEL_MANAGE))):
     service = build_novel_agent_service()
     task = await service.start_analysis(novel_id, actor_id=str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "novel analysis queued", "data": task, "meta": {}, "trace_id": None}
+    return ok(data=task, message="novel analysis queued", meta={})

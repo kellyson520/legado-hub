@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 
+from app.core.response import ok
 from app.infrastructure.persistence.factory import build_job_service
 from app.interfaces.http.deps import ApiKeyIdentity, get_api_key_identity
 
@@ -28,14 +29,7 @@ async def submit_job(
         payload=payload.payload,
         idempotency_key=idempotency_key,
     )
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'job accepted',
-        'data': {'job_id': job.id, 'status': job.status},
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data={'job_id': job.id, 'status': job.status}, message='job accepted', meta={})
 
 
 @router.get('/jobs/{job_id}')
@@ -48,11 +42,8 @@ async def get_job(job_id: str, identity: ApiKeyIdentity = Depends(get_api_key_id
     if 'events.read' not in identity.permissions:
         from app.core.exceptions import AuthorizationException
         raise AuthorizationException('Permission denied: events.read')
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'job retrieved',
-        'data': {
+    return ok(
+        data={
             'job_id': job.id,
             'kind': job.kind,
             'status': job.status,
@@ -68,6 +59,6 @@ async def get_job(job_id: str, identity: ApiKeyIdentity = Depends(get_api_key_id
                 for event in service.list_events(job_id, tenant_id=f'api-key:{identity.api_key_id}') or []
             ],
         },
-        'meta': {},
-        'trace_id': None,
-    }
+        message='job retrieved',
+        meta={},
+    )

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.application.services.agent_tool_registry import AgentToolRegistry
 from app.core.exceptions import AuthorizationException
+from app.core.response import ok
 from app.infrastructure.persistence.factory import build_agent_runtime_service
 from app.interfaces.http.deps import ApiKeyIdentity, get_api_key_identity
 
@@ -98,14 +99,7 @@ async def create_agent_run(
         agent_kind=payload.agent_kind,
         input_payload=payload.input_payload,
     )
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'agent run created',
-        'data': _serialize_run(run),
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data=_serialize_run(run), message='agent run created', meta={})
 
 
 @router.get('/agent-runs/{run_id}')
@@ -120,11 +114,8 @@ async def get_agent_run(
     if run is None:
         raise HTTPException(status_code=404, detail='Agent run not found')
     history = service.get_tool_history(run_id, tenant_id=tenant_id) or []
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'agent run retrieved',
-        'data': _serialize_run(run, tool_history=_serialize_history(history)),
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(
+        data=_serialize_run(run, tool_history=_serialize_history(history)),
+        message='agent run retrieved',
+        meta={},
+    )

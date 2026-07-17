@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.core.permissions import Permission
-from app.core.response import from_paginated_result
+from app.core.response import from_paginated_result, ok
 from app.infrastructure.persistence.factory import build_source_runtime_service, build_source_service
 from app.interfaces.http.deps import RequestIdentity, get_current_identity, require_permission
 
@@ -35,7 +35,7 @@ async def import_legado_json_sources(
     _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
 ):
     data = await build_source_runtime_service().import_legado_sources(payload, str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "Legado 书源导入完成", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="Legado 书源导入完成", meta={})
 
 
 @router.post("/import/file")
@@ -58,7 +58,7 @@ async def import_legado_json_file(
     finally:
         await file.close()
     data = await build_source_runtime_service().import_legado_sources(payload, str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "Legado 书源文件导入完成", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="Legado 书源文件导入完成", meta={})
 
 
 def _file_size(file_object) -> int:
@@ -74,7 +74,7 @@ async def export_legado_json_sources(
     _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
 ):
     data = await build_source_runtime_service().export_legado_sources(str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "Legado 书源导出完成", "data": data, "meta": {"total": len(data)}, "trace_id": None}
+    return ok(data=data, message="Legado 书源导出完成", meta={"total": len(data)})
 
 
 @router.get("/book_sources")
@@ -114,14 +114,7 @@ async def create_book_source(
 ):
     service = build_source_service()
     item = await service.create_book_source(payload.model_dump(), identity.user_id)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "book source created",
-        "data": item,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=item, message="book source created", meta={})
 
 
 @router.post("/book_sources/import")
@@ -136,14 +129,7 @@ async def import_book_sources(
         identity.user_id,
         replace_existing=payload.replace_existing,
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "book sources imported",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="book sources imported", meta={})
 
 
 @router.get("/versions/{source_version_id}")
@@ -152,14 +138,7 @@ async def get_source_rule_version(
     _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
 ):
     data = await build_source_runtime_service().get_version_detail(source_version_id)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "书源规则版本已加载",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="书源规则版本已加载", meta={})
 
 
 @router.post("/versions/{source_version_id}/drafts")
@@ -170,14 +149,7 @@ async def create_source_rule_draft(
     _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
 ):
     data = await build_source_runtime_service().create_rule_draft(source_version_id, payload, str(identity.user_id))
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "书源规则候选版本已保存",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="书源规则候选版本已保存", meta={})
 
 
 @router.post("/versions/{source_version_id}/validate")
@@ -191,14 +163,7 @@ async def validate_source_rule_version(
         data = await service.validate_rule_version(source_version_id, str(identity.user_id))
     finally:
         await service.aclose()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "书源规则验证完成",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="书源规则验证完成", meta={})
 
 
 @router.post("/versions/{source_version_id}/publish")
@@ -208,14 +173,7 @@ async def publish_source_rule_version(
     _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
 ):
     data = await build_source_runtime_service().publish_rule_version(source_version_id, str(identity.user_id))
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "书源规则版本已发布",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="书源规则版本已发布", meta={})
 
 
 @router.get("/{source_type}/{source_id}/versions")
@@ -226,11 +184,4 @@ async def list_source_versions(
 ):
     service = build_source_runtime_service()
     data = await service.list_versions(source_type, source_id)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source versions listed",
-        "data": data,
-        "meta": {"total": len(data)},
-        "trace_id": None,
-    }
+    return ok(data=data, message="source versions listed", meta={"total": len(data)})

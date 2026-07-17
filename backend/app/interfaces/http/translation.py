@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, model_validator
 
 from app.core.permissions import Permission
-from app.core.response import from_paginated_result
+from app.core.response import from_paginated_result, ok
 from app.infrastructure.persistence.factory import build_translation_service
 from app.interfaces.http.deps import require_permission
 
@@ -40,4 +40,4 @@ async def list_jobs(
 async def create_job(payload: TranslationRequest, identity=Depends(require_permission(Permission.TRANSLATION_RUN))):
     service = build_translation_service()
     job = await service.create_job(payload.model_dump(), actor_id=str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "translation job queued", "data": job, "meta": {}, "trace_id": None}
+    return ok(data=job, message="translation job queued", meta={})

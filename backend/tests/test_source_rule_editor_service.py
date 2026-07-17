@@ -77,6 +77,14 @@ def _valid_source_payload(**overrides):
     return payload
 
 
+def _approve_source_audit(repo, version_id: str) -> None:
+    version = repo.get_version(version_id)
+    repo.update_version_payload(
+        version_id,
+        {**version.payload, "source_audit": {"status": "approved_for_publish"}},
+    )
+
+
 @pytest.mark.asyncio
 async def test_rule_draft_creates_new_candidate_and_verification_wall_blocks_publish(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
@@ -110,6 +118,11 @@ async def test_rule_draft_creates_new_candidate_and_verification_wall_blocks_pub
 
     assert validation["content_status"] == "verification_wall"
     assert validation["publish_allowed"] is False
+    draft_version = repo.get_version(draft["source_version_id"])
+    repo.update_version_payload(
+        draft["source_version_id"],
+        {**draft_version.payload, "source_audit": {"status": "approved_for_publish"}},
+    )
     with pytest.raises(ValidationException, match="verification_wall"):
         await service.publish_rule_version(draft["source_version_id"], "7")
 
@@ -141,6 +154,7 @@ async def test_rule_publish_requires_validation_and_supersedes_published_version
     draft = await service.create_rule_draft(original.id, _valid_source_payload(bookSourceName="新版书源"), "7")
 
     validation = await service.validate_rule_version(draft["source_version_id"], "7")
+    _approve_source_audit(repo, draft["source_version_id"])
     published = await service.publish_rule_version(draft["source_version_id"], "7")
 
     assert validation["grade"] == "A"
@@ -186,6 +200,7 @@ async def test_rule_publish_rejects_shape_only_validation_without_live_probe(tmp
             "content": {"passed": True, "status": "ready"},
         },
     )
+    _approve_source_audit(repo, candidate.id)
 
     with pytest.raises(ValidationException, match="live probe"):
         await SourceRuntimeService(repo).publish_rule_version(candidate.id, "7")
@@ -282,6 +297,7 @@ async def test_review_publish_rejects_shape_only_validation_without_live_probe(t
             "content": {"passed": True, "status": "ready"},
         },
     )
+    _approve_source_audit(repo, candidate.id)
 
     with pytest.raises(ValidationException, match="live probe"):
         await SourceRuntimeService(repo).resolve_review(candidate.id, reviewer_id="7", action="publish")
@@ -319,6 +335,7 @@ async def test_review_publish_registers_valid_book_source_for_legacy_health_prob
         source_probe=PassingLiveProbe(),
     )
     await service.validate_rule_version(candidate.id, "7")
+    _approve_source_audit(runtime_repo, candidate.id)
     published = await service.resolve_review(candidate.id, reviewer_id="7", action="publish")
 
     legacy_sources, total = await source_repo.list_book_sources(page=1, page_size=10)
