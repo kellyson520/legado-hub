@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import type { FormEvent } from 'react'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -31,9 +32,9 @@ export function PaginationToolbar({
   appliedSearch,
   loading,
   showSearch = true,
-  searchLabel = '搜索书源',
-  itemLabel = '条',
-  emptyLabel = '暂无匹配数据',
+  searchLabel,
+  itemLabel,
+  emptyLabel,
   showLoadingLabel = true,
   showEmptyLabel = true,
   onSearchInput,
@@ -41,6 +42,10 @@ export function PaginationToolbar({
   onClearSearch,
   onPageChange,
 }: PaginationToolbarProps) {
+  const { t } = useLanguage()
+  const resolvedSearchLabel = searchLabel ?? t('pagination.searchSources')
+  const resolvedItemLabel = itemLabel ?? t('common.items')
+  const resolvedEmptyLabel = emptyLabel ?? t('common.noResults')
   const safeTotalPages = Math.max(1, totalPages)
   const searchId = useId()
 
@@ -55,26 +60,26 @@ export function PaginationToolbar({
         <form className="flex flex-col gap-2 sm:flex-row sm:items-end" onSubmit={handleSubmit}>
           <div className="min-w-0 flex-1">
             <label className="text-sm font-medium" htmlFor={searchId}>
-              {searchLabel}
+              {resolvedSearchLabel}
             </label>
             <Input
               id={searchId}
-              aria-label={searchLabel}
+              aria-label={resolvedSearchLabel}
               className="mt-2"
               value={searchInput}
               onChange={(event) => onSearchInput(event.target.value)}
-              placeholder="输入关键词搜索"
+              placeholder={t('pagination.searchPlaceholder')}
             />
           </div>
           <div className="flex gap-2">
-            <Button type="submit" disabled={loading}>搜索</Button>
+            <Button type="submit" disabled={loading}>{t('common.search')}</Button>
             <Button
               type="button"
               variant="outline"
               disabled={loading || (!searchInput && !appliedSearch)}
               onClick={onClearSearch}
             >
-              清空
+              {t('common.clear')}
             </Button>
           </div>
         </form>
@@ -86,17 +91,17 @@ export function PaginationToolbar({
           ) : null
         ) : total === 0 ? (
           showEmptyLabel ? (
-            <p className="text-sm text-muted-foreground">{emptyLabel}</p>
+            <p className="text-sm text-muted-foreground">{resolvedEmptyLabel}</p>
           ) : null
         ) : (
-          <p className="text-sm text-muted-foreground">第 {page} / {safeTotalPages} 页，共 {total} {itemLabel}</p>
+          <p className="text-sm text-muted-foreground">{t('pagination.summary', { page, totalPages: safeTotalPages, total, itemLabel: resolvedItemLabel })}</p>
         )}
         <div className="flex gap-2">
           <Button type="button" variant="outline" disabled={loading || page <= 1} onClick={() => onPageChange(page - 1)}>
-            上一页
+            {t('common.previous')}
           </Button>
           <Button type="button" variant="outline" disabled={loading || page >= safeTotalPages} onClick={() => onPageChange(page + 1)}>
-            下一页
+            {t('common.next')}
           </Button>
         </div>
       </div>

@@ -18,7 +18,7 @@ test('published claim opens exact evidence citation', async () => {
 
   fireEvent.click(await screen.findByRole('button', { name: /宁姚/ }))
 
-  expect(await screen.findByText('Evidence excerpt')).toBeInTheDocument()
+  expect(await screen.findByText('证据摘录')).toBeInTheDocument()
   expect(screen.getByText('Chapter 12')).toBeInTheDocument()
 })
 
@@ -34,9 +34,9 @@ test('queued task exposes a pause control and refreshes its status', async () =>
   })
   render(<MemoryRouter initialEntries={['/novel-analysis/work-1']}><Routes><Route path="/novel-analysis/:workId" element={<WorkAnalysisPage />} /></Routes></MemoryRouter>)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Pause task task-1' }))
+  fireEvent.click(await screen.findByRole('button', { name: '暂停任务 task-1' }))
 
-  expect(await screen.findByText('paused')).toBeInTheDocument()
+  expect(await screen.findByText('已暂停')).toBeInTheDocument()
   expect(mocks.pauseAnalysisTask).toHaveBeenCalledWith('task-1')
 })
 
@@ -46,8 +46,8 @@ test('queued task can be run directly without enabling background automation', a
   mocks.runAnalysisTask.mockResolvedValue({ success: true, data: { id: 'task-2', status: 'completed', tool_call_count: 0, policy: {}, checkpoint: { selected_evidence_ids: ['span-1'], outcomes: [] } } })
   render(<MemoryRouter initialEntries={['/novel-analysis/work-1']}><Routes><Route path="/novel-analysis/:workId" element={<WorkAnalysisPage />} /></Routes></MemoryRouter>)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Run task task-2' }))
+  fireEvent.click(await screen.findByRole('button', { name: '运行任务 task-2' }))
 
-  expect(await screen.findByText('completed')).toBeInTheDocument()
+  expect(await screen.findByText('已完成')).toBeInTheDocument()
   expect(mocks.runAnalysisTask).toHaveBeenCalledWith('task-2')
 })

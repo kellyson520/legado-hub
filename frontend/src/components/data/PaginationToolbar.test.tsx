@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 
+import { LanguageProvider, useLanguage } from '@/app/providers/LanguageProvider'
 import { PaginationToolbar } from './PaginationToolbar'
 
 function renderToolbar(overrides: Partial<React.ComponentProps<typeof PaginationToolbar>> = {}) {
@@ -54,7 +55,7 @@ describe('PaginationToolbar', () => {
     expect(screen.getByText('暂无匹配数据')).toBeInTheDocument()
   })
 
-  test('can delegate loading and empty labels while retaining the page summary', () => {
+test('can delegate loading and empty labels while retaining the page summary', () => {
     renderToolbar({ loading: true, showLoadingLabel: false, showEmptyLabel: false })
     expect(screen.queryByText('正在加载…')).not.toBeInTheDocument()
 
@@ -62,4 +63,35 @@ describe('PaginationToolbar', () => {
     renderToolbar({ total: 21, totalPages: 2, showLoadingLabel: false, showEmptyLabel: false })
     expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
   })
+})
+
+test('updates built-in labels when the active locale changes', async () => {
+  const props: React.ComponentProps<typeof PaginationToolbar> = {
+    page: 1,
+    totalPages: 2,
+    total: 21,
+    searchInput: '',
+    appliedSearch: '',
+    loading: false,
+    onSearchInput: vi.fn(),
+    onSearch: vi.fn(),
+    onClearSearch: vi.fn(),
+    onPageChange: vi.fn(),
+  }
+
+  function Switcher() {
+    const { setLocale } = useLanguage()
+    return <button type="button" onClick={() => setLocale('en-US')}>English</button>
+  }
+
+  render(
+    <LanguageProvider>
+      <Switcher />
+      <PaginationToolbar {...props} />
+    </LanguageProvider>
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'English' }))
+  expect(await screen.findByLabelText('Search sources')).toBeInTheDocument()
+  expect(await screen.findByText('Page 1 / 2, 21 items')).toBeInTheDocument()
 })

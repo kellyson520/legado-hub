@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 
 export interface ListStatusProps {
   loading: boolean
@@ -20,6 +21,7 @@ export function ListStatus({
   errorLabel,
   emptyLabel,
 }: ListStatusProps) {
+  const { t } = useLanguage()
   if (loading) {
     return <Card className="p-5 text-sm text-muted-foreground">{loadingLabel}</Card>
   }
@@ -28,7 +30,7 @@ export function ListStatus({
     return (
       <Card className="flex flex-wrap items-center gap-3 p-4 text-sm text-destructive" role="alert">
         <span>{errorLabel}</span>
-        <Button type="button" variant="outline" size="sm" onClick={onRetry}>重试</Button>
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>{t('common.retry')}</Button>
       </Card>
     )
   }
