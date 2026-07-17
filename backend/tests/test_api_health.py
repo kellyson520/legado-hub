@@ -10,7 +10,22 @@ def test_health_requires_auth_except_status(monkeypatch, tmp_path):
     from app.main import app
 
     client = TestClient(app)
-    assert client.get("/api/status").status_code == 200
+    status_response = client.get("/api/status")
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["success"] is True
+    assert status_payload["code"] == "OK"
+    assert status_payload["meta"] == {}
+    assert status_payload["trace_id"] is None
+
+    root_response = client.get("/")
+    assert root_response.status_code == 200
+    root_payload = root_response.json()
+    assert root_payload["success"] is True
+    assert root_payload["code"] == "OK"
+    assert root_payload["meta"] == {}
+    assert root_payload["trace_id"] is None
+
     assert client.get("/api/health").status_code == 401
 
     token = create_access_token({"sub": "1", "permissions": ["health.check"], "sid": "health-1"})

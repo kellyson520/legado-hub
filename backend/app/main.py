@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.config import settings
+from app.core.response import ok
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.middleware import AuditLogMiddleware, RateLimitMiddleware, TraceMiddleware
@@ -89,27 +90,21 @@ app.include_router(api_router)
 
 @app.get("/")
 def root() -> dict:
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "service ready",
-        "data": {"service": settings.APP_NAME, "version": settings.APP_VERSION},
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(
+        data={"service": settings.APP_NAME, "version": settings.APP_VERSION},
+        message="service ready",
+        meta={},
+    )
 
 
 @app.get("/api/status")
 def status() -> dict:
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "service ready",
-        "data": {
+    return ok(
+        data={
             "service": settings.APP_NAME,
             "version": settings.APP_VERSION,
             "env": settings.ENV,
         },
-        "meta": {},
-        "trace_id": None,
-    }
+        message="service ready",
+        meta={},
+    )

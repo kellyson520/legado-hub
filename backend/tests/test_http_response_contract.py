@@ -128,3 +128,15 @@ def test_novel_analysis_envelope_uses_the_shared_trace_envelope():
 
     assert response['meta'] == {}
     assert response['trace_id'] == 'trace-novel-analysis'
+
+
+def test_status_endpoint_uses_the_shared_trace_envelope(monkeypatch):
+    from app.main import settings, status
+
+    monkeypatch.setattr(settings, 'APP_NAME', 'LegadoHub')
+    monkeypatch.setattr(settings, 'APP_VERSION', 'test')
+    monkeypatch.setattr(settings, 'ENV', 'test')
+    response = status()
+
+    assert response['meta'] == {}
+    assert response['trace_id'] is None
