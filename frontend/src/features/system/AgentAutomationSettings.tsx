@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
 import { useAgentSettingsSection } from './useAgentSettingsSection'
 
@@ -16,6 +17,7 @@ const FIELDS: Array<{ key: keyof AutomationSettings; label: string; description:
 export function AgentAutomationSettings() {
   const section = useAgentSettingsSection('automation', DEFAULTS)
   return (
+    <LocalizedContent>
     <section className="rounded-md border border-border bg-card p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Queue control</p>
       <h2 className="mt-2 text-xl font-semibold text-foreground">Deliberate automation, reversible controls</h2>
@@ -25,5 +27,6 @@ export function AgentAutomationSettings() {
       <div className="mt-5 flex flex-wrap items-center gap-3"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save automation settings'}</Button><SettingsEffectiveStatus updatedAt={section.updatedAt} /></div>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
+    </LocalizedContent>
   )
 }

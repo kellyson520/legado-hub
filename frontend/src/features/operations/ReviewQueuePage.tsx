@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import {
   listReviewQueueCandidates,
   resolveReviewQueueItem,
@@ -78,6 +79,7 @@ function canResolve(row: OperationReviewQueueRow) {
 }
 
 export function ReviewQueuePage() {
+  const { t } = useLanguage()
   const pagination = useServerPagination<OperationReviewQueueRow>({
     pageSize: 20,
     load: listReviewQueueCandidates,
@@ -207,7 +209,7 @@ export function ReviewQueuePage() {
                             className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
                             onClick={() => void handleResolve(row)}
                             disabled={resolving}
-                            aria-label={`${actionLabel} ${getProposalType(row)}`}
+                            aria-label={`${t(actionLabel)} ${getProposalType(row)}`}
                           >
                             {resolving ? 'Processing…' : actionLabel}
                           </button>

@@ -141,7 +141,7 @@ beforeEach(() => {
 test('review queue page renders source, knowledge, and translation review candidates', async () => {
   render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
-  expect(await screen.findByRole('heading', { name: 'Review queue' })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: '审核队列' })).toBeInTheDocument()
   expect(screen.getByText('build_escalation')).toBeInTheDocument()
   expect(screen.getByText('Manual source build review required')).toBeInTheDocument()
   expect(screen.getByText('character_relation')).toBeInTheDocument()
@@ -150,12 +150,12 @@ test('review queue page renders source, knowledge, and translation review candid
   expect(screen.getByText('Translation memory review (2 chunks)')).toBeInTheDocument()
   expect(screen.getByText('source_version_publish')).toBeInTheDocument()
   expect(screen.getByText('Publish source candidate (grade A)')).toBeInTheDocument()
-  expect(screen.getByText('Audit: passed · 1/5 · A')).toBeInTheDocument()
-  expect(screen.getByText('search/toc/content: ok / ok / ok · 480ms')).toBeInTheDocument()
+  expect(screen.getByText('审计： 通过 · 1/5 · A')).toBeInTheDocument()
+  expect(screen.getByText('搜索/目录/正文： 正常 / 正常 / 正常 · 480ms')).toBeInTheDocument()
   expect(screen.getByText('source_audit_failed')).toBeInTheDocument()
   expect(screen.getByText('Source audit retry limit reached')).toBeInTheDocument()
-  expect(screen.getByText('Audit: failed · 5/5 · F')).toBeInTheDocument()
-  expect(screen.getByText('search/toc/content: ok / ok / failed · 480ms')).toBeInTheDocument()
+  expect(screen.getByText('审计： 已失败 · 5/5 · F')).toBeInTheDocument()
+  expect(screen.getByText('搜索/目录/正文： 正常 / 正常 / 已失败 · 480ms')).toBeInTheDocument()
   expect(screen.getAllByText('content parse failed')).toHaveLength(2)
   expect(screen.getByRole('alert')).toHaveTextContent('content parse failed')
   expect(screen.getByText('Translated content preview')).toBeInTheDocument()
@@ -190,7 +190,7 @@ test('review queue page resolves source version publish candidates', async () =>
 
   render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
-  const button = await screen.findByRole('button', { name: 'Publish source_version_publish' })
+  const button = await screen.findByRole('button', { name: '发布 source_version_publish' })
   fireEvent.click(button)
 
   await waitFor(() => {
@@ -203,7 +203,7 @@ test('review queue page resolves source version publish candidates', async () =>
   await waitFor(() => {
     expect(screen.queryByText('Publish source candidate (grade A)')).not.toBeInTheDocument()
   })
-  expect(screen.getByText('Publish completed for source_version_publish')).toBeInTheDocument()
+  expect(screen.getByText('已为 source_version_publish 完成发布')).toBeInTheDocument()
 })
 
 test('review queue page resolves source review items', async () => {
@@ -227,7 +227,7 @@ test('review queue page resolves source review items', async () => {
 
   render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
-  const button = await screen.findByRole('button', { name: 'Resolve build_escalation' })
+  const button = await screen.findByRole('button', { name: '解决 build_escalation' })
   fireEvent.click(button)
 
   await waitFor(() => {
@@ -240,7 +240,7 @@ test('review queue page resolves source review items', async () => {
   await waitFor(() => {
     expect(screen.queryByText('Manual source build review required')).not.toBeInTheDocument()
   })
-  expect(screen.getByText('Resolve completed for build_escalation')).toBeInTheDocument()
+  expect(screen.getByText('已为 build_escalation 完成解决')).toBeInTheDocument()
 })
 
 test('review queue page marks translation review items as reviewed', async () => {
@@ -263,7 +263,7 @@ test('review queue page marks translation review items as reviewed', async () =>
 
   render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
-  const button = await screen.findByRole('button', { name: 'Mark reviewed translation_review' })
+  const button = await screen.findByRole('button', { name: '标记为已审核 translation_review' })
   fireEvent.click(button)
 
   await waitFor(() => {
@@ -279,5 +279,5 @@ test('review queue page marks translation review items as reviewed', async () =>
   await waitFor(() => {
     expect(screen.queryByText('Translation memory review (2 chunks)')).not.toBeInTheDocument()
   })
-  expect(screen.getByText('Mark reviewed completed for translation_review')).toBeInTheDocument()
+  expect(screen.getByText('已为 translation_review 完成标记为已审核')).toBeInTheDocument()
 })

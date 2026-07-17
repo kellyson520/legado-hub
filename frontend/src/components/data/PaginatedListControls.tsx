@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { ListStatus } from '@/components/data/ListStatus'
 import { PaginationToolbar } from '@/components/data/PaginationToolbar'
 import type { UseServerPaginationResult } from '@/hooks/useServerPagination'
@@ -44,6 +45,7 @@ export function PaginatedListControls({
   className,
   children,
 }: PaginatedListControlsProps) {
+  const { t } = useLanguage()
   return (
     <div className={cn('space-y-3', className)}>
       <PaginationToolbar
@@ -54,8 +56,8 @@ export function PaginatedListControls({
         appliedSearch={pagination.appliedSearch}
         loading={pagination.loading}
         showSearch={showSearch}
-        searchLabel={searchLabel}
-        itemLabel={itemLabel}
+        searchLabel={searchLabel ? t(searchLabel) : undefined}
+        itemLabel={itemLabel ? t(itemLabel) : undefined}
         showLoadingLabel={false}
         showEmptyLabel={false}
         onSearchInput={pagination.setSearchInput}
@@ -68,9 +70,9 @@ export function PaginatedListControls({
         error={pagination.error}
         empty={empty}
         onRetry={pagination.retry}
-        loadingLabel={loadingLabel}
-        errorLabel={errorLabel}
-        emptyLabel={emptyLabel}
+        loadingLabel={t(loadingLabel)}
+        errorLabel={t(errorLabel)}
+        emptyLabel={t(emptyLabel)}
       />
       {children}
     </div>

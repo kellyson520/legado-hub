@@ -90,7 +90,7 @@ test('source list renders legacy runtime name, URL, and source status', async ()
 
   expect(await screen.findByText('运行书源')).toBeInTheDocument()
   expect(screen.getByText('https://source.example.test')).toBeInTheDocument()
-  expect(screen.getByText('enabled')).toBeInTheDocument()
+  expect(screen.getByText('已启用')).toBeInTheDocument()
   expect(screen.queryByText('已发布版本')).not.toBeInTheDocument()
   expect(screen.queryByText('最近评分')).not.toBeInTheDocument()
   expect(screen.getByRole('heading', { name: '书源运行库存' })).toBeVisible()

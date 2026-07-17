@@ -9,6 +9,7 @@ import {
   type AdminUserRow,
 } from '@/api/modules/admin'
 import { useAuth } from '@/app/providers/AuthProvider'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
@@ -34,6 +35,7 @@ const emptyForm: UserForm = {
 
 export function AdminUsersPage() {
   const { hasPermission } = useAuth()
+  const { locale, t } = useLanguage()
   const pagination = useServerPagination<AdminUserRow>({
     pageSize: 20,
     load: listUsers,
@@ -143,7 +145,7 @@ export function AdminUsersPage() {
   return (
     <ConsoleLayout eyebrow="系统管理" title="用户管理" description="集中维护账户、权限角色与登录会话。密码仅能写入，不会在界面或接口响应中回显。">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-sm">
-        <p className="text-sm text-muted-foreground">共 {meta.total} 名用户 · 可通过撤销会话即时收回访问权限</p>
+        <p className="text-sm text-muted-foreground">{t('共 {count} 名用户 · 可通过撤销会话即时收回访问权限', { count: meta.total })}</p>
         {canWrite ? <Button onClick={openCreate}>创建用户</Button> : null}
       </div>
       <PaginatedListControls
@@ -256,10 +258,10 @@ export function AdminUsersPage() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-lg font-semibold">{user.display_name || user.username}</h3>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${user.status === 'enabled' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>{statusText(user.status)}</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${user.status === 'enabled' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>{statusText(user.status, locale)}</span>
               </div>
               {user.display_name && user.display_name !== user.username ? <p className="mt-1 font-mono text-xs text-muted-foreground">{user.username}</p> : null}
-              <p className="mt-2 text-sm text-muted-foreground">{roleText(user.role)} · 创建于 {user.created_at ? new Date(user.created_at).toLocaleString('zh-CN') : '—'} · 最近登录 {user.last_login_at ? new Date(user.last_login_at).toLocaleString('zh-CN') : '从未登录'}</p>
+              <p className="mt-2 text-sm text-muted-foreground">{roleText(user.role, locale)} · 创建于 {user.created_at ? new Date(user.created_at).toLocaleString(locale) : '—'} · 最近登录 {user.last_login_at ? new Date(user.last_login_at).toLocaleString(locale) : t('从未登录')}</p>
             </div>
             {canWrite ? (
               <div className="flex flex-wrap gap-2">

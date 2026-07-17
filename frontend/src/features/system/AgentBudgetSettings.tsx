@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Input } from '@/components/ui/input'
 import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
 import { useAgentSettingsSection } from './useAgentSettingsSection'
@@ -17,6 +18,7 @@ const FIELDS: Array<{ key: keyof BudgetSettings; label: string; min: number; max
 export function AgentBudgetSettings() {
   const section = useAgentSettingsSection('budgets', DEFAULTS)
   return (
+    <LocalizedContent>
     <section className="rounded-md border border-border bg-card p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Bounded execution</p>
       <h2 className="mt-2 text-xl font-semibold text-foreground">Keep long-running analysis predictable</h2>
@@ -25,5 +27,6 @@ export function AgentBudgetSettings() {
       <div className="mt-5 flex flex-wrap items-center gap-3"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save budget settings'}</Button><SettingsEffectiveStatus updatedAt={section.updatedAt} /></div>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
+    </LocalizedContent>
   )
 }

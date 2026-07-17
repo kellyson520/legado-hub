@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import {
   DEFAULT_LOCALE,
@@ -27,6 +27,10 @@ const LanguageContext = createContext<LanguageContextValue>(fallbackLanguage)
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => readStoredLocale())
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') document.documentElement.lang = locale
+  }, [locale])
 
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next)

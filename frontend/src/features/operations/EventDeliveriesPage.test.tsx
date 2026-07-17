@@ -80,9 +80,9 @@ afterEach(() => {
 test('event deliveries page shows initial rows and applies stream updates', async () => {
   render(<EventDeliveriesPage />)
 
-  expect(await screen.findByRole('heading', { name: 'Event deliveries' })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: '事件投递' })).toBeInTheDocument()
   expect(await screen.findByText('chapter.ready')).toBeInTheDocument()
-  expect(screen.getByText('pending')).toBeInTheDocument()
+  expect(screen.getByText('等待中')).toBeInTheDocument()
 
   await waitFor(() => expect(operationsMocks.state.streamHandler).not.toBeNull())
   await act(async () => {
@@ -234,7 +234,7 @@ test('event deliveries page loads attempts for the selected delivery', async () 
   const rowButton = await screen.findByRole('button', { name: /chapter\.ready/i })
   fireEvent.click(rowButton)
 
-  expect(await screen.findByText('Attempt history')).toBeInTheDocument()
+  expect(await screen.findByText('尝试历史')).toBeInTheDocument()
   expect(screen.getByText('upstream unavailable')).toBeInTheDocument()
 })
 
@@ -264,7 +264,7 @@ test('event deliveries page retries stream subscription after initial failure', 
     await Promise.resolve()
   })
   expect(operationsMocks.subscribeOperationEvents).toHaveBeenCalledTimes(1)
-  expect(screen.getByText('Stream offline')).toBeInTheDocument()
+  expect(screen.getByText('实时流已离线')).toBeInTheDocument()
 
   await act(async () => {
     await vi.advanceTimersByTimeAsync(2_100)

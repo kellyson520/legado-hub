@@ -90,23 +90,23 @@ beforeEach(() => {
 test('agent runs page renders recent run summaries', async () => {
   render(<AgentRunsPage />)
 
-  expect(await screen.findByRole('heading', { name: 'Agent runs' })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: 'Agent 运行记录' })).toBeInTheDocument()
   expect(await screen.findByText('source_build')).toBeInTheDocument()
   expect(screen.getByText('api-key:7')).toBeInTheDocument()
-  expect(screen.getByText('Tools 2 · Accepted 1 · Rejected 1')).toBeInTheDocument()
-  expect(screen.getByText('Evidence 3 · Latest rule.validate')).toBeInTheDocument()
+  expect(screen.getByText('工具 2 · 已接受 1 · 已拒绝 1')).toBeInTheDocument()
+  expect(screen.getByText('证据 3 · 最近 rule.validate')).toBeInTheDocument()
 })
 
 test('agent runs page loads run detail on inspect', async () => {
   render(<AgentRunsPage />)
 
-  const button = await screen.findByRole('button', { name: 'Inspect source_build run-1' })
+  const button = await screen.findByRole('button', { name: '查看 source_build run-1' })
   fireEvent.click(button)
 
   await waitFor(() => {
     expect(operationsMocks.getOperationAgentRun).toHaveBeenCalledWith('run-1')
   })
   expect(await screen.findByText('source.inspect')).toBeInTheDocument()
-  expect(screen.getByText('Result accepted · Evidence 1')).toBeInTheDocument()
+  expect(screen.getByText('结果 已接受 · 证据 1')).toBeInTheDocument()
   expect(screen.getByText('dom_snapshot · snapshot-1')).toBeInTheDocument()
 })

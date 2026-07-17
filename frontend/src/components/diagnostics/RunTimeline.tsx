@@ -65,7 +65,7 @@ export function RunTimeline({
             <div className="mt-6 rounded-md border border-primary/25 bg-accent/60 p-4">
               <p className="text-xs font-semibold text-primary">{t('analysis.deploymentDecision')}</p>
               <p className="mt-3 text-sm text-foreground">
-                {deployment ? `${deployment.action} -> ${statusText(deployment.status, locale)}` : t('analysis.waitingDeploymentReview')}
+                {deployment ? `${t(deployment.action)} -> ${statusText(deployment.status, locale)}` : t('analysis.waitingDeploymentReview')}
               </p>
             </div>
           </article>

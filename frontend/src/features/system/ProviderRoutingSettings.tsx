@@ -14,6 +14,7 @@ import {
   type ProviderRow,
 } from '@/api/modules/system'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -252,6 +253,7 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
   const selectedModels = form.id ? modelsByProvider[form.id] ?? [] : []
 
   return (
+    <LocalizedContent>
     <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)]">
       <section className="border border-border bg-card p-5 shadow-sm" aria-labelledby="provider-channels-heading">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -367,5 +369,6 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
         </div>
       </section>
     </div>
+    </LocalizedContent>
   )
 }

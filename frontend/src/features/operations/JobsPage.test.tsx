@@ -26,7 +26,7 @@ import { JobsPage } from './JobsPage'
 test('jobs page shows queued job status and kind', async () => {
   render(<JobsPage />)
 
-  expect(await screen.findByRole('heading', { name: 'Jobs control plane' })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: '任务控制台' })).toBeInTheDocument()
   expect(screen.getByText('crawl.refresh')).toBeInTheDocument()
-  expect(screen.getByText('queued')).toBeInTheDocument()
+  expect(screen.getByText('排队中')).toBeInTheDocument()
 })

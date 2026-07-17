@@ -102,16 +102,16 @@ test('source health page shows stage statuses, page-scoped summaries, and unique
     </MemoryRouter>
   )
 
-  expect(await screen.findByText('Source health control plane')).toBeInTheDocument()
+  expect(await screen.findByText('书源健康控制台')).toBeInTheDocument()
   expect(await screen.findByText('token_missing')).toBeInTheDocument()
-  expect(screen.getByText('Total: 21')).toBeInTheDocument()
-  expect(screen.getByText('本页 Healthy: 1')).toBeInTheDocument()
-  expect(screen.getByText('本页 Blocked: 1')).toBeInTheDocument()
-  expect(screen.getByText('本页 Dead: 0')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Probe source 七猫小说' })).toBeEnabled()
-  expect(screen.getByRole('button', { name: 'Recover source 七猫小说' })).toBeEnabled()
+  expect(screen.getByText('总计： 21')).toBeInTheDocument()
+  expect(screen.getByText('本页健康： 1')).toBeInTheDocument()
+  expect(screen.getByText('本页阻断： 1')).toBeInTheDocument()
+  expect(screen.getByText('本页失效： 0')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '探测书源 七猫小说' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: '恢复书源 七猫小说' })).toBeEnabled()
   expect(
-    (await screen.findAllByRole('link', { name: 'View source details' })).find(
+    (await screen.findAllByRole('link', { name: '查看书源详情' })).find(
       (link) => link.getAttribute('href') === '/sources/health/7'
     )
   ).toBeDefined()
@@ -124,7 +124,7 @@ test('source health page uses API metadata to navigate the inventory one page at
     </MemoryRouter>
   )
 
-  expect(await screen.findByText('Total: 21')).toBeInTheDocument()
+  expect(await screen.findByText('总计： 21')).toBeInTheDocument()
   expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
 
@@ -146,8 +146,8 @@ test('source health page stops loading and offers a retry when its request fails
     </MemoryRouter>
   )
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load source health. Please try again.')
-  expect(screen.queryByText('Loading')).not.toBeInTheDocument()
+  expect(await screen.findByRole('alert')).toHaveTextContent('加载书源健康状态失败，请重试。')
+  expect(screen.queryByText('正在加载')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '重试' }))
 
   await waitFor(() => {
@@ -175,7 +175,7 @@ test('a failed page request retries the failed page and keeps actions on the ret
 
   expect(await screen.findByText('七猫小说')).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load source health. Please try again.')
+  expect(await screen.findByRole('alert')).toHaveTextContent('加载书源健康状态失败，请重试。')
   expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
 
   fireEvent.click(screen.getByRole('button', { name: '重试' }))
@@ -184,7 +184,7 @@ test('a failed page request retries the failed page and keeps actions on the ret
   })
   expect(await screen.findByText('第二页书源')).toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Probe source 第二页书源' }))
+  fireEvent.click(screen.getByRole('button', { name: '探测书源 第二页书源' }))
   await waitFor(() => {
     expect(listSourceHealth).toHaveBeenLastCalledWith({ page: 2, page_size: 20, search: '' })
   })
@@ -209,10 +209,10 @@ test.each(['probe', 'recover'] as const)('%s completion preserves the latest in-
   )
 
   expect(await screen.findByText('七猫小说')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: verb === 'probe' ? 'Probe source 七猫小说' : 'Recover source 七猫小说' }))
-  expect(screen.getByRole('button', { name: verb === 'probe' ? 'Probe source 七猫小说' : 'Recover source 七猫小说' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: verb === 'probe' ? 'Recover source 七猫小说' : 'Probe source 七猫小说' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Probe source 起点读书限免+本章说' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: verb === 'probe' ? '探测书源 七猫小说' : '恢复书源 七猫小说' }))
+  expect(screen.getByRole('button', { name: verb === 'probe' ? '探测书源 七猫小说' : '恢复书源 七猫小说' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: verb === 'probe' ? '恢复书源 七猫小说' : '探测书源 七猫小说' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '探测书源 起点读书限免+本章说' })).toBeEnabled()
 
   fireEvent.click(screen.getByRole('button', { name: '下一页' }))
   await waitFor(() => {
@@ -240,10 +240,10 @@ test('a rejected probe keeps the current page visible and re-enables its actions
   )
 
   expect(await screen.findByText('七猫小说')).toBeInTheDocument()
-  const probeButton = screen.getByRole('button', { name: 'Probe source 七猫小说' })
+  const probeButton = screen.getByRole('button', { name: '探测书源 七猫小说' })
   fireEvent.click(probeButton)
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to probe 七猫小说. Please try again.')
+  expect(await screen.findByRole('alert')).toHaveTextContent('无法探测七猫小说，请重试。')
   expect(screen.getByText('七猫小说')).toBeInTheDocument()
   expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
   expect(probeButton).toBeEnabled()
@@ -258,10 +258,10 @@ test('a rejected recovery keeps the current page visible and re-enables its acti
   )
 
   expect(await screen.findByText('七猫小说')).toBeInTheDocument()
-  const recoverButton = screen.getByRole('button', { name: 'Recover source 七猫小说' })
+  const recoverButton = screen.getByRole('button', { name: '恢复书源 七猫小说' })
   fireEvent.click(recoverButton)
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Unable to recover 七猫小说. Please try again.')
+  expect(await screen.findByRole('alert')).toHaveTextContent('无法恢复七猫小说，请重试。')
   expect(screen.getByText('七猫小说')).toBeInTheDocument()
   expect(screen.getByText('第 1 / 2 页，共 21 条')).toBeInTheDocument()
   expect(recoverButton).toBeEnabled()
@@ -297,7 +297,7 @@ test('unmounting during a probe prevents its deferred success from reloading', a
   )
 
   expect(await screen.findByText('七猫小说')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Probe source 七猫小说' }))
+  fireEvent.click(screen.getByRole('button', { name: '探测书源 七猫小说' }))
   unmount()
   pendingProbe.resolve(mutationResponse())
   await Promise.resolve()
@@ -317,7 +317,7 @@ test('unmounting during a rejected recovery does not update the removed page', a
   )
 
   expect(await screen.findByText('七猫小说')).toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Recover source 七猫小说' }))
+  fireEvent.click(screen.getByRole('button', { name: '恢复书源 七猫小说' }))
   unmount()
   pendingRecovery.reject(new Error('recovery failed'))
   await Promise.resolve()

@@ -5,6 +5,7 @@ import {
   getEvidence, getWorkSnapshot, getWorkTasks, pauseAnalysisTask, resumeAnalysisTask, runAnalysisTask,
   type AnalysisTask, type EvidenceCitation, type WorkSnapshot,
 } from '@/api/modules/novelAnalysis'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 
@@ -12,6 +13,7 @@ import { EvidenceDrawer } from './EvidenceDrawer'
 import { TaskStatusCard } from './TaskStatusCard'
 
 export function WorkAnalysisPage() {
+  const { t } = useLanguage()
   const { workId = '' } = useParams()
   const [snapshot, setSnapshot] = useState<WorkSnapshot | null>(null)
   const [evidence, setEvidence] = useState<EvidenceCitation | null>(null)
@@ -46,7 +48,7 @@ export function WorkAnalysisPage() {
         <ClaimSection title="Published claims" claims={snapshot?.published_claims ?? []} onOpenEvidence={openEvidence} />
         <ClaimSection title="Candidate claims" claims={snapshot?.candidate_claims ?? []} onOpenEvidence={openEvidence} className="mt-6" />
         <h2 className="mt-6 text-lg font-semibold">Open conflicts</h2>
-        <div className="mt-2 text-sm text-muted-foreground">{snapshot?.open_conflicts.length ?? 0} awaiting adjudication</div>
+        <div className="mt-2 text-sm text-muted-foreground">{t('{count} awaiting adjudication', { count: snapshot?.open_conflicts.length ?? 0 })}</div>
         <h2 className="mt-7 text-lg font-semibold">Task queue</h2>
         <div className="mt-3 space-y-2">{tasks.length ? tasks.map((task) => <TaskStatusCard key={task.id} task={task} onRun={(id) => void runTask(id)} onPause={(id) => void pauseTask(id)} onResume={(id) => void resumeTask(id)} />) : <p className="text-sm text-muted-foreground">No analysis task has been queued for this work.</p>}</div>
       </section>
@@ -61,10 +63,11 @@ function ClaimSection({ title, claims, onOpenEvidence, className = '' }: {
   onOpenEvidence: (evidenceId: string) => Promise<void>
   className?: string
 }) {
+  const { t } = useLanguage()
   return <section className={className}>
-    <h2 className="text-lg font-semibold">{title}</h2>
+    <h2 className="text-lg font-semibold">{t(title)}</h2>
     <div className="mt-3 space-y-2">
-      {claims.length ? claims.map((claim) => <Button key={claim.id} variant="outline" className="h-auto w-full justify-start whitespace-normal text-left" onClick={() => void onOpenEvidence(claim.evidence_ids[0])}>{claim.subject_entity_id} · {claim.predicate}</Button>) : <p className="text-sm text-muted-foreground">None.</p>}
+      {claims.length ? claims.map((claim) => <Button key={claim.id} variant="outline" className="h-auto w-full justify-start whitespace-normal text-left" onClick={() => void onOpenEvidence(claim.evidence_ids[0])}>{claim.subject_entity_id} · {claim.predicate}</Button>) : <p className="text-sm text-muted-foreground">{t('None.')}</p>}
     </div>
   </section>
 }

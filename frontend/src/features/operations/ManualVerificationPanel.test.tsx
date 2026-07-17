@@ -36,6 +36,6 @@ test('shows the authorised target host and manual controls', async () => {
   render(<ManualVerificationPanel sessionId="browser-1" onFinished={vi.fn()} />)
 
   expect(await screen.findByText(/books\.example\.test/)).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Continue validation' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Cancel and destroy session' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '继续验证' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '取消并销毁会话' })).toBeInTheDocument()
 })

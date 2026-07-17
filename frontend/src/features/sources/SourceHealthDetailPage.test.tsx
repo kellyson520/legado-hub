@@ -68,8 +68,8 @@ test('source health detail renders route decision and probe diagnostics', async 
     </MemoryRouter>
   )
 
-  expect(await screen.findByText('Route decision')).toBeInTheDocument()
+  expect(await screen.findByText('路由决策')).toBeInTheDocument()
   expect(screen.getAllByText('waf_blocked').length).toBeGreaterThan(0)
-  expect(screen.getByText('Failure timeline')).toBeInTheDocument()
+  expect(screen.getByText('失败时间线')).toBeInTheDocument()
   expect(screen.getByText('https://example.test/search')).toBeInTheDocument()
 })

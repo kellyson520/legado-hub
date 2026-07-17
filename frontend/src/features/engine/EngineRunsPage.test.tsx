@@ -131,12 +131,12 @@ import { EngineRunsPage } from './EngineRunsPage'
 test('engine runs page shows step timeline and deployment decision', async () => {
   render(<EngineRunsPage />)
 
-  expect(await screen.findByText('Rule writing studio')).toBeInTheDocument()
+  expect(await screen.findByText('规则写作工作台')).toBeInTheDocument()
   expect(screen.getByText('https://console.test/books')).toBeInTheDocument()
-  expect(screen.getByText('validation A / 96')).toBeInTheDocument()
+  expect(screen.getByText('验证 A / 96')).toBeInTheDocument()
   expect(statusMocks.ListStatus.mock.calls.some(([props]) => props.loading === false && props.empty === false)).toBe(true)
-  expect(await screen.findByText('search')).toBeInTheDocument()
-  expect(await screen.findByText('deployment decision')).toBeInTheDocument()
+  expect((await screen.findAllByText('搜索')).length).toBeGreaterThan(0)
+  expect((await screen.findAllByText(/部署决策/)).length).toBeGreaterThan(0)
 })
 
 test('engine rule center tests regex and marks verification wall as blocked', async () => {
@@ -172,13 +172,13 @@ test('engine rule center tests regex and marks verification wall as blocked', as
 test('engine rule writing form submits a console source build job', async () => {
   render(<EngineRunsPage />)
 
-  fireEvent.change(await screen.findByLabelText('Source URL'), {
+  fireEvent.change(await screen.findByLabelText('书源 URL'), {
     target: { value: 'https://new.test/books/' },
   })
-  fireEvent.change(screen.getByLabelText('Keyword'), {
+  fireEvent.change(screen.getByLabelText('关键词'), {
     target: { value: 'sample' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Start source build' }))
+  fireEvent.click(screen.getByRole('button', { name: '开始构建书源' }))
 
   await waitFor(() => {
     expect(engineMocks.submitEngineSourceBuild).toHaveBeenCalledWith({
@@ -186,7 +186,7 @@ test('engine rule writing form submits a console source build job', async () => 
       keyword: 'sample',
     })
   })
-  expect(await screen.findByText('Queued job job-1')).toBeInTheDocument()
+  expect(await screen.findByText('任务 job-1 已排队')).toBeInTheDocument()
 })
 
 test('admin users page hides destructive actions without permission', async () => {
@@ -202,6 +202,6 @@ test('admin users page hides destructive actions without permission', async () =
     </AuthProvider>
   )
 
-  expect(await screen.findByText('admin')).toBeInTheDocument()
+  expect(await screen.findByText('管理员')).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /delete user/i })).not.toBeInTheDocument()
 })

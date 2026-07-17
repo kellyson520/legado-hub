@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import RFB from '@novnc/novnc/lib/rfb'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import {
   cancelInteractiveBrowserSession,
   continueInteractiveBrowserSession,
@@ -16,6 +17,7 @@ function relayUrl(path: string) {
 }
 
 export function ManualVerificationPanel({ sessionId, onFinished }: { sessionId: string; onFinished: () => void }) {
+  const { t } = useLanguage()
   const [session, setSession] = useState<InteractiveBrowserSession | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -73,19 +75,19 @@ export function ManualVerificationPanel({ sessionId, onFinished }: { sessionId: 
 
   const host = session?.target_origin ? new URL(session.target_origin).host : 'Loading target host…'
   return (
-    <section className="space-y-3 rounded-xl border border-border bg-card p-4" aria-label="Manual verification session">
+    <section className="space-y-3 rounded-xl border border-border bg-card p-4" aria-label={t('Manual verification session')}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="font-medium text-foreground">Manual verification</h3>
-          <p className="text-sm text-muted-foreground">Only complete verification for sites you are authorised to access: {host}</p>
+          <h3 className="font-medium text-foreground">{t('Manual verification')}</h3>
+          <p className="text-sm text-muted-foreground">{t('Only complete verification for sites you are authorised to access: ')}{host}</p>
         </div>
-        <span className="text-xs text-muted-foreground">{session?.state ?? 'opening'}</span>
+        <span className="text-xs text-muted-foreground">{t(session?.state ?? 'opening')}</span>
       </div>
       <div ref={screenRef} className="min-h-72 rounded-md bg-muted" />
-      {message ? <p role="status" className="text-sm text-muted-foreground">{message}</p> : null}
+      {message ? <p role="status" className="text-sm text-muted-foreground">{t(message)}</p> : null}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={continueValidation} disabled={busy}>Continue validation</Button>
-        <Button variant="outline" onClick={cancel} disabled={busy}>Cancel and destroy session</Button>
+        <Button onClick={continueValidation} disabled={busy}>{t('Continue validation')}</Button>
+        <Button variant="outline" onClick={cancel} disabled={busy}>{t('Cancel and destroy session')}</Button>
       </div>
     </section>
   )

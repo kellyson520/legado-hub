@@ -53,10 +53,10 @@ beforeEach(() => {
 test('governance save replaces local edits with the server canonical value', async () => {
   render(<AgentGovernanceSettings />)
 
-  const evidenceInput = await screen.findByLabelText('Minimum evidence spans for inferred facts')
+  const evidenceInput = await screen.findByLabelText('推断事实的最小证据片段数')
   fireEvent.change(evidenceInput, { target: { value: '999' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save governance settings' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存治理设置' }))
 
-  expect(await screen.findByText(/Effective/)).toBeInTheDocument()
+  expect(await screen.findByText(/生效时间/)).toBeInTheDocument()
   expect(screen.getByDisplayValue('8')).toBeInTheDocument()
 })

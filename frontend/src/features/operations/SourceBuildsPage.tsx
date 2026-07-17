@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import {
   listSourceBuildCandidates,
   type OperationSourceBuildAuditSummary,
@@ -51,6 +52,7 @@ function getAuditTotalElapsedMs(audit: OperationSourceBuildAuditSummary) {
 }
 
 export function SourceAuditSummary({ audit }: { audit?: OperationSourceBuildAuditSummary }) {
+  const { t } = useLanguage()
   if (!audit) return <span className="text-muted-foreground">-</span>
 
   const status = getAuditStatus(audit)
@@ -60,16 +62,16 @@ export function SourceAuditSummary({ audit }: { audit?: OperationSourceBuildAudi
   const summary = (
     <>
       <div className={terminalFailure ? 'font-medium text-destructive' : 'font-medium text-foreground'}>
-        Audit: {status} · {getAuditAttempt(audit)}/{getAuditMaxAttempts(audit)} · {getAuditGrade(audit)}
+        {t('Audit: ')}{t(status)} · {getAuditAttempt(audit)}/{getAuditMaxAttempts(audit)} · {getAuditGrade(audit)}
       </div>
       {report?.stages ? (
         <div className="text-muted-foreground">
-          search/toc/content: {report.stages.search?.status ?? '-'} / {report.stages.toc?.status ?? '-'} /{' '}
-          {report.stages.content?.status ?? '-'}
+          {t('search/toc/content: ')}{t(report.stages.search?.status ?? '-')} / {t(report.stages.toc?.status ?? '-')} /{' '}
+          {t(report.stages.content?.status ?? '-')}
           {typeof totalElapsedMs === 'number' ? ` · ${totalElapsedMs}ms` : ''}
         </div>
       ) : null}
-      {typeof totalElapsedMs === 'number' ? <div className="text-muted-foreground">total parse: {totalElapsedMs}ms</div> : null}
+      {typeof totalElapsedMs === 'number' ? <div className="text-muted-foreground">{t('total parse: ')}{totalElapsedMs}ms</div> : null}
       {report?.reason ? <div className="text-muted-foreground">{report.reason}</div> : null}
     </>
   )

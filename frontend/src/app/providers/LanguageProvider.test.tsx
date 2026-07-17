@@ -29,11 +29,13 @@ test('defaults to Chinese and persists a selected English locale', () => {
 
   expect(screen.getByText('zh-CN')).toBeInTheDocument()
   expect(screen.getByText('正在加载…')).toBeInTheDocument()
+  expect(document.documentElement.lang).toBe('zh-CN')
 
   fireEvent.click(screen.getByRole('button', { name: 'English' }))
 
   expect(screen.getByText('en-US')).toBeInTheDocument()
   expect(screen.getByText('Loading…')).toBeInTheDocument()
+  expect(document.documentElement.lang).toBe('en-US')
   expect(window.localStorage.getItem('legado.locale')).toBe('en-US')
 })
 
@@ -47,6 +49,7 @@ test('rejects an invalid stored locale and supports switching back to Chinese', 
 
   expect(screen.getByText('zh-CN')).toBeInTheDocument()
   expect(screen.getByText('正在加载…')).toBeInTheDocument()
+  expect(document.documentElement.lang).toBe('zh-CN')
   expect(window.localStorage.getItem('legado.locale')).toBe('zh-CN')
 })
 

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import {
   getOperationAgentRun,
   listOperationAgentRuns,
@@ -61,6 +62,7 @@ function formatPayload(value: unknown) {
 }
 
 export function AgentRunsPage() {
+  const { t } = useLanguage()
   const pagination = useServerPagination<OperationAgentRunRow>({
     pageSize: 20,
     load: listOperationAgentRuns,
@@ -124,10 +126,10 @@ export function AgentRunsPage() {
                     <td className="px-4 py-3 text-muted-foreground">{getTenantId(row)}</td>
                     <td className="px-4 py-3">
                       <div>
-                        Tools {getToolInvocationCount(row)} · Accepted {getAcceptedCount(row)} · Rejected {getRejectedCount(row)}
+                        {t('Tools ')}{getToolInvocationCount(row)} · {t('Accepted ')}{getAcceptedCount(row)} · {t('Rejected ')}{getRejectedCount(row)}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        Evidence {getEvidenceCount(row)} · Latest {getLatestToolName(row)}
+                        {t('Evidence ')}{getEvidenceCount(row)} · {t('Latest ')}{getLatestToolName(row)}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{getCreatedAt(row)}</td>
@@ -137,7 +139,7 @@ export function AgentRunsPage() {
                         className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={() => void inspect(row.id)}
                         disabled={inspecting}
-                        aria-label={`Inspect ${getAgentKind(row)} ${row.id}`}
+                        aria-label={`${t('Inspect')} ${getAgentKind(row)} ${row.id}`}
                       >
                         {inspecting ? 'Loading…' : 'Inspect'}
                       </button>
@@ -168,10 +170,10 @@ export function AgentRunsPage() {
                 <div className="rounded-xl border border-border bg-muted/20 p-3">
                   <div className="text-xs uppercase tracking-wide text-muted-foreground">Summary</div>
                   <div className="mt-2 text-sm text-foreground">
-                    Tools {getToolInvocationCount(detail)} · Accepted {getAcceptedCount(detail)} · Rejected {getRejectedCount(detail)}
+                    {t('Tools ')}{getToolInvocationCount(detail)} · {t('Accepted ')}{getAcceptedCount(detail)} · {t('Rejected ')}{getRejectedCount(detail)}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    Evidence {getEvidenceCount(detail)} · Latest {getLatestToolName(detail)}
+                    {t('Evidence ')}{getEvidenceCount(detail)} · {t('Latest ')}{getLatestToolName(detail)}
                   </div>
                 </div>
               </div>
@@ -187,7 +189,7 @@ export function AgentRunsPage() {
                         </div>
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        Result {item.result?.status ?? 'pending'} · Evidence {getToolEvidence(item).length}
+                        {t('Result ')}{t(item.result?.status ?? 'pending')} · {t('Evidence ')}{getToolEvidence(item).length}
                       </div>
                     </div>
                     <pre className="mt-3 overflow-x-auto whitespace-pre-wrap text-xs text-foreground">

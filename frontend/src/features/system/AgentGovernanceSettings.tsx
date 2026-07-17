@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Input } from '@/components/ui/input'
 import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
 import { useAgentSettingsSection } from './useAgentSettingsSection'
@@ -24,6 +25,7 @@ export function AgentGovernanceSettings() {
   const section = useAgentSettingsSection('governance', DEFAULTS)
 
   return (
+    <LocalizedContent>
     <section className="rounded-md border border-border bg-card p-5 shadow-sm">
       <div className="max-w-3xl">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Evidence policy</p>
@@ -56,5 +58,6 @@ export function AgentGovernanceSettings() {
       </div>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
+    </LocalizedContent>
   )
 }

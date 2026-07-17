@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import {
   listEventDeliveries,
   listEventDeliveryAttempts,
@@ -71,6 +72,7 @@ function mergeDeliveryRow(current: OperationDeliveryRow[], event: OperationStrea
 }
 
 export function EventDeliveriesPage() {
+  const { t } = useLanguage()
   const pagination = useServerPagination<OperationDeliveryRow>({
     pageSize: 20,
     load: listEventDeliveries,
@@ -185,7 +187,7 @@ export function EventDeliveriesPage() {
       description="查看 webhook 投递状态、失败历史与最近流式事件，辅助排查 event delivery 的 retry、dedupe 和实时推送链路。"
       actions={
         <span className="rounded-full border border-border bg-muted/50 px-3 py-1 text-xs text-muted-foreground">
-          {streamState === 'live' ? 'Live updates connected' : streamState === 'connecting' ? 'Connecting stream…' : 'Stream offline'}
+          {t(streamState === 'live' ? 'Live updates connected' : streamState === 'connecting' ? 'Connecting stream…' : 'Stream offline')}
         </span>
       }
     >

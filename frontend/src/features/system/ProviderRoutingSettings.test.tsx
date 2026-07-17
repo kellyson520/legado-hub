@@ -62,9 +62,9 @@ test('editing a channel saves a blank key safely and announces the masked config
   const onProviderSaved = vi.fn().mockResolvedValue(undefined)
   render(<ProviderRoutingSettings onProviderSaved={onProviderSaved} />)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Edit Primary' }))
-  fireEvent.change(screen.getByLabelText('Channel default model'), { target: { value: 'gpt-primary-v2' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save channel' }))
+  fireEvent.click(await screen.findByRole('button', { name: '编辑 Primary' }))
+  fireEvent.change(screen.getByLabelText('渠道默认模型'), { target: { value: 'gpt-primary-v2' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存渠道' }))
 
   await waitFor(() => {
     expect(mocks.updateProvider).toHaveBeenCalledWith('primary', {
@@ -75,19 +75,19 @@ test('editing a channel saves a blank key safely and announces the masked config
       enabled: true,
     })
   })
-  expect(await screen.findByText('API key: configured (••••1234)')).toBeInTheDocument()
+  expect(await screen.findByText('API Key：已配置（••••1234）')).toBeInTheDocument()
   expect(onProviderSaved).toHaveBeenCalledTimes(1)
 })
 
 test('channel model discovery and functional route fallback ordering are available without a page refresh', async () => {
   render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Get models for Primary' }))
+  fireEvent.click(await screen.findByRole('button', { name: '获取 Primary 的模型' }))
   expect(await screen.findByText('gpt-primary-plus')).toBeInTheDocument()
 
-  fireEvent.change(screen.getByLabelText('Provider for AI analysis'), { target: { value: 'backup' } })
-  fireEvent.change(screen.getByLabelText('Model for AI analysis'), { target: { value: 'gpt-backup' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Add fallback for AI analysis' }))
+  fireEvent.change(screen.getByLabelText('AI 分析 的 Provider'), { target: { value: 'backup' } })
+  fireEvent.change(screen.getByLabelText('AI 分析 的模型'), { target: { value: 'gpt-backup' } })
+  fireEvent.click(screen.getByRole('button', { name: '为 AI 分析 添加备用项' }))
 
   await waitFor(() => {
     expect(mocks.updateProviderRoute).toHaveBeenCalledWith('ai', {
@@ -98,7 +98,7 @@ test('channel model discovery and functional route fallback ordering are availab
     })
   })
 
-  fireEvent.click(screen.getByRole('button', { name: 'Move Backup up' }))
+  fireEvent.click(screen.getByRole('button', { name: '将 Backup 上移' }))
   await waitFor(() => {
     expect(mocks.updateProviderRoute).toHaveBeenLastCalledWith('ai', {
       entries: [
@@ -112,9 +112,9 @@ test('channel model discovery and functional route fallback ordering are availab
 test('an edited channel can be disabled without rewriting its stored key', async () => {
   render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Edit Primary' }))
-  fireEvent.click(screen.getByLabelText('Channel enabled'))
-  fireEvent.click(screen.getByRole('button', { name: 'Save channel' }))
+  fireEvent.click(await screen.findByRole('button', { name: '编辑 Primary' }))
+  fireEvent.click(screen.getByLabelText('启用渠道'))
+  fireEvent.click(screen.getByRole('button', { name: '保存渠道' }))
 
   await waitFor(() => {
     expect(mocks.updateProvider).toHaveBeenCalledWith('primary', {
@@ -140,11 +140,11 @@ test('a new channel can be saved before a model is selected for discovery', asyn
   }))
   render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Add channel' }))
-  fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'Discovery first' } })
-  fireEvent.change(screen.getByLabelText('Channel Base URL'), { target: { value: 'https://discovery.example/v1' } })
-  fireEvent.change(screen.getByLabelText('Channel API Key'), { target: { value: 'sk-discovery' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save channel' }))
+  fireEvent.click(await screen.findByRole('button', { name: '添加渠道' }))
+  fireEvent.change(screen.getByLabelText('渠道名称'), { target: { value: 'Discovery first' } })
+  fireEvent.change(screen.getByLabelText('渠道基础 URL'), { target: { value: 'https://discovery.example/v1' } })
+  fireEvent.change(screen.getByLabelText('渠道 API Key'), { target: { value: 'sk-discovery' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存渠道' }))
 
   await waitFor(() => {
     expect(mocks.createProvider).toHaveBeenCalledWith({
@@ -161,10 +161,10 @@ test('keeps saved provider controls available when route loading fails', async (
   mocks.getProviderRoute.mockRejectedValue(new Error('route API unavailable'))
   render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
 
-  expect(await screen.findByRole('button', { name: 'Get models for Primary' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Edit Primary' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Add fallback for AI analysis' })).toBeDisabled()
-  expect(await screen.findByText(/Provider routes are temporarily unavailable/)).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: '获取 Primary 的模型' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '编辑 Primary' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '为 AI 分析 添加备用项' })).toBeDisabled()
+  expect(await screen.findByText(/Provider 路由暂时不可用/)).toBeInTheDocument()
 })
 
 test('shows the provider credential error when model discovery is rejected', async () => {
@@ -174,7 +174,7 @@ test('shows the provider credential error when model discovery is rejected', asy
   })
   render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
 
-  fireEvent.click(await screen.findByRole('button', { name: 'Get models for Primary' }))
+  fireEvent.click(await screen.findByRole('button', { name: '获取 Primary 的模型' }))
 
-  expect(await screen.findByText('Provider authentication failed; update the API key')).toBeInTheDocument()
+  expect(await screen.findByText('Provider 身份验证失败；请更新 API Key')).toBeInTheDocument()
 })

@@ -17,6 +17,7 @@ import {
 } from '@/api/modules/system'
 import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ProviderRoutingSettings } from './ProviderRoutingSettings'
@@ -201,6 +202,7 @@ export function ProviderSettingsContent() {
   }
 
   return (
+    <LocalizedContent>
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.1fr)]">
         <section className="rounded-md border border-border bg-card p-5 shadow-sm">
@@ -450,6 +452,7 @@ export function ProviderSettingsContent() {
       </div>
       <ProviderRoutingSettings onProviderSaved={handleProviderSaved} />
     </div>
+    </LocalizedContent>
   )
 }
 

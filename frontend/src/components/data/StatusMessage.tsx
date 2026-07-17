@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { cn } from '@/lib/utils'
 
 export interface StatusMessageProps {
@@ -15,14 +16,16 @@ const toneClasses = {
 } as const
 
 export function StatusMessage({ tone, message, as: Element = 'p', className }: StatusMessageProps) {
+  const { t } = useLanguage()
   if (message === null || message === undefined || message === '') return null
+  const localizedMessage = typeof message === 'string' ? t(message) : message
 
   return (
     <Element
       role={tone === 'error' ? 'alert' : 'status'}
       className={cn('text-sm', toneClasses[tone], className)}
     >
-      {message}
+      {localizedMessage}
     </Element>
   )
 }

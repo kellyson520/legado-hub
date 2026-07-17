@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import { useAuth } from '@/app/providers/AuthProvider'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import {
   createSourceDraft,
   getSourceVersion,
@@ -42,6 +43,7 @@ export function SourceRuleEditorPage() {
   const { sourceVersionId = '' } = useParams()
   const navigate = useNavigate()
   const { hasPermission } = useAuth()
+  const { t } = useLanguage()
   const canWrite = hasPermission('book_sources.write')
   const [version, setVersion] = useState<SourceVersionResponse | null>(null)
   const [bookSourceName, setBookSourceName] = useState('')
@@ -183,7 +185,12 @@ export function SourceRuleEditorPage() {
               <Input id="book-source-url" value={bookSourceUrl} onChange={(event) => setBookSourceUrl(event.target.value)} disabled={!canWrite} />
             </label>
             <div className="md:col-span-2 text-sm text-muted-foreground">
-              当前版本：{version.source_version_id} · 状态：{version.status} · 正文状态：{version.content_status} · 实测状态：{version.latest_validation ? (version.publish_allowed ? '已通过' : '未通过') : '待验证'}
+              {t('当前版本：{version} · 状态：{status} · 正文状态：{content} · 实测状态：{validation}', {
+                version: version.source_version_id,
+                status: t(version.status),
+                content: t(version.content_status),
+                validation: t(version.latest_validation ? (version.publish_allowed ? '已通过' : '未通过') : '待验证'),
+              })}
             </div>
           </Card>
 
@@ -214,12 +221,12 @@ export function SourceRuleEditorPage() {
           {version.latest_validation ? (
             <Card className="space-y-3 p-5">
               <h2 className="text-lg font-semibold">最近实测结果</h2>
-              <p className="text-sm">评分：{version.latest_validation.score} · 等级：{version.latest_validation.grade} · 执行：{version.latest_validation.trigger}</p>
+              <p className="text-sm">{t('评分：{score} · 等级：{grade} · 执行：{trigger}', { score: version.latest_validation.score, grade: version.latest_validation.grade, trigger: version.latest_validation.trigger })}</p>
               <div className="grid gap-2 md:grid-cols-3">
                 {Object.entries(version.latest_validation.step_results).map(([step, result]) => (
                   <div key={step} className="rounded-md border border-border p-3 text-sm">
                     <p className="font-medium">{step}</p>
-                    <p className={result.passed ? 'text-emerald-600' : 'text-rose-600'}>{result.passed ? '通过' : '失败'} · {result.status ?? 'unknown'}</p>
+                    <p className={result.passed ? 'text-emerald-600' : 'text-rose-600'}>{t(result.passed ? '通过' : '失败')} · {t(result.status ?? 'unknown')}</p>
                   </div>
                 ))}
               </div>
@@ -242,7 +249,7 @@ export function SourceRuleEditorPage() {
             <Button type="button" variant="outline" onClick={() => void handleRegexTest()} disabled={!regexPattern.trim()}>测试正则</Button>
             {regexResult ? (
               <div className="rounded-md border border-border bg-muted/40 p-4 text-sm">
-                <p>匹配数量：{regexResult.match_count}</p>
+                <p>{t('匹配数量：{count}', { count: regexResult.match_count })}</p>
                 {regexResult.error ? <p className="mt-2 text-rose-600">{regexResult.error}</p> : null}
                 {regexResult.replacement_preview !== null ? <pre className="mt-2 whitespace-pre-wrap text-muted-foreground">{regexResult.replacement_preview}</pre> : null}
               </div>

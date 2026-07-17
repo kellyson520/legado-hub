@@ -10,6 +10,7 @@ import {
   type AIConversationSummary,
   type AIWorkspaceMode,
 } from '@/api/modules/ai'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
@@ -31,9 +32,9 @@ const toolOptions = [
 
 const modeLabel: Record<AIWorkspaceMode, string> = Object.fromEntries(modes.map((mode) => [mode.value, mode.label])) as Record<AIWorkspaceMode, string>
 
-function formatTime(value: string) {
+function formatTime(value: string, locale: 'zh-CN' | 'en-US') {
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '刚刚' : date.toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  return Number.isNaN(date.getTime()) ? (locale === 'en-US' ? 'Just now' : '刚刚') : date.toLocaleString(locale, { hour: '2-digit', minute: '2-digit' })
 }
 
 function formatToolResult(value: unknown) {
@@ -45,6 +46,7 @@ function formatToolResult(value: unknown) {
 }
 
 export function AIWorkspacePage() {
+  const { locale, t } = useLanguage()
   const pagination = useServerPagination<AIConversationSummary>({
     pageSize: 20,
     load: listAIConversations,
@@ -86,7 +88,7 @@ export function AIWorkspacePage() {
     if (sending) return
     setSending(true)
     try {
-      const response = await createAIConversation({ title: '新的 AI 对话' })
+      const response = await createAIConversation({ title: t('新的 AI 对话') })
       const next = response.data
       setConversation({ ...next, messages: [] })
       setActiveConversationId(next.id)
@@ -194,7 +196,7 @@ export function AIWorkspacePage() {
                   className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${item.id === activeConversationId ? 'border-primary/40 bg-primary text-primary-foreground shadow-sm' : 'border-transparent hover:border-border hover:bg-accent'}`}
                 >
                   <span className="block truncate text-sm font-semibold">{item.title}</span>
-                  <span className={`mt-1 block text-xs ${item.id === activeConversationId ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}>{formatTime(item.created_at)}</span>
+                  <span className={`mt-1 block text-xs ${item.id === activeConversationId ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}>{formatTime(item.created_at, locale)}</span>
                 </button>
               ))}
             </PaginatedListControls>
@@ -218,8 +220,8 @@ export function AIWorkspacePage() {
               <article key={message.id} className={`max-w-3xl ${message.role === 'user' ? 'ml-auto' : ''}`}>
                 <div className={`rounded-xl border px-4 py-3 shadow-sm ${message.role === 'user' ? 'border-primary bg-primary text-primary-foreground' : message.status === 'failed' ? 'border-destructive/40 bg-destructive/5' : 'border-border bg-card'}`}>
                   <div className={`mb-2 flex items-center justify-between gap-3 text-xs ${message.role === 'user' ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
-                    <span>{message.role === 'user' ? '你' : `AI · ${modeLabel[message.mode]}`}</span>
-                    <span>{formatTime(message.created_at)}</span>
+                    <span>{message.role === 'user' ? t('你') : `${t('AI')} · ${t(modeLabel[message.mode])}`}</span>
+                    <span>{formatTime(message.created_at, locale)}</span>
                   </div>
                   <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
                   {message.status === 'failed' ? <Button className="mt-3" size="sm" variant="outline" onClick={() => retryMessage(index)} disabled={sending}>重试</Button> : null}
@@ -281,7 +283,7 @@ export function AIWorkspacePage() {
                   }
                 }}
                 disabled={!activeConversationId || sending}
-                placeholder={activeConversationId ? `使用“${modeLabel[mode]}”模式提问；Ctrl / ⌘ + Enter 发送` : '请先新建或选择一个对话'}
+                placeholder={activeConversationId ? t('使用“{mode}”模式提问；Ctrl / ⌘ + Enter 发送', { mode: t(modeLabel[mode]) }) : t('请先新建或选择一个对话')}
                 className="min-h-24 flex-1 resize-y rounded-lg border bg-background px-3 py-2 text-sm leading-6 outline-none ring-offset-background focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted"
               />
               <Button className="self-end" disabled={!canSend} onClick={() => void send()}>发送</Button>

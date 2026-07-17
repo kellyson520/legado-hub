@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
 import { StatusMessage } from '@/components/data/StatusMessage'
 import { useAgentSettingsSection } from './useAgentSettingsSection'
+import { LocalizedContent } from '@/components/layout/LocalizedContent'
 
 type RoleSettings = {
   extractor_route_group: string
@@ -30,6 +31,7 @@ export function AgentRoleSettings() {
   const section = useAgentSettingsSection('roles', DEFAULTS)
 
   return (
+    <LocalizedContent>
     <section className="rounded-md border border-border bg-card p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Independent roles</p>
       <h2 className="mt-2 text-xl font-semibold text-foreground">Assign models by responsibility</h2>
@@ -48,5 +50,6 @@ export function AgentRoleSettings() {
       <div className="mt-5 flex flex-wrap items-center gap-3"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save role settings'}</Button><SettingsEffectiveStatus updatedAt={section.updatedAt} /></div>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
+    </LocalizedContent>
   )
 }

@@ -164,8 +164,8 @@ beforeEach(() => {
 test('system settings page shows provider health and quota panels', async () => {
   render(<SystemSettingsPage />)
 
-  expect(await screen.findByText('Provider health')).toBeInTheDocument()
-  expect(await screen.findByText('Quota policies')).toBeInTheDocument()
+  expect(await screen.findByText('Provider 健康状态')).toBeInTheDocument()
+  expect(await screen.findByText('配额策略')).toBeInTheDocument()
 })
 
 test('system settings page saves llm api configuration', async () => {
@@ -181,20 +181,20 @@ test('system settings page saves llm api configuration', async () => {
     })
   render(<SystemSettingsPage />)
 
-  expect(await screen.findByText('LLM API configuration')).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText('Provider name'), {
+  expect(await screen.findByText('LLM API 配置')).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Provider 名称'), {
     target: { value: 'Primary OpenAI' },
   })
-  fireEvent.change(screen.getByLabelText('Base URL'), {
+  fireEvent.change(screen.getByLabelText('基础 URL'), {
     target: { value: 'https://api.openai.com/v1' },
   })
   fireEvent.change(screen.getByLabelText('API Key'), {
     target: { value: 'sk-test' },
   })
-  fireEvent.change(screen.getByLabelText('Model'), {
+  fireEvent.change(screen.getByLabelText('模型'), {
     target: { value: 'gpt-4.1-mini' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Save LLM settings' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存 LLM 设置' }))
 
   await waitFor(() => {
     expect(systemMocks.updateLLMSettings).toHaveBeenCalledWith({
@@ -204,19 +204,19 @@ test('system settings page saves llm api configuration', async () => {
       model: 'gpt-4.1-mini',
     })
   })
-  expect(await screen.findByText('LLM settings saved')).toBeInTheDocument()
-  expect(await screen.findByText('LLM provider 已配置 / Provider configured')).toBeInTheDocument()
+  expect(await screen.findByText('LLM 设置已保存')).toBeInTheDocument()
+  expect(await screen.findByText('LLM provider 已配置')).toBeInTheDocument()
 })
 
 test('system settings page defaults source build Agent off and persists an enabled setting', async () => {
   render(<SystemSettingsPage />)
 
-  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent-enhanced source build' })
+  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent 增强写源' })
   expect(sourceBuildAgentSwitch).not.toBeChecked()
   expect(
-    screen.getByText('仅当确定性书源构建失败后才会调用 Agent / Agent runs only after deterministic source build fails.'),
+    screen.getByText('仅当确定性书源构建失败后才会调用 Agent。'),
   ).toBeInTheDocument()
-  expect(screen.getByText('LLM provider 未配置 / Provider not configured')).toBeInTheDocument()
+  expect(screen.getByText('LLM provider 未配置')).toBeInTheDocument()
 
   fireEvent.click(sourceBuildAgentSwitch)
 
@@ -236,7 +236,7 @@ test('system settings page disables the source build Agent switch while saving',
   )
   render(<SystemSettingsPage />)
 
-  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent-enhanced source build' })
+  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent 增强写源' })
   fireEvent.click(sourceBuildAgentSwitch)
 
   expect(sourceBuildAgentSwitch).toBeDisabled()
@@ -261,19 +261,19 @@ test('system settings page supports camelCase Agent provider configuration', asy
   })
   render(<SystemSettingsPage />)
 
-  expect(await screen.findByRole('switch', { name: 'Agent-enhanced source build' })).toBeChecked()
-  expect(screen.getByText('LLM provider 已配置 / Provider configured')).toBeInTheDocument()
+  expect(await screen.findByRole('switch', { name: 'Agent 增强写源' })).toBeChecked()
+  expect(screen.getByText('LLM provider 已配置')).toBeInTheDocument()
 })
 
 test('system settings page keeps LLM panels available when Agent settings fail to load', async () => {
   systemMocks.getSourceBuildAgentSettings.mockRejectedValueOnce(new Error('settings unavailable'))
   render(<SystemSettingsPage />)
 
-  expect(await screen.findByText('LLM API configuration')).toBeInTheDocument()
-  expect(await screen.findByText('Provider health')).toBeInTheDocument()
-  expect(await screen.findByText('Quota policies')).toBeInTheDocument()
-  expect(await screen.findByText('Primary OpenAI · healthy')).toBeInTheDocument()
-  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load source build Agent settings')
+  expect(await screen.findByText('LLM API 配置')).toBeInTheDocument()
+  expect(await screen.findByText('Provider 健康状态')).toBeInTheDocument()
+  expect(await screen.findByText('配额策略')).toBeInTheDocument()
+  expect(await screen.findByText('Primary OpenAI · 健康')).toBeInTheDocument()
+  expect(await screen.findByRole('alert')).toHaveTextContent('加载写源 Agent 设置失败')
 })
 
 test('system settings page prevents toggling Agent settings before the initial load completes', async () => {
@@ -286,7 +286,7 @@ test('system settings page prevents toggling Agent settings before the initial l
   )
   render(<SystemSettingsPage />)
 
-  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent-enhanced source build' })
+  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent 增强写源' })
   expect(sourceBuildAgentSwitch).toBeDisabled()
   expect(systemMocks.updateSourceBuildAgentSettings).not.toHaveBeenCalled()
 
@@ -298,25 +298,25 @@ test('system settings page announces Agent settings save failures as errors', as
   systemMocks.updateSourceBuildAgentSettings.mockRejectedValueOnce(new Error('save unavailable'))
   render(<SystemSettingsPage />)
 
-  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent-enhanced source build' })
+  const sourceBuildAgentSwitch = await screen.findByRole('switch', { name: 'Agent 增强写源' })
   fireEvent.click(sourceBuildAgentSwitch)
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save source build Agent settings')
+  expect(await screen.findByRole('alert')).toHaveTextContent('保存写源 Agent 设置失败')
 })
 
 test('system settings page saves interactive browser verification settings with bounded values', async () => {
   render(<SystemSettingsPage />)
 
-  const browserSwitch = await screen.findByRole('switch', { name: 'Interactive browser verification' })
-  const automaticSwitch = screen.getByRole('switch', { name: 'Automatically attempt verification' })
+  const browserSwitch = await screen.findByRole('switch', { name: '交互式浏览器验证' })
+  const automaticSwitch = screen.getByRole('switch', { name: '自动尝试验证' })
   expect(browserSwitch).not.toBeChecked()
   expect(automaticSwitch).toBeDisabled()
 
   fireEvent.click(browserSwitch)
   expect(automaticSwitch).not.toBeDisabled()
-  fireEvent.change(screen.getByLabelText('Maximum sessions'), { target: { value: '5' } })
-  fireEvent.change(screen.getByLabelText('Session timeout (seconds)'), { target: { value: '30' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save interactive browser settings' }))
+  fireEvent.change(screen.getByLabelText('最大会话数'), { target: { value: '5' } })
+  fireEvent.change(screen.getByLabelText('会话超时（秒）'), { target: { value: '30' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存交互式浏览器设置' }))
 
   await waitFor(() => {
     expect(systemMocks.updateInteractiveBrowserSettings).toHaveBeenCalledWith({
@@ -326,16 +326,16 @@ test('system settings page saves interactive browser verification settings with 
       sessionTimeoutSeconds: 60,
     })
   })
-  expect(await screen.findByRole('status')).toHaveTextContent('Interactive browser settings saved')
+  expect(await screen.findByRole('status')).toHaveTextContent('交互式浏览器设置已保存')
 })
 
 test('system settings page truncates fractional interactive browser limits before saving', async () => {
   render(<SystemSettingsPage />)
 
-  await screen.findByRole('switch', { name: 'Interactive browser verification' })
-  fireEvent.change(screen.getByLabelText('Maximum sessions'), { target: { value: '1.5' } })
-  fireEvent.change(screen.getByLabelText('Session timeout (seconds)'), { target: { value: '300.9' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save interactive browser settings' }))
+  await screen.findByRole('switch', { name: '交互式浏览器验证' })
+  fireEvent.change(screen.getByLabelText('最大会话数'), { target: { value: '1.5' } })
+  fireEvent.change(screen.getByLabelText('会话超时（秒）'), { target: { value: '300.9' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存交互式浏览器设置' }))
 
   await waitFor(() => {
     expect(systemMocks.updateInteractiveBrowserSettings).toHaveBeenCalledWith({
@@ -351,24 +351,24 @@ test('system settings page announces interactive browser settings save failures 
   systemMocks.updateInteractiveBrowserSettings.mockRejectedValueOnce(new Error('save unavailable'))
   render(<SystemSettingsPage />)
 
-  fireEvent.click(await screen.findByRole('switch', { name: 'Interactive browser verification' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Save interactive browser settings' }))
+  fireEvent.click(await screen.findByRole('switch', { name: '交互式浏览器验证' }))
+  fireEvent.click(screen.getByRole('button', { name: '保存交互式浏览器设置' }))
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save interactive browser settings')
+  expect(await screen.findByRole('alert')).toHaveTextContent('保存交互式浏览器设置失败')
 })
 
 test('system settings page keeps browser edits available after a save failure', async () => {
   systemMocks.updateInteractiveBrowserSettings.mockRejectedValueOnce(new Error('save unavailable'))
   render(<SystemSettingsPage />)
 
-  fireEvent.click(await screen.findByRole('switch', { name: 'Interactive browser verification' }))
-  fireEvent.change(screen.getByLabelText('Maximum sessions'), { target: { value: '2' } })
-  fireEvent.change(screen.getByLabelText('Session timeout (seconds)'), { target: { value: '180' } })
-  const saveButton = screen.getByRole('button', { name: 'Save interactive browser settings' })
+  fireEvent.click(await screen.findByRole('switch', { name: '交互式浏览器验证' }))
+  fireEvent.change(screen.getByLabelText('最大会话数'), { target: { value: '2' } })
+  fireEvent.change(screen.getByLabelText('会话超时（秒）'), { target: { value: '180' } })
+  const saveButton = screen.getByRole('button', { name: '保存交互式浏览器设置' })
   fireEvent.click(saveButton)
 
-  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to save interactive browser settings')
-  expect(screen.queryByRole('button', { name: 'Retry interactive browser settings' })).not.toBeInTheDocument()
+  expect(await screen.findByRole('alert')).toHaveTextContent('保存交互式浏览器设置失败')
+  expect(screen.queryByRole('button', { name: '重试交互式浏览器设置' })).not.toBeInTheDocument()
   expect(saveButton).not.toBeDisabled()
 
   fireEvent.click(saveButton)
@@ -385,16 +385,16 @@ test('system settings page keeps browser edits available after a save failure', 
 test('system settings page preserves unsaved browser edits when saving LLM settings', async () => {
   render(<SystemSettingsPage />)
 
-  await screen.findByRole('switch', { name: 'Interactive browser verification' })
-  const maximumSessions = screen.getByLabelText('Maximum sessions')
+  await screen.findByRole('switch', { name: '交互式浏览器验证' })
+  const maximumSessions = screen.getByLabelText('最大会话数')
   fireEvent.change(maximumSessions, { target: { value: '2' } })
   expect(maximumSessions).toHaveValue(2)
   expect(systemMocks.getInteractiveBrowserSettings).toHaveBeenCalledTimes(1)
 
-  fireEvent.change(screen.getByLabelText('Base URL'), { target: { value: 'https://api.example.test/v1' } })
-  fireEvent.click(screen.getByRole('button', { name: 'Save LLM settings' }))
+  fireEvent.change(screen.getByLabelText('基础 URL'), { target: { value: 'https://api.example.test/v1' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存 LLM 设置' }))
 
-  expect(await screen.findByText('LLM settings saved')).toBeInTheDocument()
+  expect(await screen.findByText('LLM 设置已保存')).toBeInTheDocument()
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
@@ -417,15 +417,15 @@ test('system settings page disables interactive browser controls after load fail
     })
   render(<SystemSettingsPage />)
 
-  const browserSwitch = await screen.findByRole('switch', { name: 'Interactive browser verification' })
-  expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load interactive browser settings')
+  const browserSwitch = await screen.findByRole('switch', { name: '交互式浏览器验证' })
+  expect(await screen.findByRole('alert')).toHaveTextContent('加载交互式浏览器设置失败')
   expect(browserSwitch).toBeDisabled()
-  expect(screen.getByRole('switch', { name: 'Automatically attempt verification' })).toBeDisabled()
-  expect(screen.getByLabelText('Maximum sessions')).toBeDisabled()
-  expect(screen.getByLabelText('Session timeout (seconds)')).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Save interactive browser settings' })).toBeDisabled()
+  expect(screen.getByRole('switch', { name: '自动尝试验证' })).toBeDisabled()
+  expect(screen.getByLabelText('最大会话数')).toBeDisabled()
+  expect(screen.getByLabelText('会话超时（秒）')).toBeDisabled()
+  expect(screen.getByRole('button', { name: '保存交互式浏览器设置' })).toBeDisabled()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Retry interactive browser settings' }))
+  fireEvent.click(screen.getByRole('button', { name: '重试交互式浏览器设置' }))
 
   await waitFor(() => expect(systemMocks.getInteractiveBrowserSettings).toHaveBeenCalledTimes(2))
   await waitFor(() => expect(browserSwitch).not.toBeDisabled())
@@ -452,7 +452,7 @@ test('system settings page ignores stale interactive browser settings after effe
     </StrictMode>,
   )
 
-  const browserSwitch = await screen.findByRole('switch', { name: 'Interactive browser verification' })
+  const browserSwitch = await screen.findByRole('switch', { name: '交互式浏览器验证' })
   await waitFor(() => expect(systemMocks.getInteractiveBrowserSettings).toHaveBeenCalledTimes(2))
   await waitFor(() => expect(browserSwitch).toBeChecked())
 
@@ -462,12 +462,12 @@ test('system settings page ignores stale interactive browser settings after effe
   })
 
   expect(browserSwitch).toBeChecked()
-  expect(screen.getByLabelText('Maximum sessions')).toHaveValue(2)
+  expect(screen.getByLabelText('最大会话数')).toHaveValue(2)
 })
 
 test('ai tasks page shows provider and model for each task', async () => {
   render(<AITasksPage />)
 
-  expect(await screen.findByText('provider')).toBeInTheDocument()
-  expect(await screen.findByText('model')).toBeInTheDocument()
+  expect(await screen.findByText('Provider')).toBeInTheDocument()
+  expect(await screen.findByText('模型')).toBeInTheDocument()
 })
