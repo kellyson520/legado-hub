@@ -1,5 +1,5 @@
 import { apiClient } from '@/api/client'
-import type { ApiEnvelope, PaginatedEnvelope, PaginatedStatusQueryParams } from '@/api/types'
+import type { PaginatedEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
 export interface AdminUserRow {
   id: string
@@ -33,12 +33,12 @@ export async function listAuditLogs(params: AdminListParams = {}): Promise<Pagin
 
 export async function createUser(payload: { username: string; display_name: string; role: 'admin' | 'user'; password: string }) { return apiClient.post<AdminUserRow>('/admin/users', payload) }
 export async function updateUser(id: string, payload: Partial<Pick<AdminUserRow, 'display_name' | 'role'>>) {
-  return (await apiClient.raw.patch<ApiEnvelope<AdminUserRow>>(`/admin/users/${id}`, payload)).data
+  return apiClient.patch<AdminUserRow>(`/admin/users/${id}`, payload)
 }
 export async function setUserEnabled(id: string, enabled: boolean) { return apiClient.post<AdminUserRow>(`/admin/users/${id}/${enabled ? 'enable' : 'disable'}`) }
 export async function resetUserPassword(id: string, password: string) { return apiClient.post<{ user_id: string }>(`/admin/users/${id}/reset-password`, { password }) }
 export async function revokeUserSessions(id: string) { return apiClient.post<{ user_id: string }>(`/admin/sessions/${id}/revoke`) }
 export function listApiKeys(params: AdminListParams = {}): Promise<PaginatedEnvelope<ApiKeyRow>> { return apiClient.get<ApiKeyRow[]>('/admin/api-keys', { params }) }
 export function createApiKey(payload: { name: string; permissions: string[] }) { return apiClient.post<ApiKeyRow>('/admin/api-keys', payload) }
-export function disableApiKey(id: number) { return apiClient.raw.patch<ApiEnvelope<{ api_key_id: number }>>(`/admin/api-keys/${id}/disable`).then((r) => r.data) }
-export function deleteApiKey(id: number) { return apiClient.raw.delete<ApiEnvelope<{ api_key_id: number }>>(`/admin/api-keys/${id}`).then((r) => r.data) }
+export function disableApiKey(id: number) { return apiClient.patch<{ api_key_id: number }>(`/admin/api-keys/${id}/disable`) }
+export function deleteApiKey(id: number) { return apiClient.delete<{ api_key_id: number }>(`/admin/api-keys/${id}`) }

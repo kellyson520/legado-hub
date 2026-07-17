@@ -94,8 +94,8 @@ export interface SettingsSection<T extends Record<string, unknown> = Record<stri
   updated_at?: string | null
 }
 
-export async function listProviders() {
-  return apiClient.get<ProviderRow[]>('/system/providers') as Promise<ApiEnvelope<ProviderRow[]>>
+export function listProviders(): Promise<ApiEnvelope<ProviderRow[]>> {
+  return apiClient.get<ProviderRow[]>('/system/providers')
 }
 
 export function createProvider(payload: ProviderConfigurationInput): Promise<ApiEnvelope<ProviderRow>> {
@@ -139,8 +139,8 @@ export function updateProviderRoute(
   })
 }
 
-export async function listQuotaPolicies() {
-  return apiClient.get<QuotaPolicyRow[]>('/system/quotas') as Promise<ApiEnvelope<QuotaPolicyRow[]>>
+export function listQuotaPolicies(): Promise<ApiEnvelope<QuotaPolicyRow[]>> {
+  return apiClient.get<QuotaPolicyRow[]>('/system/quotas')
 }
 
 export function getLLMSettings(): Promise<ApiEnvelope<LLMSettings>> {

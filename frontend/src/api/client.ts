@@ -98,6 +98,10 @@ export function createApiClient(options: CreateApiClientOptions = {}) {
       unwrapResponse<T>(await instance.post<ApiEnvelope<T>>(url, data, config)),
     put: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
       unwrapResponse<T>(await instance.put<ApiEnvelope<T>>(url, data, config)),
+    patch: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+      unwrapResponse<T>(await instance.patch<ApiEnvelope<T>>(url, data, config)),
+    delete: async <T>(url: string, config?: AxiosRequestConfig) =>
+      unwrapResponse<T>(await instance.delete<ApiEnvelope<T>>(url, config)),
   }
 }
 

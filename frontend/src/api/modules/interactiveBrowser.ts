@@ -25,5 +25,5 @@ export function continueInteractiveBrowserSession(sessionId: string): Promise<Ap
 }
 
 export function cancelInteractiveBrowserSession(sessionId: string): Promise<ApiEnvelope<InteractiveBrowserSession>> {
-  return apiClient.raw.delete<ApiEnvelope<InteractiveBrowserSession>>(`/interactive-browser/sessions/${sessionId}`).then((response) => response.data)
+  return apiClient.delete<InteractiveBrowserSession>(`/interactive-browser/sessions/${sessionId}`)
 }

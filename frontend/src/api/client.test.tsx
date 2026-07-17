@@ -74,3 +74,33 @@ test('auth provider exposes permissions from the current user payload', async ()
 
   expect(await screen.findByText('allowed')).toBeInTheDocument()
 })
+
+test('client unwraps patch and delete envelopes through shared methods', async () => {
+  const calls: string[] = []
+  const client = createApiClient({
+    adapter: async (config) => {
+      calls.push(`${config.method}:${config.url}`)
+      return {
+        data: {
+          success: true,
+          code: 'OK',
+          message: 'ok',
+          data: { id: 'row-1' },
+          meta: {},
+          trace_id: null,
+        },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      }
+    },
+  })
+
+  const patched = await client.patch<{ id: string }>('/api/items/row-1', { enabled: true })
+  const deleted = await client.delete<{ id: string }>('/api/items/row-1')
+
+  expect(patched.data.id).toBe('row-1')
+  expect(deleted.data.id).toBe('row-1')
+  expect(calls).toEqual(['patch:/api/items/row-1', 'delete:/api/items/row-1'])
+})
