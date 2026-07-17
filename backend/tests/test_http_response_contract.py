@@ -114,3 +114,17 @@ def test_interactive_browser_response_uses_the_shared_trace_envelope():
 
     assert response['meta'] == {}
     assert response['trace_id'] == 'trace-browser'
+
+
+def test_novel_analysis_envelope_uses_the_shared_trace_envelope():
+    from app.core.logging import clear_log_context, set_log_context
+    from app.interfaces.http.novel_analysis import _envelope
+
+    set_log_context(trace_id='trace-novel-analysis')
+    try:
+        response = _envelope('analysis loaded', {'items': []})
+    finally:
+        clear_log_context()
+
+    assert response['meta'] == {}
+    assert response['trace_id'] == 'trace-novel-analysis'

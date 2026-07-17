@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
+from app.core.response import ok
 from app.infrastructure.persistence.factory import (
     build_evidence_service,
     build_canonical_content_repository,
@@ -25,7 +26,7 @@ class CreateAnalysisTaskRequest(BaseModel):
 
 
 def _envelope(message: str, data: dict):
-    return {"success": True, "code": "OK", "message": message, "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message=message, meta={})
 
 
 @router.get("/works/{work_id}/snapshot")
