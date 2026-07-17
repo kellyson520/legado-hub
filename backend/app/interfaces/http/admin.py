@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from app.application.services.auth_service import AuthAppService
 from app.core.permissions import Permission
-from app.core.response import from_paginated_result
+from app.core.response import from_paginated_result, ok
 from app.interfaces.http.deps import RequestIdentity, get_auth_service, get_current_identity, require_permission
 
 
@@ -54,7 +54,7 @@ async def create_user(
     user = await service.create_user_admin(
         payload.username, payload.display_name, payload.role, payload.password, identity.user_id,
     )
-    return {"success": True, "code": "OK", "message": "user created", "data": user, "meta": {}, "trace_id": None}
+    return ok(data=user, message="user created", meta={})
 
 
 @router.patch("/users/{user_id}")
@@ -66,7 +66,7 @@ async def update_user(
     service: AuthAppService = Depends(get_auth_service),
 ):
     user = await service.update_user_admin(user_id, identity.user_id, payload.display_name, payload.role)
-    return {"success": True, "code": "OK", "message": "user updated", "data": user, "meta": {}, "trace_id": None}
+    return ok(data=user, message="user updated", meta={})
 
 
 @router.post("/users/{user_id}/enable")
@@ -77,7 +77,7 @@ async def enable_user(
     service: AuthAppService = Depends(get_auth_service),
 ):
     user = await service.set_user_enabled_admin(user_id, True, identity.user_id)
-    return {"success": True, "code": "OK", "message": "user enabled", "data": user, "meta": {}, "trace_id": None}
+    return ok(data=user, message="user enabled", meta={})
 
 
 @router.post("/users/{user_id}/disable")
@@ -88,7 +88,7 @@ async def disable_user(
     service: AuthAppService = Depends(get_auth_service),
 ):
     user = await service.set_user_enabled_admin(user_id, False, identity.user_id)
-    return {"success": True, "code": "OK", "message": "user disabled", "data": user, "meta": {}, "trace_id": None}
+    return ok(data=user, message="user disabled", meta={})
 
 
 @router.post("/users/{user_id}/reset-password")
@@ -100,7 +100,7 @@ async def reset_user_password(
     service: AuthAppService = Depends(get_auth_service),
 ):
     await service.reset_password_admin(user_id, payload.password, identity.user_id)
-    return {"success": True, "code": "OK", "message": "password reset", "data": {"user_id": user_id}, "meta": {}, "trace_id": None}
+    return ok(data={"user_id": user_id}, message="password reset", meta={})
 
 
 @router.get("/roles")
@@ -109,14 +109,7 @@ async def list_roles(
     service: AuthAppService = Depends(get_auth_service),
 ):
     roles = await service.list_roles()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "roles listed",
-        "data": roles,
-        "meta": {"total": len(roles)},
-        "trace_id": None,
-    }
+    return ok(data=roles, message="roles listed", meta={"total": len(roles)})
 
 
 @router.get("/permissions")
@@ -125,14 +118,7 @@ async def list_permissions(
     service: AuthAppService = Depends(get_auth_service),
 ):
     permissions = await service.list_permissions()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "permissions listed",
-        "data": permissions,
-        "meta": {"total": len(permissions)},
-        "trace_id": None,
-    }
+    return ok(data=permissions, message="permissions listed", meta={"total": len(permissions)})
 
 
 @router.get("/api-keys")
@@ -156,14 +142,7 @@ async def create_api_key(
     service: AuthAppService = Depends(get_auth_service),
 ):
     key = await service.create_api_key(payload.name, payload.permissions, identity.user_id)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "api key created",
-        "data": key,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=key, message="api key created", meta={})
 
 
 @router.patch("/api-keys/{api_key_id}/disable")
@@ -174,14 +153,7 @@ async def disable_api_key(
     service: AuthAppService = Depends(get_auth_service),
 ):
     await service.set_api_key_enabled(api_key_id, False, identity.user_id)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "api key disabled",
-        "data": {"api_key_id": api_key_id},
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data={"api_key_id": api_key_id}, message="api key disabled", meta={})
 
 
 @router.delete("/api-keys/{api_key_id}")
@@ -192,14 +164,7 @@ async def delete_api_key(
     service: AuthAppService = Depends(get_auth_service),
 ):
     await service.delete_api_key(api_key_id, identity.user_id)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "api key deleted",
-        "data": {"api_key_id": api_key_id},
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data={"api_key_id": api_key_id}, message="api key deleted", meta={})
 
 
 @router.get("/audit")
@@ -222,11 +187,4 @@ async def revoke_user_sessions(
     service: AuthAppService = Depends(get_auth_service),
 ):
     await service.revoke_user_sessions(user_id, identity.user_id)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "user sessions revoked",
-        "data": {"user_id": user_id},
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data={"user_id": user_id}, message="user sessions revoked", meta={})

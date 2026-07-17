@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
-from app.core.response import from_paginated_result
+from app.core.response import from_paginated_result, ok
 from app.infrastructure.persistence.factory import (
     build_engine_service,
     build_source_build_service,
@@ -62,14 +62,14 @@ async def generate(
 ):
     service = build_source_runtime_service()
     data = await service.generate(payload.model_dump(), str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "engine generate scheduled", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="engine generate scheduled", meta={})
 
 
 @router.post("/evaluate")
 async def evaluate(payload: EvaluateRequest, _=Depends(require_permission(Permission.ENGINE_EVALUATE))):
     service = build_engine_service()
     data = await service.evaluate(payload.model_dump())
-    return {"success": True, "code": "OK", "message": "engine evaluation complete", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="engine evaluation complete", meta={})
 
 
 @router.post("/repair")
@@ -80,14 +80,14 @@ async def repair(
 ):
     service = build_source_runtime_service()
     data = await service.repair(payload.source_version_id, str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "engine repair complete", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="engine repair complete", meta={})
 
 
 @router.post("/test")
 async def test_rule(payload: RuleTestRequest, _=Depends(require_permission(Permission.ENGINE_TEST))):
     service = build_engine_service()
     data = await service.test_rule(payload.model_dump())
-    return {"success": True, "code": "OK", "message": "engine harness complete", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="engine harness complete", meta={})
 
 
 @router.post("/regex-test")
@@ -105,7 +105,7 @@ async def regex_test(payload: RegexTestRequest, _=Depends(require_permission(Per
         data = {"match_count": len(matches), "matches": matches, "replacement_preview": replacement_preview, "error": None}
     except re.error as exc:
         data = {"match_count": 0, "matches": [], "replacement_preview": None, "error": str(exc)}
-    return {"success": True, "code": "OK", "message": "正则测试完成", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="正则测试完成", meta={})
 
 
 @router.post("/regression")
@@ -116,7 +116,7 @@ async def regression(
 ):
     service = build_source_runtime_service()
     data = await service.regression(payload.source_version_id, str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "engine regression complete", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="engine regression complete", meta={})
 
 
 @router.post("/deploy")
@@ -127,7 +127,7 @@ async def deploy(
 ):
     service = build_source_runtime_service()
     data = await service.deploy(payload.source_version_id, str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "engine deployment complete", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="engine deployment complete", meta={})
 
 
 @router.post("/reviews/{source_version_id}/resolve")
@@ -143,7 +143,7 @@ async def resolve_review(
         reviewer_id=str(identity.user_id),
         action=payload.action,
     )
-    return {"success": True, "code": "OK", "message": "engine review resolved", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="engine review resolved", meta={})
 
 
 @router.post("/source-builds")
@@ -159,20 +159,17 @@ async def submit_console_source_build(
         extra_job_payload={"trigger": "console_rule_lab"},
         idempotency_key_prefix="source.build.console",
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "engine source build accepted",
-        "data": {
+    return ok(
+        data={
             "job_id": submission.job_id,
             "normalized_url": submission.normalized_url,
             "status": submission.status,
             "source_version_id": submission.source_version_id,
             "source_version_status": submission.source_version_status,
         },
-        "meta": {},
-        "trace_id": None,
-    }
+        message="engine source build accepted",
+        meta={},
+    )
 
 
 @router.get("/source-builds")

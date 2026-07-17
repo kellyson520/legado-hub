@@ -27,3 +27,9 @@ def test_from_paginated_result_propagates_current_trace_id():
         response = from_paginated_result({'items': [], 'meta': {'page': 1}})
 
     assert response['trace_id'] == 'trace-123'
+
+
+def test_ok_preserves_an_explicit_empty_meta_object():
+    from app.core.response import ok
+
+    assert ok(data={'id': 'row-1'}, meta={})['meta'] == {}

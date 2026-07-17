@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
-from app.core.response import from_paginated_result
+from app.core.response import from_paginated_result, ok
 from app.infrastructure.persistence.factory import build_ai_service, build_ai_workspace_service
 from app.infrastructure.persistence.factory import build_system_settings_service
 from app.interfaces.http.deps import require_permission
@@ -66,7 +66,7 @@ async def run_character_analysis(
 ):
     service = build_ai_service()
     task = await service.run_character_analysis(payload.model_dump(), actor_id=str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "ai character analysis queued", "data": task, "meta": {}, "trace_id": None}
+    return ok(data=task, message="ai character analysis queued", meta={})
 
 
 @router.get("/conversations")
@@ -91,7 +91,7 @@ async def create_conversation(
     identity=Depends(require_permission(Permission.AI_RUN)),
 ):
     data = await build_ai_workspace_service().create_conversation(str(identity.user_id), payload.title)
-    return {"success": True, "code": "OK", "message": "ai conversation created", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="ai conversation created", meta={})
 
 
 @router.get("/conversations/{conversation_id}")
@@ -100,7 +100,7 @@ async def get_conversation(
     identity=Depends(require_permission(Permission.AI_RUN)),
 ):
     data = build_ai_workspace_service().get_conversation(conversation_id, str(identity.user_id))
-    return {"success": True, "code": "OK", "message": "ai conversation loaded", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="ai conversation loaded", meta={})
 
 
 @router.post("/conversations/{conversation_id}/messages")
@@ -118,4 +118,4 @@ async def send_conversation_message(
         source_version_id=payload.source_version_id,
         allowed_tool_names=_workspace_tool_names(identity),
     )
-    return {"success": True, "code": "OK", "message": "ai conversation message completed", "data": data, "meta": {}, "trace_id": None}
+    return ok(data=data, message="ai conversation message completed", meta={})

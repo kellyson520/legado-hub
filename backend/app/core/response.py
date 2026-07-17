@@ -64,7 +64,7 @@ def ok(data: Any = None, message: str = "success", meta: Optional[Dict] = None) 
         "data": data,
         "trace_id": get_trace_id(),
     }
-    if meta:
+    if meta is not None:
         resp["meta"] = meta
     return resp
 
