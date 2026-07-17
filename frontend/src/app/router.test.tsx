@@ -45,3 +45,18 @@ test('AI 工作台要求 ai.run 权限', async () => {
 
   expect(await screen.findByText('Access denied')).toBeInTheDocument()
 })
+
+test.each(['/dashboard', '/search', '/test', '/health', '/export'])('legacy path %s redirects to login', async (path) => {
+  render(
+    <MemoryRouter
+      initialEntries={[path]}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
+      <AuthProvider bootstrapSession={null}>
+        <AppRoutes />
+      </AuthProvider>
+    </MemoryRouter>,
+  )
+
+  expect(await screen.findByRole('heading', { name: /sign in/i })).toBeInTheDocument()
+})
