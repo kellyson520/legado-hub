@@ -22,7 +22,7 @@ test('unknown routes redirect to login when unauthenticated', async () => {
     </MemoryRouter>
   )
 
-  expect(await screen.findByRole('heading', { name: /sign in/i })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
 })
 
 test('AI 工作台要求 ai.run 权限', async () => {
@@ -43,7 +43,7 @@ test('AI 工作台要求 ai.run 权限', async () => {
     </MemoryRouter>
   )
 
-  expect(await screen.findByText('Access denied')).toBeInTheDocument()
+  expect(await screen.findByText('无权访问')).toBeInTheDocument()
 })
 
 test.each(['/dashboard', '/search', '/test', '/health', '/export'])('legacy path %s redirects to login', async (path) => {
@@ -58,5 +58,5 @@ test.each(['/dashboard', '/search', '/test', '/health', '/export'])('legacy path
     </MemoryRouter>,
   )
 
-  expect(await screen.findByRole('heading', { name: /sign in/i })).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: '登录' })).toBeInTheDocument()
 })

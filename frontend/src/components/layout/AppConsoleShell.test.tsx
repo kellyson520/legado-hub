@@ -4,6 +4,7 @@ import { afterEach, expect, test } from 'vitest'
 
 import type { AuthSession } from '@/api/types'
 import { AuthProvider } from '@/app/providers/AuthProvider'
+import { LanguageProvider } from '@/app/providers/LanguageProvider'
 import { ThemeProvider } from '@/app/providers/ThemeProvider'
 import { AppConsoleShell } from './AppConsoleShell'
 
@@ -16,11 +17,13 @@ const sourceReader: AuthSession = {
 function renderShell() {
   render(
     <MemoryRouter initialEntries={['/sources']}>
-      <ThemeProvider>
-        <AuthProvider bootstrapSession={sourceReader}>
-          <AppConsoleShell><div>Content</div></AppConsoleShell>
-        </AuthProvider>
-      </ThemeProvider>
+      <LanguageProvider>
+        <ThemeProvider>
+          <AuthProvider bootstrapSession={sourceReader}>
+            <AppConsoleShell><div>Content</div></AppConsoleShell>
+          </AuthProvider>
+        </ThemeProvider>
+      </LanguageProvider>
     </MemoryRouter>
   )
 }
@@ -41,8 +44,18 @@ test('opens and closes the mobile navigation drawer', () => {
   renderShell()
 
   fireEvent.click(screen.getByRole('button', { name: '打开导航' }))
-  expect(screen.getByRole('dialog', { name: '导航菜单' })).toBeVisible()
+  expect(screen.getByRole('dialog', { name: '主导航' })).toBeVisible()
 
   fireEvent.click(screen.getByRole('button', { name: '关闭导航' }))
   expect(screen.queryByRole('dialog', { name: '导航菜单' })).not.toBeInTheDocument()
+})
+
+test('switches shell navigation to English without a page reload', () => {
+  renderShell()
+
+  fireEvent.click(screen.getByRole('button', { name: 'English' }))
+
+  expect(screen.getByRole('link', { name: 'Book Sources' })).toBeVisible()
+  expect(screen.getByText('Console / Book Sources')).toBeVisible()
+  expect(screen.getByRole('button', { name: '中文' })).toBeVisible()
 })

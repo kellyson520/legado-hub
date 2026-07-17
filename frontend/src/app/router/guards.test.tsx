@@ -31,5 +31,5 @@ test('renders access denied without the required backend permission', async () =
       </MemoryRouter>
     </AuthProvider>
   )
-  expect(await screen.findByText('Access denied')).toBeInTheDocument()
+  expect(await screen.findByText('无权访问')).toBeInTheDocument()
 })

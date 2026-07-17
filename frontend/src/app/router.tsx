@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { RequireAuth } from '@/app/router/RequireAuth'
 import { RequirePermission } from '@/app/router/RequirePermission'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 
 const AdminAuditPage = lazy(() => import('@/features/admin/AdminAuditPage').then(({ AdminAuditPage }) => ({ default: AdminAuditPage })))
 const AdminUsersPage = lazy(() => import('@/features/admin/AdminUsersPage').then(({ AdminUsersPage }) => ({ default: AdminUsersPage })))
@@ -50,8 +51,9 @@ export const appRoutes = [
 ]
 
 export function AppRoutes() {
+  const { t } = useLanguage()
   return (
-    <Suspense fallback={<div className="grid min-h-[40vh] place-items-center text-sm text-muted-foreground">正在加载页面…</div>}>
+    <Suspense fallback={<div className="grid min-h-[40vh] place-items-center text-sm text-muted-foreground">{t('common.loading')}</div>}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route element={<RequireAuth />}>
