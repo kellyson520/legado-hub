@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.core.permissions import Permission
+from app.core.response import ok
 from app.infrastructure.persistence.factory import (
     build_character_calibration_service,
     build_source_complement_service,
@@ -82,14 +83,7 @@ async def search_books(
         payload.routing_mode,
         payload.include_health,
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "search completed",
-        "data": data["items"],
-        "meta": data["route_summary"],
-        "trace_id": None,
-    }
+    return ok(data=data["items"], message="search completed", meta=data["route_summary"])
 
 
 @router.post("/toc")
@@ -105,18 +99,15 @@ async def get_book_toc(
         payload.author_hint,
         payload.routing_mode,
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "toc loaded",
-        "data": data,
-        "meta": {
+    return ok(
+        data=data,
+        message="toc loaded",
+        meta={
             "total": len(data["chapters"]),
             "resolved_source_id": data["resolved_source_id"],
             "fallback_used": data["fallback_used"],
         },
-        "trace_id": None,
-    }
+    )
 
 
 @router.post("/content")
@@ -134,17 +125,14 @@ async def get_chapter_content(
         payload.chapter_index,
         payload.routing_mode,
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "content loaded",
-        "data": data,
-        "meta": {
+    return ok(
+        data=data,
+        message="content loaded",
+        meta={
             "resolved_source_id": data["resolved_source_id"],
             "fallback_used": data["fallback_used"],
         },
-        "trace_id": None,
-    }
+    )
 
 
 @router.post("/complement")
@@ -165,17 +153,14 @@ async def complement_chapter(
     finally:
         await service.aclose()
 
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "complement completed",
-        "data": data,
-        "meta": {
+    return ok(
+        data=data,
+        message="complement completed",
+        meta={
             "successful_sources": data["successful_sources"],
             "failed_sources": data["failed_sources"],
         },
-        "trace_id": None,
-    }
+    )
 
 
 @router.post("/characters/calibrate")
@@ -188,11 +173,4 @@ async def calibrate_characters(
         keyword=payload.keyword,
         items=[item.model_dump() for item in payload.items],
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "character calibration completed",
-        "data": data,
-        "meta": {"pairwise": len(data["pairwise"])},
-        "trace_id": None,
-    }
+    return ok(data=data, message="character calibration completed", meta={"pairwise": len(data["pairwise"])})

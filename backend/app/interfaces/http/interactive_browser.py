@@ -8,6 +8,7 @@ from app.application.services.interactive_browser_service import InteractiveBrow
 from app.application.services.source_build_audit_service import ManualBrowserValidationRecoveryPending
 from app.core.config import settings
 from app.core.permissions import Permission
+from app.core.response import ok
 from app.infrastructure.persistence.factory import (
     build_interactive_browser_service,
     build_source_build_audit_service,
@@ -32,14 +33,7 @@ def _serialize(session) -> dict:
 
 
 def _response(message: str, data: dict) -> dict:
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': message,
-        'data': data,
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data=data, message=message, meta={})
 
 
 @router.get('/sessions/{session_id}')

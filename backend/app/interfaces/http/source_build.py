@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.core.exceptions import AuthorizationException
+from app.core.response import ok
 from app.infrastructure.persistence.factory import build_source_build_service
 from app.interfaces.http.deps import ApiKeyIdentity, get_api_key_identity
 
@@ -30,17 +31,14 @@ async def submit_source_build(
         url=payload.url,
         keyword=payload.keyword,
     )
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'source build accepted',
-        'data': {
+    return ok(
+        data={
             'job_id': submission.job_id,
             'normalized_url': submission.normalized_url,
             'status': submission.status,
             'source_version_id': submission.source_version_id,
             'source_version_status': submission.source_version_status,
         },
-        'meta': {},
-        'trace_id': None,
-    }
+        message='source build accepted',
+        meta={},
+    )

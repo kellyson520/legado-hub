@@ -100,3 +100,17 @@ async def test_current_identity_response_uses_the_shared_trace_envelope():
 
     assert response['meta'] == {}
     assert response['trace_id'] == 'trace-auth-me'
+
+
+def test_interactive_browser_response_uses_the_shared_trace_envelope():
+    from app.core.logging import clear_log_context, set_log_context
+    from app.interfaces.http.interactive_browser import _response
+
+    set_log_context(trace_id='trace-browser')
+    try:
+        response = _response('session loaded', {'id': 'session-1'})
+    finally:
+        clear_log_context()
+
+    assert response['meta'] == {}
+    assert response['trace_id'] == 'trace-browser'

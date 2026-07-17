@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from app.core.exceptions import AuthorizationException, NotFoundException, ValidationException
 from app.core.pagination import pagination_meta
 from app.core.permissions import Permission
-from app.core.response import from_paginated_result
+from app.core.response import from_paginated_result, ok
 from app.application.services.event_delivery_service import get_event_delivery_stream_broker
 from app.infrastructure.persistence.factory import (
     build_agent_runtime_service,
@@ -203,14 +203,7 @@ async def list_event_delivery_attempts(
         }
         for attempt in attempts
     ]
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'event delivery attempts listed',
-        'data': data,
-        'meta': {'total': len(data)},
-        'trace_id': None,
-    }
+    return ok(data=data, message='event delivery attempts listed', meta={'total': len(data)})
 
 
 @router.get('/source-builds')
@@ -257,14 +250,7 @@ async def get_operations_agent_run(
     if run is None:
         raise NotFoundException('Agent run not found')
     history = service.get_tool_history(run.id, tenant_id=run.tenant_id) or []
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'agent run retrieved',
-        'data': _serialize_agent_run(run, history=history),
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data=_serialize_agent_run(run, history=history), message='agent run retrieved', meta={})
 
 
 @router.get('/review-queue')
@@ -533,14 +519,7 @@ async def resolve_review_queue_item(
             'published_at': None,
         }
 
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'review queue item resolved',
-        'data': data,
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data=data, message='review queue item resolved', meta={})
 
 
 @router.get('/stream')
