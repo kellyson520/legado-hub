@@ -11,7 +11,6 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 
 const MAX_LEGADO_FILE_BYTES = 32 * 1024 * 1024
 const SOURCE_PAGE_SIZE = 100
@@ -19,7 +18,7 @@ const SOURCE_PAGE_SIZE = 100
 export function SourceListPage() {
   const pagination = useServerPagination<SourceRow>({
     pageSize: SOURCE_PAGE_SIZE,
-    load: (request) => listBookSources(toPaginatedQueryParams(request)),
+    load: listBookSources,
   })
   const { rows } = pagination
   const [legadoJson, setLegadoJson] = useState('')

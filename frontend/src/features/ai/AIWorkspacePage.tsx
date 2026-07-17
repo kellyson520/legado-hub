@@ -15,7 +15,6 @@ import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 
 const modes: Array<{ value: AIWorkspaceMode; label: string; description: string }> = [
   { value: 'chat', label: '通用问答', description: '围绕阅读、书源和小说提出问题' },
@@ -48,7 +47,7 @@ function formatToolResult(value: unknown) {
 export function AIWorkspacePage() {
   const pagination = useServerPagination<AIConversationSummary>({
     pageSize: 20,
-    load: (request) => listAIConversations(toPaginatedQueryParams(request)),
+    load: listAIConversations,
   })
   const { rows: conversations, loading: loadingConversations } = pagination
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)

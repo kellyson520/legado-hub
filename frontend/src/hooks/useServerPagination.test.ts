@@ -23,7 +23,7 @@ describe('useServerPagination', () => {
     const load = vi.fn().mockResolvedValue(envelope([row('one')], { page: 1, page_size: 2, total: 1, total_pages: 1 }))
     const { result } = renderHook(() => useServerPagination<{ id: string }>({ pageSize: 2, load }))
 
-    await waitFor(() => expect(load).toHaveBeenCalledWith({ page: 1, pageSize: 2, search: '' }))
+    await waitFor(() => expect(load).toHaveBeenCalledWith({ page: 1, page_size: 2, search: '' }))
     await waitFor(() => expect(result.current.rows).toEqual([row('one')]))
     expect(result.current.meta.total).toBe(1)
   })
@@ -38,7 +38,7 @@ describe('useServerPagination', () => {
     act(() => result.current.goToPage(2))
     await waitFor(() => expect(result.current.rows).toEqual([row('two')]))
     expect(result.current.rows).not.toContainEqual(row('one'))
-    expect(load).toHaveBeenLastCalledWith({ page: 2, pageSize: 1, search: '' })
+    expect(load).toHaveBeenLastCalledWith({ page: 2, page_size: 1, search: '' })
   })
 
   test('trims search and resets to page one', async () => {
@@ -47,7 +47,7 @@ describe('useServerPagination', () => {
 
     await waitFor(() => expect(load).toHaveBeenCalledTimes(1))
     act(() => result.current.submitSearch(' beta '))
-    await waitFor(() => expect(load).toHaveBeenLastCalledWith({ page: 1, pageSize: 2, search: 'beta' }))
+    await waitFor(() => expect(load).toHaveBeenLastCalledWith({ page: 1, page_size: 2, search: 'beta' }))
     expect(result.current.appliedSearch).toBe('beta')
   })
 
@@ -63,7 +63,7 @@ describe('useServerPagination', () => {
     await waitFor(() => expect(result.current.error?.message).toBe('page unavailable'))
     act(() => result.current.retry())
     await waitFor(() => expect(result.current.rows).toEqual([row('two')]))
-    expect(load).toHaveBeenLastCalledWith({ page: 2, pageSize: 1, search: '' })
+    expect(load).toHaveBeenLastCalledWith({ page: 2, page_size: 1, search: '' })
   })
 
   test('ignores a stale response after a newer request resolves', async () => {

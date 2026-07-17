@@ -15,7 +15,6 @@ import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { roleText, statusText } from '@/lib/i18n'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 
 type UserRole = 'admin' | 'user'
 
@@ -37,7 +36,7 @@ export function AdminUsersPage() {
   const { hasPermission } = useAuth()
   const pagination = useServerPagination<AdminUserRow>({
     pageSize: 20,
-    load: (request) => listUsers(toPaginatedQueryParams(request)),
+    load: listUsers,
   })
   const { rows: users, meta } = pagination
   const [error, setError] = useState('')

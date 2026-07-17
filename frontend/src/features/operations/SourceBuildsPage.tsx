@@ -8,7 +8,6 @@ import {
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 import { ManualVerificationPanel } from './ManualVerificationPanel'
 
 function getSourceId(row: OperationSourceBuildRow) {
@@ -87,7 +86,7 @@ export function SourceAuditSummary({ audit }: { audit?: OperationSourceBuildAudi
 export function SourceBuildsPage() {
   const pagination = useServerPagination<OperationSourceBuildRow>({
     pageSize: 20,
-    load: (request) => listSourceBuildCandidates(toPaginatedQueryParams(request)),
+    load: listSourceBuildCandidates,
   })
   const { rows } = pagination
   const [verificationSessionId, setVerificationSessionId] = useState<string | null>(null)

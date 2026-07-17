@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { normalizePageMeta, toPaginatedQueryParams } from './pagination'
+import { normalizePageMeta } from './pagination'
 
 describe('normalizePageMeta', () => {
   test('keeps valid server metadata and search', () => {
@@ -50,16 +50,6 @@ describe('normalizePageMeta', () => {
       total: 5,
       total_pages: 1,
       search: undefined,
-    })
-  })
-})
-
-describe('toPaginatedQueryParams', () => {
-  test('maps hook page requests to the backend query contract', () => {
-    expect(toPaginatedQueryParams({ page: 3, pageSize: 25, search: '  beta  ' })).toEqual({
-      page: 3,
-      page_size: 25,
-      search: '  beta  ',
     })
   })
 })

@@ -2,12 +2,11 @@ import { listAITasks, type AITaskRow } from '@/api/modules/ai'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 
 export function AITasksPage() {
   const pagination = useServerPagination<AITaskRow>({
     pageSize: 20,
-    load: (request) => listAITasks(toPaginatedQueryParams(request)),
+    load: listAITasks,
   })
   const { rows: tasks } = pagination
 

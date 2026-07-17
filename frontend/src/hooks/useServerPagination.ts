@@ -5,7 +5,7 @@ import { normalizePageMeta } from '@/lib/pagination'
 
 export interface ServerPageRequest {
   page: number
-  pageSize: number
+  page_size: number
   search: string
 }
 
@@ -67,7 +67,7 @@ export function useServerPagination<T>(
     try {
       const response = await loadRef.current({
         page: requestedPage,
-        pageSize: pageSizeRef.current,
+        page_size: pageSizeRef.current,
         search,
       })
       if (!mountedRef.current || requestIdRef.current !== requestId) return

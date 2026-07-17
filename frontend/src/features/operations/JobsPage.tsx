@@ -2,14 +2,13 @@ import { listOperationsJobs, type OperationJobRow } from '@/api/modules/operatio
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 
 const PAGE_SIZE = 20
 
 export function JobsPage() {
   const pagination = useServerPagination<OperationJobRow>({
     pageSize: PAGE_SIZE,
-    load: (request) => listOperationsJobs(toPaginatedQueryParams(request)),
+    load: listOperationsJobs,
   })
   const { rows: jobs } = pagination
 

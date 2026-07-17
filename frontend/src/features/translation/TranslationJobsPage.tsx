@@ -2,12 +2,11 @@ import { listTranslationJobs, type TranslationJobRow } from '@/api/modules/trans
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 
 export function TranslationJobsPage() {
   const pagination = useServerPagination<TranslationJobRow>({
     pageSize: 20,
-    load: (request) => listTranslationJobs(toPaginatedQueryParams(request)),
+    load: listTranslationJobs,
   })
   const { rows: jobs } = pagination
 

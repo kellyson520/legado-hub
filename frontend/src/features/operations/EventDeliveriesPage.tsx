@@ -11,7 +11,6 @@ import {
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 
 const STREAM_RETRY_DELAY_MS = 2_000
 
@@ -74,7 +73,7 @@ function mergeDeliveryRow(current: OperationDeliveryRow[], event: OperationStrea
 export function EventDeliveriesPage() {
   const pagination = useServerPagination<OperationDeliveryRow>({
     pageSize: 20,
-    load: (request) => listEventDeliveries(toPaginatedQueryParams(request)),
+    load: listEventDeliveries,
   })
   const { rows } = pagination
   const [streamRows, setStreamRows] = useState<OperationDeliveryRow[]>([])

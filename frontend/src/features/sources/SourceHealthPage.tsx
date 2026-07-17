@@ -14,7 +14,6 @@ import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { toPaginatedQueryParams } from '@/lib/pagination'
 
 const PAGE_SIZE = 20
 
@@ -28,7 +27,7 @@ function tone(status: string) {
 export function SourceHealthPage() {
   const pagination = useServerPagination<SourceHealthRow>({
     pageSize: PAGE_SIZE,
-    load: (request) => listSourceHealth(toPaginatedQueryParams(request)),
+    load: listSourceHealth,
   })
   const { rows, meta } = pagination
   const [actionError, setActionError] = useState<string | null>(null)

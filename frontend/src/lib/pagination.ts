@@ -1,18 +1,4 @@
-import type { PaginatedMeta, PaginatedQueryParams } from '@/api/types'
-
-export interface PaginatedRequest {
-  page: number
-  pageSize: number
-  search: string
-}
-
-export function toPaginatedQueryParams(request: PaginatedRequest): PaginatedQueryParams {
-  return {
-    page: request.page,
-    page_size: request.pageSize,
-    search: request.search,
-  }
-}
+import type { PaginatedMeta } from '@/api/types'
 
 function integerAtLeast(value: unknown, fallback: number, minimum: number) {
   return typeof value === 'number' && Number.isInteger(value) && value >= minimum
