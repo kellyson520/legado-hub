@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
+from app.core.response import ok
 from app.infrastructure.persistence.factory import build_work_knowledge_service
 from app.interfaces.http.deps import RequestIdentity, require_permission
 
@@ -67,14 +68,7 @@ async def propose_relation(
         relation=payload.relation,
         actor_id=str(identity.user_id),
     )
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'knowledge proposal created',
-        'data': _serialize(proposal),
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data=_serialize(proposal), message='knowledge proposal created', meta={})
 
 
 @router.post('/plot-events')
@@ -90,14 +84,7 @@ async def propose_plot_event(
         summary=payload.summary,
         actor_id=str(identity.user_id),
     )
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'plot proposal created',
-        'data': _serialize(proposal),
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data=_serialize(proposal), message='plot proposal created', meta={})
 
 
 @router.post('/world-rules')
@@ -113,14 +100,7 @@ async def propose_world_rule(
         description=payload.description,
         actor_id=str(identity.user_id),
     )
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'world rule proposal created',
-        'data': _serialize(proposal),
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data=_serialize(proposal), message='world rule proposal created', meta={})
 
 
 @router.get('/works/{work_id}/relations')
@@ -130,14 +110,7 @@ async def list_published_relations(
 ):
     items = build_work_knowledge_service().list_published_relations(work_id)
     data = [_serialize(item) for item in items]
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'published relations listed',
-        'data': data,
-        'meta': {'total': len(data)},
-        'trace_id': None,
-    }
+    return ok(data=data, message='published relations listed', meta={'total': len(data)})
 
 
 @router.get('/works/{work_id}/plot-events')
@@ -147,14 +120,7 @@ async def list_published_plot_events(
 ):
     items = build_work_knowledge_service().list_published_plot_events(work_id)
     data = [_serialize(item) for item in items]
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'published plot events listed',
-        'data': data,
-        'meta': {'total': len(data)},
-        'trace_id': None,
-    }
+    return ok(data=data, message='published plot events listed', meta={'total': len(data)})
 
 
 @router.get('/works/{work_id}/world-rules')
@@ -164,14 +130,7 @@ async def list_published_world_rules(
 ):
     items = build_work_knowledge_service().list_published_world_rules(work_id)
     data = [_serialize(item) for item in items]
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'published world rules listed',
-        'data': data,
-        'meta': {'total': len(data)},
-        'trace_id': None,
-    }
+    return ok(data=data, message='published world rules listed', meta={'total': len(data)})
 
 
 @router.post('/reviews/{proposal_id}/resolve')
@@ -185,11 +144,4 @@ async def resolve_review(
         action=payload.action,
         reviewer_id=str(identity.user_id),
     )
-    return {
-        'success': True,
-        'code': 'OK',
-        'message': 'knowledge review resolved',
-        'data': _serialize(proposal),
-        'meta': {},
-        'trace_id': None,
-    }
+    return ok(data=_serialize(proposal), message='knowledge review resolved', meta={})

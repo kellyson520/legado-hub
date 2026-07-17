@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from app.core.permissions import Permission
-from app.core.response import from_paginated_result
+from app.core.response import from_paginated_result, ok
 from app.infrastructure.persistence.factory import build_source_health_admin_service
 from app.interfaces.http.deps import require_permission
 
@@ -56,14 +56,7 @@ async def get_book_source_health(
         data = await service.get_book_source_health(source_id)
     finally:
         await service.aclose()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source health loaded",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="source health loaded", meta={})
 
 
 @router.post("/book-sources/{source_id}/probe")
@@ -81,14 +74,7 @@ async def probe_book_source(
         )
     finally:
         await service.aclose()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source probed",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="source probed", meta={})
 
 
 @router.post("/book-sources/probe-batch")
@@ -105,14 +91,11 @@ async def probe_book_sources(
         )
     finally:
         await service.aclose()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source probe batch completed",
-        "data": data["results"],
-        "meta": {"total": data["total"]},
-        "trace_id": None,
-    }
+    return ok(
+        data=data["results"],
+        message="source probe batch completed",
+        meta={"total": data["total"]},
+    )
 
 
 @router.post("/book-sources/{source_id}/recover")
@@ -125,14 +108,7 @@ async def recover_book_source(
         data = await service.recover_source(source_id)
     finally:
         await service.aclose()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source recovered",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="source recovered", meta={})
 
 
 @router.post("/book-sources/{source_id}/quarantine")
@@ -146,11 +122,4 @@ async def quarantine_book_source(
         data = await service.quarantine_source(source_id, note=payload.note)
     finally:
         await service.aclose()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source quarantined",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="source quarantined", meta={})

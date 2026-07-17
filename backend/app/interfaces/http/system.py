@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.permissions import Permission
+from app.core.response import ok
 from app.domain.repositories.system_settings_repo import ConcurrentSettingsUpdateError
 from app.infrastructure.persistence.factory import (
     build_provider_platform_service,
@@ -57,14 +58,7 @@ class ProviderRouteRequest(BaseModel):
 
 
 def _system_response(message: str, data):
-    return {
-        "success": True,
-        "code": "OK",
-        "message": message,
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message=message, meta={})
 
 
 @router.get("/settings/{domain}/{tab}")
@@ -106,14 +100,7 @@ async def save_settings_section(
 async def list_providers(_=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE))):
     service = build_provider_platform_service()
     data = service.list_provider_accounts()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "providers listed",
-        "data": data,
-        "meta": {"total": len(data)},
-        "trace_id": None,
-    }
+    return ok(data=data, message="providers listed", meta={"total": len(data)})
 
 
 @router.post("/providers")
@@ -207,14 +194,7 @@ async def get_llm_settings(_=Depends(require_permission(Permission.SYSTEM_SETTIN
         default_provider_name=settings.LLM_PROVIDER_NAME,
         default_model=settings.LLM_MODEL,
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "llm settings loaded",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="llm settings loaded", meta={})
 
 
 @router.put("/llm-settings")
@@ -229,14 +209,7 @@ async def update_llm_settings(
         api_key=payload.api_key,
         model=payload.model,
     )
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "llm settings saved",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="llm settings saved", meta={})
 
 
 @router.get("/source-build-agent-settings")
@@ -244,14 +217,7 @@ async def get_source_build_agent_settings(
     _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
 ):
     data = build_system_settings_service().get_source_build_agent_settings()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source build agent settings loaded",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="source build agent settings loaded", meta={})
 
 
 @router.put("/source-build-agent-settings")
@@ -260,14 +226,7 @@ async def update_source_build_agent_settings(
     _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
 ):
     data = build_system_settings_service().set_source_build_agent_enabled(payload.enabled)
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "source build agent settings saved",
-        "data": data,
-        "meta": {},
-        "trace_id": None,
-    }
+    return ok(data=data, message="source build agent settings saved", meta={})
 
 
 @router.get('/interactive-browser-settings')
@@ -295,11 +254,4 @@ async def update_interactive_browser_settings(
 async def list_quota_policies(_=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE))):
     service = build_provider_platform_service()
     data = service.list_quota_policies()
-    return {
-        "success": True,
-        "code": "OK",
-        "message": "quota policies listed",
-        "data": data,
-        "meta": {"total": len(data)},
-        "trace_id": None,
-    }
+    return ok(data=data, message="quota policies listed", meta={"total": len(data)})
