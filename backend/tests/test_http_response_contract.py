@@ -84,3 +84,19 @@ async def test_agent_run_creation_uses_the_shared_trace_envelope(monkeypatch):
 
     assert response['meta'] == {}
     assert response['trace_id'] == 'trace-agent-run'
+
+
+@pytest.mark.asyncio
+async def test_current_identity_response_uses_the_shared_trace_envelope():
+    from app.core.logging import clear_log_context, set_log_context
+    from app.interfaces.http import auth
+    from app.interfaces.http.deps import RequestIdentity
+
+    set_log_context(trace_id='trace-auth-me')
+    try:
+        response = await auth.me(RequestIdentity(7, {'books.read'}, {'reader'}, 'Reader', 'session-1'))
+    finally:
+        clear_log_context()
+
+    assert response['meta'] == {}
+    assert response['trace_id'] == 'trace-auth-me'
