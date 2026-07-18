@@ -14,9 +14,10 @@ OCR 基础设施服务
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 import os
-import logging
 
-logger = logging.getLogger("infra.ocr")
+from app.core.logging import get_logger
+
+logger = get_logger("infra.ocr")
 
 
 @dataclass

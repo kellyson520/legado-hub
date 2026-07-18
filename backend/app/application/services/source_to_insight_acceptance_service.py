@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import time
+import inspect
 from typing import Any
 
+from app.application.services.source_url_policy import SourceUrlPolicy
 
 REAL_SITE_URLS = [
     "https://www.biquga.com/list/0/1.html",
@@ -41,6 +43,10 @@ class SourceToInsightAcceptanceService:
     async def run(self, scenario: dict[str, Any]) -> dict[str, Any]:
         started = time.time()
         source_urls = list(scenario.get("source_urls") or REAL_SITE_URLS)
+        for source_url in source_urls:
+            url_error = SourceUrlPolicy.public_http_url_error(source_url)
+            if url_error is not None:
+                raise ValueError(f"source_url_{'unsafe' if url_error == 'unsafe' else 'invalid'}")
         tenant_id = str(scenario.get("tenant_id") or "source-insight-smoke")
         book_name = str(scenario.get("book_name") or "斗罗大陆")
         author_hint = str(scenario.get("author_hint") or "唐家三少")
@@ -136,6 +142,7 @@ class SourceToInsightAcceptanceService:
                         author_hint=author_hint,
                         chapter_index=int(scenario.get("chapter_index", 0) or 0),
                         chapter_title=str(scenario.get("chapter_title") or ""),
+                        tenant_id=tenant_id,
                     )
                     book_candidates.extend(outcome["book_candidates"])
                     toc_candidates.extend(outcome["toc_candidates"])
@@ -311,6 +318,7 @@ class SourceToInsightAcceptanceService:
                 "status": status,
                 "steps": [step["name"] for step in steps],
             }
+        await self._cleanup_ephemeral_sources(tenant_id, generated_source_ids)
         await self._close_reading_service()
         return report
 
@@ -377,17 +385,22 @@ class SourceToInsightAcceptanceService:
         author_hint: str,
         chapter_index: int,
         chapter_title: str,
+        tenant_id: str,
     ) -> dict[str, Any]:
         book_candidates = []
         toc_candidates = []
         chapter_candidates = []
-        search_result = await self._reading_service.search_books(
-            book_name,
-            source_ids=[source_id],
-            limit_per_source=3,
-            author_hint=author_hint,
-            routing_mode="auto",
-            include_health=True,
+        search_result = await self._invoke_reading(
+            "search_books",
+            {
+                "keyword": book_name,
+                "source_ids": [source_id],
+                "limit_per_source": 3,
+                "author_hint": author_hint,
+                "routing_mode": "auto",
+                "include_health": True,
+            },
+            tenant_id,
         )
         book_candidates = search_result.get("items", [])
         selected = book_candidates[: min(3, len(book_candidates))]
@@ -404,12 +417,16 @@ class SourceToInsightAcceptanceService:
         for book in selected:
             if int(book.get("source_id", -1)) != source_id:
                 continue
-            toc = await self._reading_service.get_book_toc(
-                source_id,
-                book["bookUrl"],
-                book_name=None,
-                author_hint=None,
-                routing_mode="auto",
+            toc = await self._invoke_reading(
+                "get_book_toc",
+                {
+                    "source_id": source_id,
+                    "book_url": book["bookUrl"],
+                    "book_name": None,
+                    "author_hint": None,
+                    "routing_mode": "auto",
+                },
+                tenant_id,
             )
             toc_candidates.append(_toc_report_evidence(toc))
             toc_error = _source_evidence_error(toc, expected_source_id=source_id, stage="toc")
@@ -420,14 +437,18 @@ class SourceToInsightAcceptanceService:
             if not chapters:
                 continue
             chapter = _select_chapter(chapters, chapter_index, chapter_title)
-            content = await self._reading_service.get_chapter_content(
-                source_id,
-                chapter["url"],
-                book_name=None,
-                author_hint=None,
-                chapter_title=chapter.get("title"),
-                chapter_index=chapter.get("index"),
-                routing_mode="auto",
+            content = await self._invoke_reading(
+                "get_chapter_content",
+                {
+                    "source_id": source_id,
+                    "chapter_url": chapter["url"],
+                    "book_name": None,
+                    "author_hint": None,
+                    "chapter_title": chapter.get("title"),
+                    "chapter_index": chapter.get("index"),
+                    "routing_mode": "auto",
+                },
+                tenant_id,
             )
             content_error = _source_evidence_error(content, expected_source_id=source_id, stage="content")
             content_length = 0 if content_error else len(content.get("content", "") or "")
@@ -475,14 +496,14 @@ class SourceToInsightAcceptanceService:
                 }
                 continue
             try:
-                await self._source_repository.upsert_book_sources(
-                    [rule],
-                    actor_id=_actor_id(actor_id),
-                )
-                sources = await self._source_repository.list_book_sources_full(
-                    enabled_only=True,
-                    urls=[rule["bookSourceUrl"]],
-                )
+                create_ephemeral = getattr(self._source_repository, "create_ephemeral_book_sources", None)
+                list_ephemeral = getattr(self._source_repository, "list_ephemeral_book_sources", None)
+                if not callable(create_ephemeral) or not callable(list_ephemeral):
+                    raise RuntimeError("tenant-scoped source materialization is unavailable")
+                ephemeral_ids = await create_ephemeral([rule], str(actor_id))
+                if not ephemeral_ids:
+                    raise RuntimeError("generated source was not materialized")
+                sources = await list_ephemeral(str(actor_id), ids=[int(ephemeral_ids[0])])
             except Exception as exc:
                 build["materialization"] = {
                     "status": "failed",
@@ -511,6 +532,25 @@ class SourceToInsightAcceptanceService:
             }
             generated_source_ids.append(source_id)
         return generated_source_ids
+
+    async def _invoke_reading(self, method_name: str, arguments: dict[str, Any], tenant_id: str):
+        method = getattr(self._reading_service, method_name)
+        try:
+            parameters = inspect.signature(method).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "tenant_id" in parameters:
+            arguments = {**arguments, "tenant_id": tenant_id}
+        return await method(**arguments)
+
+    async def _cleanup_ephemeral_sources(self, tenant_id: str, source_ids: list[int]) -> None:
+        delete = getattr(self._source_repository, "delete_ephemeral_book_sources", None)
+        if not callable(delete) or not source_ids:
+            return
+        try:
+            await delete(str(tenant_id), [int(source_id) for source_id in source_ids])
+        except Exception:
+            return
 
     async def _close_reading_service(self) -> None:
         close = getattr(self._reading_service, "aclose", None)

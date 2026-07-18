@@ -1,12 +1,18 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.repositories.source_repo import SourceRepository
 
-from .schema import BookSourceModel, FilterRuleModel, RssSourceModel, SubscriptionModel
+from .schema import (
+    BookSourceModel,
+    EphemeralBookSourceModel,
+    FilterRuleModel,
+    RssSourceModel,
+    SubscriptionModel,
+)
 
 
 class SQLiteSourceRepository(SourceRepository):
@@ -166,6 +172,83 @@ class SQLiteSourceRepository(SourceRepository):
                 count += 1
             db.commit()
             return count
+        finally:
+            db.close()
+
+    async def create_ephemeral_book_sources(self, items: list[dict], tenant_id: str) -> list[int]:
+        """Write bounded test sources without touching the published catalog."""
+        now = datetime.utcnow()
+        expires_at = now + timedelta(minutes=15)
+        db = SessionLocal()
+        try:
+            ids: list[int] = []
+            for item in items:
+                url = item.get("bookSourceUrl")
+                if not url:
+                    continue
+                columns = self._extract_book_source_columns(item)
+                model = (
+                    db.query(EphemeralBookSourceModel)
+                    .filter(
+                        EphemeralBookSourceModel.tenant_id == str(tenant_id),
+                        EphemeralBookSourceModel.bookSourceUrl == url,
+                    )
+                    .first()
+                )
+                if model is None:
+                    model = EphemeralBookSourceModel(
+                        tenant_id=str(tenant_id),
+                        **columns,
+                        expires_at=expires_at,
+                    )
+                    db.add(model)
+                    db.flush()
+                else:
+                    for key, value in columns.items():
+                        setattr(model, key, value)
+                    model.expires_at = expires_at
+                ids.append(int(model.id))
+            db.commit()
+            return ids
+        finally:
+            db.close()
+
+    async def list_ephemeral_book_sources(
+        self,
+        tenant_id: str,
+        *,
+        ids: list[int] | None = None,
+        urls: list[str] | None = None,
+    ) -> list[dict]:
+        db = SessionLocal()
+        try:
+            query = db.query(EphemeralBookSourceModel).filter(
+                EphemeralBookSourceModel.tenant_id == str(tenant_id),
+                EphemeralBookSourceModel.expires_at > datetime.utcnow(),
+                EphemeralBookSourceModel.enabled == True,
+            )
+            if ids:
+                query = query.filter(EphemeralBookSourceModel.id.in_(ids))
+            if urls:
+                query = query.filter(EphemeralBookSourceModel.bookSourceUrl.in_(urls))
+            return [self._book_to_dict(row) for row in query.order_by(EphemeralBookSourceModel.id.asc()).all()]
+        finally:
+            db.close()
+
+    async def delete_ephemeral_book_sources(self, tenant_id: str, ids: list[int]) -> None:
+        if not ids:
+            return
+        db = SessionLocal()
+        try:
+            (
+                db.query(EphemeralBookSourceModel)
+                .filter(
+                    EphemeralBookSourceModel.tenant_id == str(tenant_id),
+                    EphemeralBookSourceModel.id.in_(ids),
+                )
+                .delete(synchronize_session=False)
+            )
+            db.commit()
         finally:
             db.close()
 

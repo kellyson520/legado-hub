@@ -1,28 +1,10 @@
-from pathlib import Path
+"""Compatibility facade for the pre-DDD database import path.
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+New code must import SQLite primitives from the persistence infrastructure.
+This module remains intentionally tiny so old integrations keep working while
+the ownership of database concerns stays in one place.
+"""
 
-from app.core.config import settings
+from app.infrastructure.persistence.sqlite.session import Base, SessionLocal, engine, get_db
 
-
-db_path = Path(settings.DB_PATH)
-db_path.parent.mkdir(parents=True, exist_ok=True)
-
-engine = create_engine(
-    f"sqlite:///{db_path}",
-    connect_args={"check_same_thread": False},
-)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+__all__ = ["Base", "SessionLocal", "engine", "get_db"]

@@ -1,5 +1,7 @@
 # LegadoHub Pro - Legado 云化阅读平台
 
+当前实际运行架构、依赖方向和扩展约束见 [当前架构基线](docs/ARCHITECTURE_CURRENT.md)。
+
 LegadoHub Pro 是基于 Legado（阅读）订阅源协议的企业级中转 Docker 服务。采用 **DDD（领域驱动设计）四层架构**，在原有聚合、筛选、检测、写源能力基础上，全面升级了 **API Key 鉴权体系**、**AI 增强服务**、**LLM 翻译引擎**、**书源搜索**、**Redis 缓存层**、**源兼容性兜底机制** 和 **生产级部署架构**。
 
 ---

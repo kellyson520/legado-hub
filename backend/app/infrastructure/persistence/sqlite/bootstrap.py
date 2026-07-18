@@ -1,7 +1,7 @@
 from threading import Lock
 
 from app.core.permissions import DEFAULT_ROLE_NAME, build_permission_matrix
-from app.database import Base, SessionLocal, engine
+from app.infrastructure.persistence.sqlite.session import Base, SessionLocal, engine
 
 from . import schema as _schema
 from .schema import PermissionModel, RoleModel, RolePermissionModel

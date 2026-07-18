@@ -5,6 +5,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.domain.entities.agent_runtime import ToolResult
+from app.application.services.source_url_policy import SourceUrlPolicy
+from app.core.redaction import sanitize_for_boundary
 
 
 class _JointTestValidationError(ValueError):
@@ -85,6 +87,8 @@ class SourceJointTestToolExecutor:
             parsed = urlparse(url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise _JointTestValidationError("source_url_invalid")
+            if SourceUrlPolicy.public_http_url_error(url) == "unsafe":
+                raise _JointTestValidationError("source_url_unsafe")
             source_urls.append(url)
 
         book_name = cls._required_text(
@@ -140,6 +144,7 @@ class SourceJointTestToolExecutor:
 
     @classmethod
     def _bound_value(cls, value: Any) -> Any:
+        value = sanitize_for_boundary(value)
         if isinstance(value, str):
             return value if len(value) <= cls.MAX_PREVIEW_LENGTH else value[: cls.MAX_PREVIEW_LENGTH] + "..."
         if isinstance(value, list):

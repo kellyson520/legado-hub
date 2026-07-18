@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from uuid import uuid4
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.narrative_knowledge import KnowledgeClaim, KnowledgeConflict, KnowledgeEntity
 
 from .schema import ClaimEvidenceModel, KnowledgeClaimModel, KnowledgeConflictModel, KnowledgeEntityModel

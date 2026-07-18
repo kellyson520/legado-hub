@@ -27,7 +27,7 @@ from ..infrastructure.persistence.factory import (
     get_source_repo,
     get_user_repo,
 )
-from ..services.fetcher import SourceFetcher, SourceChecker
+from ..infrastructure.crawler.source_fetcher import SourceFetcher, SourceChecker
 
 logger = get_logger("scheduler")
 scheduler = BackgroundScheduler()

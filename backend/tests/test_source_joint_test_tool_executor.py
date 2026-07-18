@@ -73,6 +73,32 @@ async def test_executor_rejects_invalid_arguments(arguments, error_code):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8000/health",
+    "http://localhost/admin",
+    "http://[::1]/",
+    "http://169.254.169.254/latest/meta-data",
+    "http://10.0.0.4/internal",
+    "https://user:password@example.com/private",
+])
+async def test_executor_rejects_private_loopback_and_credential_urls(url):
+    from app.application.services.source_joint_test_tool_executor import SourceJointTestToolExecutor
+
+    class Acceptance:
+        async def run(self, _scenario):
+            raise AssertionError("unsafe source URL must not reach the acceptance workflow")
+
+    result = await SourceJointTestToolExecutor(Acceptance()).ainvoke({
+        "tenant_id": "tenant-1",
+        "source_urls": [url],
+        "book_name": "斗罗大陆",
+    })
+
+    assert result.status == "rejected"
+    assert result.error_code == "source_url_unsafe"
+
+
+@pytest.mark.asyncio
 async def test_executor_converts_acceptance_exception_to_stable_error():
     from app.application.services.source_joint_test_tool_executor import SourceJointTestToolExecutor
 
@@ -115,6 +141,36 @@ async def test_executor_removes_full_chapter_body_but_keeps_original_length():
     assert "content" not in chapter
     assert chapter["content_length"] == len(body)
     assert len(chapter["content_preview"]) <= 1200
+
+
+@pytest.mark.asyncio
+async def test_executor_redacts_credentials_from_rules_urls_and_errors():
+    from app.application.services.source_joint_test_tool_executor import SourceJointTestToolExecutor
+
+    class Acceptance:
+        async def run(self, _scenario):
+            return {
+                "status": "failed",
+                "steps": [{"name": "source_build", "error": "Authorization: Bearer top-secret"}],
+                "source_builds": [{
+                    "source_rule": {
+                        "bookSourceUrl": "https://user:password@example.com/search?token=top-secret",
+                        "header": "Authorization: Bearer top-secret",
+                    },
+                    "error": "cookie=session-secret",
+                }],
+            }
+
+    result = await SourceJointTestToolExecutor(Acceptance()).ainvoke({
+        "tenant_id": "tenant-1",
+        "source_urls": ["https://example.com"],
+        "book_name": "斗罗大陆",
+    })
+
+    serialized = repr(result.data)
+    assert "top-secret" not in serialized
+    assert "session-secret" not in serialized
+    assert "header" not in repr(result.data["report"]["source_builds"])
 
 
 def test_executor_exposes_registry_handler():

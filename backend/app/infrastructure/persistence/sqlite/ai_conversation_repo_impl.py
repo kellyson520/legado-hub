@@ -3,7 +3,7 @@ import json
 from sqlalchemy import or_
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 from app.domain.repositories.ai_conversation_repo import AIConversationRepository
 

@@ -1,4 +1,4 @@
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.evidence import EvidenceSpan
 
 from .schema import EvidenceSpanModel

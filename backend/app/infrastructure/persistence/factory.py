@@ -49,6 +49,7 @@ from app.core.config import settings
 from app.infrastructure.browser.playwright_driver import PlaywrightBrowserDriver
 from app.infrastructure.browser.interactive_probe import run_browser_probe
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
+from app.infrastructure.crawler.source_fetcher import SourceFetcher
 from app.infrastructure.legado.engine.evaluator import evaluate_source_rules
 from app.infrastructure.legado.engine.harness import run_rule_harness
 from app.infrastructure.legado.engine.repairer import repair_source_rules
@@ -329,7 +330,7 @@ def build_source_routing_service() -> SourceRoutingService:
 
 
 def build_source_service() -> SourceAppService:
-    return SourceAppService(build_source_repository())
+    return SourceAppService(build_source_repository(), SourceFetcher())
 
 
 def build_source_read_service() -> SourceReadService:

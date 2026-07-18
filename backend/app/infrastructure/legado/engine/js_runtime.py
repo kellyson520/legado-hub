@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import logging
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -27,8 +26,9 @@ from app.infrastructure.legado.engine.runtime_bridge import RuntimeBridge
 from app.infrastructure.legado.engine.legado_native_semantics import (
     LegadoJsCompatProfile,
 )
+from app.core.logging import get_logger
 
-logger = logging.getLogger("legado_js")
+logger = get_logger("legado_js")
 
 
 @dataclass

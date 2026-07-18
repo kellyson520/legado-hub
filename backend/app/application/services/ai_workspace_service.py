@@ -5,6 +5,7 @@ from app.core.pagination import paginated_result
 from pydantic import BaseModel, ConfigDict
 
 from app.application.services.ai_service import AIService
+from app.core.redaction import sanitize_for_boundary
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 from app.domain.entities.auth import AuditEvent
@@ -532,12 +533,4 @@ class AIWorkspaceService:
 
 
 def _sanitize(value):
-    if isinstance(value, list):
-        return [_sanitize(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    return {
-        key: _sanitize(item)
-        for key, item in value.items()
-        if not any(part in key.lower() for part in _SENSITIVE_KEY_PARTS)
-    }
+    return sanitize_for_boundary(value)

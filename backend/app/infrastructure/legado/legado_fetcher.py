@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import inspect
-import logging
 import re
 from typing import Any, Dict, List
 from urllib.parse import quote
@@ -26,8 +25,9 @@ from .engine import (
     UrlUtils,
 )
 from .engine.runtime_bridge import RuntimeBridge
+from app.core.logging import get_logger
 
-logger = logging.getLogger("legado_fetcher")
+logger = get_logger("legado_fetcher")
 
 
 class LegadoBookSourceFetcher:

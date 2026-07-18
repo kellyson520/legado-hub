@@ -4,9 +4,22 @@ import json
 from urllib.parse import urljoin, urlparse
 from typing import Any
 
+from app.core.url_safety import public_http_url_error
+
 
 class SourceUrlPolicy:
     """Pure URL/header policy shared by source application services."""
+
+    @classmethod
+    def public_http_url_error(cls, value: Any) -> str | None:
+        """Return a stable error for URLs that must never be fetched server-side.
+
+        This policy intentionally rejects literal non-public address ranges and
+        URL credentials. DNS resolution is enforced by the HTTP adapters at
+        request time; keeping this function pure makes validation deterministic
+        for tool schemas and unit tests.
+        """
+        return public_http_url_error(value)
 
     @staticmethod
     def resolve_relative(url: str, base_url: str) -> str:

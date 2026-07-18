@@ -4,7 +4,7 @@ from uuid import uuid4
 from sqlalchemy import or_
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.ai_runtime import AITask
 from app.domain.repositories.ai_runtime_repo import AIRuntimeRepository
 

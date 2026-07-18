@@ -5,7 +5,7 @@ from uuid import uuid4
 from sqlalchemy import and_, or_
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.source_runtime import (
     SourceDefinition,
     SourceDeployment,

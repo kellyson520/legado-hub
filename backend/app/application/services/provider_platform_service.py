@@ -314,9 +314,10 @@ class ProviderPlatformService:
         default_routes = self._provider_repo.list_routes("default")
         if default_routes:
             account = self._provider_repo.get_provider(default_routes[0].provider_account_id)
-            if account is not None:
+            if account is not None and account.is_active():
                 return account
-        return self._provider_repo.get_llm_provider()
+        account = self._provider_repo.get_llm_provider()
+        return account if account is not None and account.is_active() else None
 
     def _sync_legacy_route_models(self, provider_id: str, model: str) -> None:
         if self._provider_repo is None:

@@ -38,6 +38,25 @@ class SourceRepository(ABC):
     async def upsert_runtime_book_sources(self, items: list[dict], actor_id: int) -> int:
         raise NotImplementedError
 
+    @abstractmethod
+    async def create_ephemeral_book_sources(self, items: list[dict], tenant_id: str) -> list[int]:
+        """Materialize sources in a tenant-scoped, expiring runtime sandbox."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_ephemeral_book_sources(
+        self,
+        tenant_id: str,
+        *,
+        ids: list[int] | None = None,
+        urls: list[str] | None = None,
+    ) -> list[dict]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_ephemeral_book_sources(self, tenant_id: str, ids: list[int]) -> None:
+        raise NotImplementedError
+
     async def list_book_sources_full(
         self,
         enabled_only: bool = False,

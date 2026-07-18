@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from sqlalchemy import or_
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.domain.entities.translation_runtime import TranslationChunk, TranslationJob
 from app.domain.repositories.translation_runtime_repo import TranslationRuntimeRepository

@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.provider import ProviderAccount, ProviderModel, ProviderRoute, QuotaPolicy
 from app.domain.repositories.provider_repo import ProviderRepository
 

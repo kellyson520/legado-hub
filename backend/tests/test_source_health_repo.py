@@ -59,3 +59,29 @@ def test_source_health_repository_persists_snapshot_and_probe_history(monkeypatc
     assert rows[0].route_policy == "skip"
     assert runs[0].overall_status == "blocked"
     assert runs[0].search_result["request_preview"].endswith("token=undefined")
+
+
+async def test_source_repository_keeps_ephemeral_sources_tenant_scoped_and_expiring(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "ephemeral-sources.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.infrastructure.persistence.factory import build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    repo = build_source_repository()
+    source = {
+        "bookSourceName": "临时源",
+        "bookSourceUrl": "https://tenant.example",
+        "searchUrl": "https://tenant.example/search?wd={{key}}",
+    }
+
+    ids = await repo.create_ephemeral_book_sources([source], "tenant-a")
+    assert ids
+    assert len(await repo.list_ephemeral_book_sources("tenant-a", ids=ids)) == 1
+    assert await repo.list_ephemeral_book_sources("tenant-b", ids=ids) == []
+    assert await repo.list_book_sources_full(urls=[source["bookSourceUrl"]]) == []
+
+    await repo.delete_ephemeral_book_sources("tenant-a", ids)
+    assert await repo.list_ephemeral_book_sources("tenant-a", ids=ids) == []

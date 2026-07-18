@@ -2,7 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 
-from app.database import Base
+from app.infrastructure.persistence.sqlite.session import Base
 
 
 class UserModel(Base):
@@ -263,6 +263,29 @@ class BookSourceModel(Base):
     errorMsg = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class EphemeralBookSourceModel(Base):
+    """Tenant-scoped source materialized only for a bounded runtime test."""
+
+    __tablename__ = "ephemeral_book_sources"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "bookSourceUrl", name="ux_ephemeral_source_tenant_url"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    bookSourceName = Column(String, nullable=False)
+    bookSourceUrl = Column(String, nullable=False, index=True)
+    bookSourceGroup = Column(String, nullable=False, default="default")
+    enabled = Column(Boolean, nullable=False, default=True)
+    payload = Column(Text, nullable=False, default="{}")
+    sourceStatus = Column(String, nullable=False, default="unknown")
+    sourceOrigin = Column(Text, nullable=True)
+    lastCheckTime = Column(DateTime, nullable=True)
+    errorMsg = Column(Text, nullable=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class RssSourceModel(Base):

@@ -18,6 +18,17 @@ class ProviderAccount:
     activation_at: datetime | None = None
     created_at: datetime = field(default_factory=utcnow)
 
+    def is_active(self, now: datetime | None = None) -> bool:
+        if not self.enabled:
+            return False
+        if self.activation_at is None:
+            return True
+        current = now or utcnow()
+        activation_at = self.activation_at
+        if activation_at.tzinfo is None:
+            activation_at = activation_at.replace(tzinfo=timezone.utc)
+        return activation_at <= current
+
 
 @dataclass
 class ProviderRoute:

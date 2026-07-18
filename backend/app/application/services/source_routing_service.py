@@ -60,8 +60,12 @@ class SourceRoutingService:
         author_hint: str | None,
         fetcher,
         routing_mode: str = "auto",
+        tenant_id: str | None = None,
     ) -> list[dict]:
-        sources = await repo.list_book_sources_full(enabled_only=True)
+        if tenant_id and hasattr(repo, "list_ephemeral_book_sources"):
+            sources = await repo.list_ephemeral_book_sources(tenant_id)
+        else:
+            sources = await repo.list_book_sources_full(enabled_only=True)
         ranked = self.rank_search_sources(
             sources,
             self.snapshot_map([source["id"] for source in sources]),

@@ -22,9 +22,21 @@ from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 from aiohttp import CookieJar
-import logging
 
-logger = logging.getLogger("legado_http")
+from app.core.logging import get_logger
+from app.core.url_safety import is_public_ip, public_http_url_error
+
+logger = get_logger("legado_http")
+
+
+class PublicAddressResolver(aiohttp.resolver.DefaultResolver):
+    """Reject DNS answers that point a public source request at private space."""
+
+    async def resolve(self, host, port=0, family=0):
+        records = await super().resolve(host, port, family)
+        if any(not is_public_ip(record.get("host")) for record in records):
+            raise OSError("unsafe resolved address")
+        return records
 
 
 @dataclass
@@ -108,6 +120,7 @@ class LegadoHttpClient:
                 ssl=self._verify_ssl,
                 force_close=False,
                 enable_cleanup_closed=True,
+                resolver=PublicAddressResolver(),
             )
             if self._cookie_jar is None:
                 self._cookie_jar = CookieJar(unsafe=True)  # unsafe=True 允许 IP 地址的 cookie
@@ -183,6 +196,9 @@ class LegadoHttpClient:
         **kwargs,
     ) -> HttpResponse:
         """执行 HTTP 请求（带重试）"""
+        url_error = public_http_url_error(url)
+        if url_error is not None:
+            return HttpResponse(url=url, status=0, error=f"unsafe_url:{url_error}")
         sem = await self._get_semaphore()
         async with sem:
             last_error = None

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import select
 import shlex
@@ -15,8 +14,9 @@ from typing import Any, Sequence
 from uuid import uuid4
 
 from .native_models import RuntimeResult
+from app.core.logging import get_logger
 
-logger = logging.getLogger("legado_native_runtime")
+logger = get_logger("legado_native_runtime")
 _BRIDGE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="legado-native-bridge")
 
 

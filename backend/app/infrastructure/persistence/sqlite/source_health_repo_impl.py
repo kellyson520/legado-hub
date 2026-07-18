@@ -3,7 +3,7 @@ import json
 from sqlalchemy import case, func, or_
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
 from app.domain.repositories.source_health_repo import SourceHealthRepository
 

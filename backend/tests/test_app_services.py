@@ -171,6 +171,21 @@ class FakeSourceRepository:
         return len(items)
 
 
+class FakeSourceImportParser:
+    def parse_sources_from_text(self, text: str, origin: str = ""):
+        payload = json.loads(text)
+        items = payload if isinstance(payload, list) else [payload]
+        books = []
+        rss = []
+        for item in items:
+            item = {**item, "sourceOrigin": origin}
+            if "bookSourceUrl" in item:
+                books.append(item)
+            elif "sourceUrl" in item:
+                rss.append(item)
+        return books, rss
+
+
 @pytest.fixture
 def auth_repo():
     return FakeAuthRepository()
@@ -188,7 +203,7 @@ def source_repo():
 
 @pytest.fixture
 def source_service(source_repo):
-    return SourceAppService(source_repo)
+    return SourceAppService(source_repo, FakeSourceImportParser())
 
 
 class TestAuthAppService:

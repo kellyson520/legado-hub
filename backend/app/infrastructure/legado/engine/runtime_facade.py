@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any
 
 from .native_models import RuntimeResult
 from .native_runtime_client import NativeRuntimeClient
 from .runtime_diff import compare_runtime_results
+from app.core.logging import get_logger
 
-logger = logging.getLogger("legado_runtime_facade")
+logger = get_logger("legado_runtime_facade")
 
 MIGRATION_GATE = {
     "unexplained_diffs": 0,

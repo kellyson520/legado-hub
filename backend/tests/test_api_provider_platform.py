@@ -353,3 +353,8 @@ def test_system_provider_api_preserves_future_activation_schedule(monkeypatch, t
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "scheduled"
     assert response.json()["data"]["api_key_configured"] is True
+
+    legacy = client.get("/api/system/llm-settings", headers={"Authorization": f"Bearer {token}"})
+    assert legacy.status_code == 200
+    assert legacy.json()["data"]["provider_name"] != "scheduled-provider"
+    assert legacy.json()["data"]["api_key_configured"] is False

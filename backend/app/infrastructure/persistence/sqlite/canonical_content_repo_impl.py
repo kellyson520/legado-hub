@@ -1,7 +1,7 @@
 import json
 from uuid import uuid4
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.canonical_content import (
     CanonicalChapter,
     CanonicalWork,

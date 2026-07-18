@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.domain.entities.agent_runtime import ToolResult
+from app.core.url_safety import public_http_url_error
 
 
 _MAX_REQUEST_BODY_BYTES = 4 * 1024
@@ -30,7 +31,7 @@ class SourcePageToolExecutor:
 
     def __init__(self, target_url: str, client: Any | None = None):
         target = self._normalise_http_url(target_url)
-        if target is None:
+        if target is None or public_http_url_error(target) is not None:
             raise ValueError('target_url must be an absolute http(s) URL')
         self._target_url = target
         self._target_origin = self._origin(target)

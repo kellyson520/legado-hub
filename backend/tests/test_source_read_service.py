@@ -70,6 +70,34 @@ async def test_source_read_service_runs_search_toc_and_content():
 
 
 @pytest.mark.asyncio
+async def test_source_read_service_uses_only_tenant_ephemeral_sources_when_scoped():
+    from app.application.services.source_read_service import SourceReadService
+
+    class ScopedRepo:
+        async def list_ephemeral_book_sources(self, tenant_id, *, ids=None, urls=None):
+            assert tenant_id == "tenant-a"
+            rows = [{
+                "id": 701,
+                "bookSourceName": "临时源",
+                "bookSourceUrl": "https://ephemeral.example",
+                "enabled": True,
+            }]
+            return [row for row in rows if not ids or row["id"] in ids]
+
+        async def list_book_sources_full(self, **kwargs):
+            raise AssertionError("scoped reads must not query the global source catalog")
+
+    service = SourceReadService(repo=ScopedRepo(), fetcher=FakeFetcher())
+    result = await service.search_books(
+        keyword="斗罗大陆",
+        source_ids=[701],
+        tenant_id="tenant-a",
+    )
+
+    assert result["items"][0]["source_id"] == 701
+
+
+@pytest.mark.asyncio
 async def test_source_read_service_prefers_author_hint_when_results_share_title():
     from app.application.services.source_read_service import SourceReadService
 

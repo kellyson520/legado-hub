@@ -22,8 +22,9 @@ class SourceReadService:
         author_hint: str | None = None,
         routing_mode: str = "auto",
         include_health: bool = False,
+        tenant_id: str | None = None,
     ) -> dict:
-        sources = await self._repo.list_book_sources_full(enabled_only=True, ids=source_ids)
+        sources = await self._list_sources(tenant_id, enabled_only=True, ids=source_ids)
         ranked_sources = [
             {
                 "source": source,
@@ -93,8 +94,9 @@ class SourceReadService:
         book_name: str | None = None,
         author_hint: str | None = None,
         routing_mode: str = "auto",
+        tenant_id: str | None = None,
     ) -> dict:
-        source = await self._get_source_or_raise(source_id)
+        source = await self._get_source_or_raise(source_id, tenant_id=tenant_id)
         chapters = await self._fetcher.get_toc(source, book_url)
         if chapters or not book_name or self._routing_service is None:
             return {
@@ -105,7 +107,7 @@ class SourceReadService:
                 "fallback_used": False,
             }
 
-        candidates = await self._resolve_book_candidates(book_name, author_hint, routing_mode)
+        candidates = await self._resolve_book_candidates(book_name, author_hint, routing_mode, tenant_id=tenant_id)
         for candidate in candidates:
             if candidate["source"]["id"] == source_id:
                 continue
@@ -136,8 +138,9 @@ class SourceReadService:
         chapter_title: str | None = None,
         chapter_index: int | None = None,
         routing_mode: str = "auto",
+        tenant_id: str | None = None,
     ) -> dict:
-        source = await self._get_source_or_raise(source_id)
+        source = await self._get_source_or_raise(source_id, tenant_id=tenant_id)
         content = await self._fetcher.get_content(source, chapter_url)
         if content.get("content") or not book_name or self._routing_service is None:
             return {
@@ -148,7 +151,7 @@ class SourceReadService:
                 **content,
             }
 
-        candidates = await self._resolve_book_candidates(book_name, author_hint, routing_mode)
+        candidates = await self._resolve_book_candidates(book_name, author_hint, routing_mode, tenant_id=tenant_id)
         for candidate in candidates:
             if candidate["source"]["id"] == source_id:
                 continue
@@ -181,17 +184,39 @@ class SourceReadService:
             **content,
         }
 
-    async def _get_source_or_raise(self, source_id: int) -> dict:
-        sources = await self._repo.list_book_sources_full(ids=[source_id])
+    async def _get_source_or_raise(self, source_id: int, *, tenant_id: str | None = None) -> dict:
+        sources = await self._list_sources(tenant_id, ids=[source_id])
         if not sources:
             raise NotFoundException(f"book source not found: {source_id}")
         return sources[0]
+
+    async def _list_sources(
+        self,
+        tenant_id: str | None,
+        *,
+        enabled_only: bool = False,
+        ids: list[int] | None = None,
+        urls: list[str] | None = None,
+    ) -> list[dict]:
+        if tenant_id and hasattr(self._repo, "list_ephemeral_book_sources"):
+            return await self._repo.list_ephemeral_book_sources(
+                tenant_id,
+                ids=ids,
+                urls=urls,
+            )
+        return await self._repo.list_book_sources_full(
+            enabled_only=enabled_only,
+            ids=ids,
+            urls=urls,
+        )
 
     async def _resolve_book_candidates(
         self,
         book_name: str,
         author_hint: str | None,
         routing_mode: str,
+        *,
+        tenant_id: str | None = None,
     ) -> list[dict]:
         if self._routing_service is None:
             return []
@@ -202,9 +227,10 @@ class SourceReadService:
                 author_hint,
                 self._fetcher,
                 routing_mode=routing_mode,
+                tenant_id=tenant_id,
             )
 
-        sources = await self._repo.list_book_sources_full(enabled_only=True)
+        sources = await self._list_sources(tenant_id, enabled_only=True)
         snapshot_map = self._routing_service.snapshot_map([source["id"] for source in sources])
         ranked = self._routing_service.rank_search_sources(
             sources,

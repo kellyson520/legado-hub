@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import and_, or_
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.interactive_browser import (
     InteractiveBrowserEvent,
     InteractiveBrowserSession,

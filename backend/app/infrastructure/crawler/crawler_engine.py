@@ -16,10 +16,11 @@ from typing import Optional, Dict, Any, List, Union
 from urllib.parse import urljoin
 import time
 import random
-import logging
 import re
 
-logger = logging.getLogger("infra.crawler")
+from app.core.logging import get_logger
+
+logger = get_logger("infra.crawler")
 
 
 # ============================================================

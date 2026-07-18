@@ -3,7 +3,7 @@ import json
 from sqlalchemy import or_
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.agent_runtime import AgentRun, ToolEvidence, ToolInvocation, ToolResult
 from app.domain.repositories.agent_runtime_repo import AgentRuntimeRepository
 

@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import or_
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.auth import ApiKey, AuditEvent, RefreshSession, Role, User
 from app.domain.repositories.auth_repo import AuthRepository
 

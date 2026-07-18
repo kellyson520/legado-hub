@@ -73,6 +73,26 @@ async def test_acceptance_submits_all_urls_to_source_build_engine():
     assert report["source_builds"][0]["source_rule"]["ruleSearch"]["bookList"] == ".item"
 
 
+@pytest.mark.asyncio
+async def test_acceptance_rejects_private_source_urls_before_building():
+    from app.application.services.source_to_insight_acceptance_service import SourceToInsightAcceptanceService
+
+    build_service = FakeSourceBuildService()
+    service = SourceToInsightAcceptanceService(
+        source_build_service=build_service,
+        source_build_runtime=FakeBuildRuntime(),
+    )
+
+    with pytest.raises(ValueError, match="source_url_unsafe"):
+        await service.run({
+            "source_urls": ["http://127.0.0.1:8000/internal"],
+            "book_name": "斗罗大陆",
+            "tenant_id": "operator",
+        })
+
+    assert build_service.submitted == []
+
+
 class FakeJobRuntime:
     def __init__(self):
         self.seen = []
@@ -131,22 +151,70 @@ async def test_acceptance_can_execute_runtime_with_job_repository():
 
 class FakeGeneratedSourceRepository:
     def __init__(self):
-        self.upserted = []
+        self.ephemeral = []
+        self.deleted = []
 
     async def upsert_book_sources(self, items, actor_id):
-        self.upserted.extend(items)
-        return len(items)
+        raise AssertionError("joint tests must use tenant-scoped ephemeral sources")
+
+    async def create_ephemeral_book_sources(self, items, tenant_id):
+        ids = []
+        for item in items:
+            source_id = 101 + len(self.ephemeral)
+            self.ephemeral.append({**item, "id": source_id, "enabled": True, "tenant_id": tenant_id})
+            ids.append(source_id)
+        return ids
+
+    async def delete_ephemeral_book_sources(self, tenant_id, ids):
+        self.deleted.append((tenant_id, list(ids)))
+
+    async def list_ephemeral_book_sources(self, tenant_id, *, ids=None, urls=None):
+        return [
+            dict(item)
+            for item in self.ephemeral
+            if item.get("tenant_id") == tenant_id
+            and (not ids or item["id"] in ids)
+            and (not urls or item.get("bookSourceUrl") in urls)
+        ]
 
     async def list_book_sources_full(self, enabled_only=False, ids=None, urls=None):
         return [
             {
                 **item,
-                "id": index + 101,
                 "enabled": True,
             }
-            for index, item in enumerate(self.upserted)
+            for item in self.ephemeral
             if not urls or item.get("bookSourceUrl") in urls
         ]
+
+
+class EphemeralOnlyGeneratedSourceRepository:
+    def __init__(self):
+        self.created = []
+        self.deleted = []
+        self.upsert_called = False
+
+    async def create_ephemeral_book_sources(self, items, tenant_id):
+        self.created.append((tenant_id, list(items)))
+        return list(range(701, 701 + len(items)))
+
+    async def list_ephemeral_book_sources(self, tenant_id, *, ids=None, urls=None):
+        rows = []
+        for offset, item in enumerate(self.created[-1][1] if self.created else []):
+            source_id = 701 + offset
+            if ids and source_id not in ids:
+                continue
+            if urls and item.get("bookSourceUrl") not in urls:
+                continue
+            rows.append({**item, "id": source_id, "enabled": True})
+        return rows
+
+    async def delete_ephemeral_book_sources(self, tenant_id, ids):
+        self.deleted.append((tenant_id, list(ids)))
+
+    async def upsert_book_sources(self, items, actor_id):
+        self.upsert_called = True
+        raise AssertionError("joint tests must not write the global book_sources table")
 
 
 class FakeReadingService:
@@ -254,7 +322,7 @@ async def test_acceptance_reads_and_complements_after_canary_source_build():
 
     assert report["book_candidates"][0]["name"] == "斗罗大陆"
     assert reading_service.search_source_ids == [[101]]
-    assert generated_sources.upserted[0]["bookSourceUrl"] == "https://a.test"
+    assert generated_sources.ephemeral[0]["bookSourceUrl"] == "https://a.test"
     assert report["toc_candidates"][0]["chapters"][0]["title"] == "第一章"
     assert "_raw" not in report["toc_candidates"][0]["chapters"][0]
     assert report["chapter_candidates"][0]["content_preview"].startswith("唐三")
@@ -262,6 +330,30 @@ async def test_acceptance_reads_and_complements_after_canary_source_build():
     assert report["insights"]["characters"]
     json.dumps(report, ensure_ascii=False)
     assert reading_service.closed is True
+
+
+@pytest.mark.asyncio
+async def test_acceptance_materializes_only_tenant_scoped_ephemeral_sources():
+    from app.application.services.source_to_insight_acceptance_service import SourceToInsightAcceptanceService
+
+    repository = EphemeralOnlyGeneratedSourceRepository()
+    service = SourceToInsightAcceptanceService(
+        source_build_service=FakeSourceBuildService(),
+        source_build_runtime=FakeBuildRuntime(),
+        source_repository=repository,
+        reading_service=FakeReadingService(),
+    )
+
+    report = await service.run({
+        "source_urls": ["https://a.test"],
+        "book_name": "斗罗大陆",
+        "tenant_id": "tenant-a",
+    })
+
+    assert report["status"] == "passed"
+    assert repository.created[0][0] == "tenant-a"
+    assert repository.upsert_called is False
+    assert repository.deleted == [("tenant-a", [701])]
 
 
 class FakeTwoCanaryBuildRuntime:
@@ -458,12 +550,11 @@ class ReferenceCheckingComplementService:
 
 
 class PartiallyFailingGeneratedSourceRepository(FakeGeneratedSourceRepository):
-    async def upsert_book_sources(self, items, actor_id):
+    async def create_ephemeral_book_sources(self, items, tenant_id):
         item = items[0]
         if item.get("bookSourceUrl") == "https://b.test":
             raise RuntimeError("repository rejected b.test")
-        self.upserted.append(item)
-        return 1
+        return await super().create_ephemeral_book_sources(items, tenant_id)
 
 
 @pytest.mark.asyncio
@@ -564,7 +655,7 @@ async def test_acceptance_retrieves_persisted_source_rule_after_handle_job():
     assert runtime_repo.requested == ["version-1"]
     assert report["source_builds"][0]["source_rule"]["bookSourceUrl"] == "https://persisted.test"
     assert report["source_builds"][0]["autonomous_build"]["probe"]["content_status"] == "ok"
-    assert generated_sources.upserted[0]["bookSourceUrl"] == "https://persisted.test"
+    assert generated_sources.ephemeral[0]["bookSourceUrl"] == "https://persisted.test"
 
 
 @pytest.mark.asyncio

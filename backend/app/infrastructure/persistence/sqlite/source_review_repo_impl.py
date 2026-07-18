@@ -3,7 +3,7 @@ import json
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.domain.entities.source_review import SourceReviewItem
 from app.domain.repositories.source_review_repo import SourceReviewRepository

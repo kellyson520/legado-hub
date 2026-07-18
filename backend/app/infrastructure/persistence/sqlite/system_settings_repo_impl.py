@@ -4,7 +4,7 @@ from datetime import datetime
 
 from sqlalchemy.dialects.sqlite import insert
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.repositories.system_settings_repo import (
     ConcurrentSettingsUpdateError,
     SystemSettingsRepository,

@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from uuid import uuid4
 
-from app.database import SessionLocal
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.novel_analysis_task import NovelAnalysisTask
 
 from .schema import AgentAnalysisTaskModel, AgentTaskCheckpointModel, KnowledgeAdjudicationModel
