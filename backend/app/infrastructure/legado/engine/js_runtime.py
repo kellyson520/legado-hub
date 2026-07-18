@@ -23,6 +23,7 @@ from app.infrastructure.legado.engine.js_session_models import (
     JsExecutionTrace,
 )
 from app.infrastructure.legado.engine.js_worker_bridge import JsWorkerClient
+from app.infrastructure.legado.engine.runtime_bridge import RuntimeBridge
 from app.infrastructure.legado.engine.legado_native_semantics import (
     LegadoJsCompatProfile,
 )
@@ -53,12 +54,14 @@ class JsRuntime:
         self,
         worker_client: JsWorkerClient | None = None,
         compat_profile: LegadoJsCompatProfile | None = None,
+        runtime_bridge: RuntimeBridge | None = None,
     ):
         self._context: Dict[str, Any] = {}
         self._cache: Dict[str, Any] = {}
         self._worker = worker_client or JsWorkerClient(
             bridge_http_handler=self._handle_bridge_http,
         )
+        self._runtime_bridge = runtime_bridge
         self._compat_profile = compat_profile or LegadoJsCompatProfile.native_defaults()
         if hasattr(self._worker, "_bridge_http_handler"):
             self._worker._bridge_http_handler = self._handle_bridge_http
@@ -73,6 +76,8 @@ class JsRuntime:
             setter(deadline)
 
     def _handle_bridge_http(self, request_spec: dict[str, Any]) -> dict[str, Any]:
+        if self._runtime_bridge is not None:
+            return self._runtime_bridge.handle(request_spec)
         url = str(request_spec.get("url", "") or "")
         if not url:
             return {

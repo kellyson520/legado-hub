@@ -71,8 +71,12 @@ class LegadoRuntimeFacade:
         *,
         mode: str | None = None,
         timeout: float = 10.0,
+        bridge_handler=None,
     ):
-        self.native_client = native_client or NativeRuntimeClient(response_timeout=timeout)
+        self.native_client = native_client or NativeRuntimeClient(
+            response_timeout=timeout,
+            bridge_handler=bridge_handler,
+        )
         self.fallback = fallback or PythonRuntimeFallback()
         self.mode = mode or os.getenv("LEGADO_RUNTIME_MODE", "python_primary")
         self.timeout = timeout

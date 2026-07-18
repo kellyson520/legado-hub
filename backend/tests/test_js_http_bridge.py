@@ -27,6 +27,25 @@ def test_js_runtime_java_get_bridge_reads_remote_payload():
     assert output.value == "斗罗大陆"
 
 
+def test_js_runtime_can_delegate_bridge_to_platform_runtime_bridge():
+    class PlatformBridge:
+        def __init__(self):
+            self.calls = []
+
+        def handle(self, request):
+            self.calls.append(request)
+            return {"status": 200, "text": "platform", "headers": {}}
+
+    bridge = PlatformBridge()
+    runtime = JsRuntime(runtime_bridge=bridge)
+    try:
+        response = runtime._handle_bridge_http({"method": "GET", "url": "https://example.test"})
+        assert response["text"] == "platform"
+        assert bridge.calls == [{"method": "GET", "url": "https://example.test"}]
+    finally:
+        runtime.close()
+
+
 def test_java_ajax_response_wrapper_exposes_string_methods():
     class BridgeRuntime(JsRuntime):
         def _handle_bridge_http(self, request_spec):

@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Any, Sequence
 from uuid import uuid4
@@ -16,6 +17,7 @@ from uuid import uuid4
 from .native_models import RuntimeResult
 
 logger = logging.getLogger("legado_native_runtime")
+_BRIDGE_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="legado-native-bridge")
 
 
 class NativeRuntimeClient:
@@ -27,11 +29,13 @@ class NativeRuntimeClient:
         *,
         response_timeout: float = 10.0,
         max_response_bytes: int = 4 * 1024 * 1024,
+        bridge_handler=None,
         process_factory=subprocess.Popen,
     ):
         self.command = list(command or self._default_command())
         self.response_timeout = response_timeout
         self.max_response_bytes = max_response_bytes
+        self.bridge_handler = bridge_handler
         self._process_factory = process_factory
         self._process: subprocess.Popen[bytes] | None = None
         self._stderr_lines: deque[str] = deque(maxlen=200)
@@ -53,9 +57,19 @@ class NativeRuntimeClient:
     def capabilities(self) -> RuntimeResult:
         return self.call("capabilities", {}, timeout=self.response_timeout)
 
-    def call(self, operation: str, payload: dict[str, Any], timeout: float | None = None) -> RuntimeResult:
+    def call(
+        self,
+        operation: str,
+        payload: dict[str, Any],
+        timeout: float | None = None,
+        *,
+        _retry_after_eof: bool = True,
+    ) -> RuntimeResult:
         with self._lock:
-            process = self._ensure_process()
+            try:
+                process = self._ensure_process()
+            except RuntimeError as exc:
+                return self._failed("RUNTIME_UNAVAILABLE", str(exc))
             request_id = uuid4().hex
             request = {
                 "id": request_id,
@@ -67,29 +81,75 @@ class NativeRuntimeClient:
                 assert process.stdin is not None
                 process.stdin.write((json.dumps(request, ensure_ascii=False, default=str) + "\n").encode("utf-8"))
                 process.stdin.flush()
-                raw = self._readline(process, timeout if timeout is not None else self.response_timeout)
+                deadline = time.monotonic() + (timeout if timeout is not None else self.response_timeout)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    raw = self._readline(process, remaining)
+                    if raw is None:
+                        self._restart_after_failure()
+                        if _retry_after_eof and process.poll() is not None:
+                            return self.call(operation, payload, timeout, _retry_after_eof=False)
+                        return self._failed("EXECUTION_TIMEOUT", "native runtime response timed out")
+                    if len(raw) > self.max_response_bytes:
+                        self._restart_after_failure()
+                        return self._failed("RESPONSE_TOO_LARGE", "native runtime response exceeded the limit")
+                    try:
+                        response = json.loads(raw.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        self._restart_after_failure()
+                        return self._failed("MALFORMED_RESPONSE", "native runtime returned invalid JSON")
+                    if not isinstance(response, dict):
+                        self._restart_after_failure()
+                        return self._failed("MALFORMED_RESPONSE", "native runtime returned a non-object response")
+                    if response.get("type") != "bridge_http":
+                        break
+                    bridge_result = self._run_bridge(response, deadline)
+                    if bridge_result is None:
+                        self._restart_after_failure()
+                        return self._failed("BRIDGE_TIMEOUT", "native runtime bridge request timed out")
+                    try:
+                        self._write_json(
+                            process,
+                            {
+                                "type": "bridge_http_result",
+                                "id": response.get("id"),
+                                "response": bridge_result,
+                            },
+                        )
+                    except (BrokenPipeError, OSError):
+                        self._restart_after_failure()
+                        return self._failed("WORKER_IO_ERROR", "native runtime bridge pipe failed")
             except (BrokenPipeError, OSError):
                 self._restart_after_failure()
                 return self._failed("WORKER_IO_ERROR", "native runtime pipe failed")
-
-            if raw is None:
-                self._restart_after_failure()
-                return self._failed("EXECUTION_TIMEOUT", "native runtime response timed out")
-            if len(raw) > self.max_response_bytes:
-                self._restart_after_failure()
-                return self._failed("RESPONSE_TOO_LARGE", "native runtime response exceeded the limit")
-            try:
-                response = json.loads(raw.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                self._restart_after_failure()
-                return self._failed("MALFORMED_RESPONSE", "native runtime returned invalid JSON")
-            if not isinstance(response, dict):
-                self._restart_after_failure()
-                return self._failed("MALFORMED_RESPONSE", "native runtime returned a non-object response")
             if response.get("id") != request_id:
                 self._restart_after_failure()
                 return self._failed("MISMATCHED_RESPONSE_ID", "native runtime response id did not match request")
             return RuntimeResult.from_payload(response)
+
+    def _run_bridge(self, message: dict[str, Any], deadline: float) -> dict[str, Any] | None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        request = message.get("request")
+        if not isinstance(request, dict):
+            return {"status": 400, "text": "malformed bridge request", "headers": {}, "error_code": "MALFORMED_BRIDGE_REQUEST"}
+        if self.bridge_handler is None:
+            return {"status": 503, "text": "native runtime bridge unavailable", "headers": {}, "error_code": "BRIDGE_UNAVAILABLE"}
+        future = _BRIDGE_EXECUTOR.submit(self.bridge_handler, request)
+        try:
+            result = future.result(timeout=remaining)
+        except FutureTimeoutError:
+            return None
+        except Exception as exc:  # noqa: BLE001 - bridge errors are part of the protocol
+            return {"status": 599, "text": str(exc), "headers": {}, "error_code": "BRIDGE_ERROR"}
+        return result if isinstance(result, dict) else {"status": 599, "text": "bridge returned non-object", "headers": {}, "error_code": "BRIDGE_ERROR"}
+
+    @staticmethod
+    def _write_json(process: subprocess.Popen[bytes], payload: dict[str, Any]) -> None:
+        assert process.stdin is not None
+        process.stdin.write((json.dumps(payload, ensure_ascii=False, default=str) + "\n").encode("utf-8"))
+        process.stdin.flush()
 
     def close(self) -> None:
         with self._lock:
