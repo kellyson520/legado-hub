@@ -486,3 +486,73 @@ async def test_chat_workspace_requires_evidence_for_a_character_biography_reques
 
     assert "不能基于模型记忆" in reply["content"]
     assert platform.calls[0]["payload"]["tool_choice"] == "required"
+
+
+def test_workspace_schema_exposes_bounded_source_joint_test_tool():
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+
+    schemas = AIWorkspaceService._tool_schemas(frozenset({"source.joint_test"}))
+    assert len(schemas) == 1
+    function = schemas[0]["function"]
+    assert function["name"] == "source.joint_test"
+    assert set(function["parameters"]["properties"]) == {
+        "source_urls",
+        "book_name",
+        "author_hint",
+        "chapter_index",
+        "chapter_title",
+        "use_ai",
+    }
+    assert function["parameters"]["required"] == ["source_urls", "book_name"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_executes_joint_test_executor_with_actor_tenant(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-joint-test.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.domain.entities.agent_runtime import ToolResult
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class JointTestExecutor:
+        def __init__(self):
+            self.calls = []
+
+        async def ainvoke(self, arguments):
+            self.calls.append(arguments)
+            return ToolResult(status="accepted", data={"summary": {"status": "passed"}})
+
+    bootstrap_sqlite()
+    executor = JointTestExecutor()
+    service = AIWorkspaceService(
+        RecordingPlatform(),
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        source_joint_test_executor=executor,
+    )
+    conversation = await service.create_conversation("7", "联合测试")
+
+    reply = await service.send_message(
+        conversation["id"],
+        "7",
+        "chat",
+        "验证这个书源",
+        [{
+            "name": "source.joint_test",
+            "arguments": {
+                "source_urls": ["https://a.test"],
+                "book_name": "斗罗大陆",
+            },
+        }],
+        allowed_tool_names={"source.joint_test"},
+    )
+
+    assert executor.calls == [{
+        "source_urls": ["https://a.test"],
+        "book_name": "斗罗大陆",
+        "tenant_id": "7",
+    }]
+    assert reply["tool_calls"][0]["result"] == {"summary": {"status": "passed"}}

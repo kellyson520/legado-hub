@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 
+from datetime import datetime
+
 from app.domain.entities.provider import ProviderAccount, ProviderModel, ProviderRoute, QuotaPolicy
 
 
@@ -28,6 +30,7 @@ class ProviderRepository(ABC):
         api_key: str,
         default_model: str,
         enabled: bool,
+        activation_at: datetime | None = None,
         id: str | None = None,
     ) -> ProviderAccount:
         raise NotImplementedError

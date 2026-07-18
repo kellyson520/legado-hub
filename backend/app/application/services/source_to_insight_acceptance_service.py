@@ -45,6 +45,7 @@ class SourceToInsightAcceptanceService:
         book_name = str(scenario.get("book_name") or "斗罗大陆")
         author_hint = str(scenario.get("author_hint") or "唐家三少")
         use_ai = bool(scenario.get("use_ai", False))
+        agent_joint_test = bool(scenario.get("agent_joint_test", False))
 
         steps: list[dict[str, Any]] = []
         source_builds = []
@@ -303,6 +304,13 @@ class SourceToInsightAcceptanceService:
             "knowledge_proposals": [],
             "ai": {"used": ai_status == "completed", "status": ai_status, "provider": "", "model": "", "usage": {}},
         }
+        if agent_joint_test:
+            report["agent_joint_test"] = {
+                "enabled": True,
+                "tool_name": "source.joint_test",
+                "status": status,
+                "steps": [step["name"] for step in steps],
+            }
         await self._close_reading_service()
         return report
 

@@ -29,6 +29,8 @@ from app.application.services.source_build_ai_repair_service import SourceBuildA
 from app.application.services.source_build_audit_service import SourceBuildAuditService
 from app.application.services.source_build_runtime_service import SourceBuildRuntimeService
 from app.application.services.source_build_service import SourceBuildService
+from app.application.services.source_joint_test_tool_executor import SourceJointTestToolExecutor
+from app.application.services.source_to_insight_acceptance_service import SourceToInsightAcceptanceService
 from app.application.services.source_health_admin_service import SourceHealthAdminService
 from app.application.services.source_health_classifier_service import SourceHealthClassifierService
 from app.application.services.source_health_service import SourceHealthService
@@ -45,7 +47,12 @@ from app.application.services.work_ingestion_service import WorkIngestionService
 from app.application.services.novel_analysis_tool_executor import NovelAnalysisToolExecutor
 from app.core.config import settings
 from app.infrastructure.browser.playwright_driver import PlaywrightBrowserDriver
+from app.infrastructure.browser.interactive_probe import run_browser_probe
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
+from app.infrastructure.legado.engine.evaluator import evaluate_source_rules
+from app.infrastructure.legado.engine.harness import run_rule_harness
+from app.infrastructure.legado.engine.repairer import repair_source_rules
+from app.infrastructure.legado.engine.quality_gate import evaluate_runtime_health
 from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIRuntimeRepository
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
@@ -271,6 +278,7 @@ def build_source_health_service() -> SourceHealthService:
         build_source_runtime_repository(),
         review_service=build_source_review_service(),
         build_service=build_source_build_service(),
+        health_evaluator=evaluate_runtime_health,
     )
 
 
@@ -336,6 +344,23 @@ def build_source_complement_service() -> SourceComplementAppService:
     return SourceComplementAppService(build_source_repository(), LegadoBookSourceFetcher())
 
 
+def build_source_to_insight_acceptance_service() -> SourceToInsightAcceptanceService:
+    return SourceToInsightAcceptanceService(
+        source_build_service=build_source_build_service(),
+        source_build_runtime=build_source_build_runtime_service(),
+        job_repository=build_job_repository(),
+        reading_service=build_source_read_service(),
+        complement_service=build_source_complement_service(),
+        character_service=build_character_calibration_service(),
+        source_repository=build_source_repository(),
+        source_runtime_repository=build_source_runtime_repository(),
+    )
+
+
+def build_source_joint_test_tool_executor() -> SourceJointTestToolExecutor:
+    return SourceJointTestToolExecutor(build_source_to_insight_acceptance_service())
+
+
 def build_dashboard_service() -> DashboardService:
     return DashboardService(build_source_repository())
 
@@ -346,7 +371,11 @@ def build_event_delivery_service() -> EventDeliveryService:
 
 
 def build_engine_service() -> EngineService:
-    return EngineService()
+    return EngineService(
+        evaluator=evaluate_source_rules,
+        repairer=repair_source_rules,
+        harness=run_rule_harness,
+    )
 
 
 class _AllowAllProviderQuotaLimiter:
@@ -415,6 +444,11 @@ def build_provider_platform_service() -> ProviderPlatformService:
         registry=build_provider_registry(),
         quota_limiter=_AllowAllProviderQuotaLimiter(),
         provider_repo=build_provider_repository(),
+        provider_factory=lambda name, endpoint_url, api_key: OpenAICompatibleProvider(
+            name=name,
+            endpoint_url=endpoint_url,
+            api_key=api_key,
+        ),
     )
 
 
@@ -441,6 +475,7 @@ def build_interactive_browser_service() -> InteractiveBrowserSupervisor:
                         ),
                         settings=build_system_settings_service(),
                         profile_root=settings.INTERACTIVE_BROWSER_PROFILE_ROOT,
+                        probe_runner=run_browser_probe,
                     )
                 )
     return _interactive_browser_service_singleton
@@ -497,6 +532,7 @@ def build_ai_workspace_service() -> AIWorkspaceService:
         audit=build_auth_repository(),
         source_runtime=build_source_runtime_service(),
         novel_tool_executor=build_novel_analysis_tool_executor(),
+        source_joint_test_executor=build_source_joint_test_tool_executor(),
     )
 
 

@@ -413,6 +413,7 @@ class ProviderAccountModel(Base):
     api_key = Column(Text, nullable=False, default="")
     default_model = Column(String, nullable=False, default="")
     enabled = Column(Boolean, nullable=False, default=True)
+    activation_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 

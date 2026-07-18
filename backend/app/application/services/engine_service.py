@@ -1,9 +1,9 @@
-from app.infrastructure.legado.engine.evaluator import evaluate_source_rules
-from app.infrastructure.legado.engine.harness import run_rule_harness
-from app.infrastructure.legado.engine.repairer import repair_source_rules
-
-
 class EngineService:
+    def __init__(self, *, evaluator=None, repairer=None, harness=None):
+        self._evaluator = evaluator
+        self._repairer = repairer
+        self._harness = harness
+
     async def generate(self, payload: dict) -> dict:
         return {
             "job_type": "generate",
@@ -12,10 +12,16 @@ class EngineService:
         }
 
     async def evaluate(self, payload: dict) -> dict:
-        return evaluate_source_rules(payload["source"]).__dict__
+        if self._evaluator is None:
+            raise RuntimeError("engine evaluator is not configured")
+        return self._evaluator(payload["source"]).__dict__
 
     async def repair(self, payload: dict) -> dict:
-        return repair_source_rules(payload["source"]).__dict__
+        if self._repairer is None:
+            raise RuntimeError("engine repairer is not configured")
+        return self._repairer(payload["source"]).__dict__
 
     async def test_rule(self, payload: dict) -> dict:
-        return run_rule_harness(payload["rule"], payload["sample"]).__dict__
+        if self._harness is None:
+            raise RuntimeError("engine harness is not configured")
+        return self._harness(payload["rule"], payload["sample"]).__dict__

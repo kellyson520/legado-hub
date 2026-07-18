@@ -1,4 +1,5 @@
 import httpx
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -45,6 +46,7 @@ class ProviderRequest(BaseModel):
     api_key: str = Field(default="", max_length=2000)
     default_model: str = Field(default="", max_length=120)
     enabled: bool = True
+    activation_at: datetime | None = None
 
 
 class ProviderRouteEntryRequest(BaseModel):

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.database import SessionLocal
@@ -40,6 +41,7 @@ class SQLiteProviderRepository(ProviderRepository):
                 api_key=model.api_key,
                 default_model=model.default_model,
                 enabled=model.enabled,
+                activation_at=model.activation_at,
                 created_at=model.created_at,
             )
         finally:
@@ -71,8 +73,10 @@ class SQLiteProviderRepository(ProviderRepository):
         api_key: str,
         default_model: str,
         enabled: bool,
+        activation_at: datetime | None = None,
         id: str | None = None,
     ) -> ProviderAccount:
+        activation_at = self._normalize_activation_at(activation_at)
         db = self._db()
         try:
             model = (
@@ -89,6 +93,7 @@ class SQLiteProviderRepository(ProviderRepository):
                     api_key=api_key,
                     default_model=default_model,
                     enabled=enabled,
+                    activation_at=activation_at,
                 )
                 db.add(model)
             else:
@@ -97,6 +102,7 @@ class SQLiteProviderRepository(ProviderRepository):
                 model.base_url = base_url
                 model.default_model = default_model
                 model.enabled = enabled
+                model.activation_at = activation_at
                 if api_key:
                     model.api_key = api_key
             db.commit()
@@ -135,7 +141,11 @@ class SQLiteProviderRepository(ProviderRepository):
                 .order_by(ProviderAccountModel.created_at.asc(), ProviderAccountModel.id.asc())
                 .all()
             )
-            return [self._to_provider_account(row) for row in rows]
+            return [
+                account
+                for account in (self._to_provider_account(row) for row in rows)
+                if self._is_active(account)
+            ]
         finally:
             self._close(db)
 
@@ -281,8 +291,26 @@ class SQLiteProviderRepository(ProviderRepository):
             api_key=row.api_key or "",
             default_model=row.default_model or "",
             enabled=row.enabled,
+            activation_at=row.activation_at,
             created_at=row.created_at,
         )
+
+    @staticmethod
+    def _is_active(account: ProviderAccount) -> bool:
+        if not account.enabled or account.activation_at is None:
+            return account.enabled
+        activation_at = account.activation_at
+        if activation_at.tzinfo is None:
+            activation_at = activation_at.replace(tzinfo=timezone.utc)
+        return activation_at <= datetime.now(timezone.utc)
+
+    @staticmethod
+    def _normalize_activation_at(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
 
     @staticmethod
     def _to_provider_route(row: ProviderRouteModel) -> ProviderRoute:

@@ -1,3 +1,6 @@
+from datetime import datetime, timedelta, timezone
+
+
 def test_create_provider_account_model_and_quota(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "provider-platform.sqlite3"))
@@ -68,3 +71,36 @@ def test_provider_repository_preserves_blank_edit_key_and_orders_routes(tmp_path
         (backup.id, 0),
         (primary.id, 1),
     ]
+
+
+def test_provider_activation_at_excludes_future_accounts_from_runtime_routes(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "provider-activation.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
+
+    bootstrap_sqlite()
+    repo = SQLiteProviderRepository()
+    future = repo.save_provider(
+        name="future",
+        base_url="https://future.example/v1",
+        api_key="sk-future",
+        default_model="kimi-k3",
+        enabled=True,
+        activation_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    active = repo.save_provider(
+        name="active",
+        base_url="https://active.example/v1",
+        api_key="sk-active",
+        default_model="kimi-k3",
+        enabled=True,
+        activation_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+    )
+
+    configured = repo.list_configured_openai_providers()
+
+    assert [item.id for item in configured] == [active.id]
+    assert future.activation_at is not None

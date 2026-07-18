@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from datetime import datetime, timedelta, timezone
 
 
 def test_system_provider_api_lists_health_and_quota_state(monkeypatch, tmp_path):
@@ -319,3 +320,36 @@ def test_system_provider_management_reports_rejected_provider_credentials(monkey
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Provider authentication failed; update the API key"
+
+
+def test_system_provider_api_preserves_future_activation_schedule(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "provider-schedule-api.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.core.security import create_access_token
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.main import app
+
+    bootstrap_sqlite()
+    client = TestClient(app)
+    token = create_access_token(
+        {"sub": "1", "permissions": ["system.settings.manage"], "sid": "provider-schedule"}
+    )
+    activation_at = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    response = client.post(
+        "/api/system/providers",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "scheduled-provider",
+            "base_url": "https://api.example.test/v1",
+            "api_key": "sk-scheduled",
+            "default_model": "kimi-k3",
+            "enabled": True,
+            "activation_at": activation_at,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "scheduled"
+    assert response.json()["data"]["api_key_configured"] is True

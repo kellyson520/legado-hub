@@ -8,12 +8,13 @@ from urllib.parse import quote, urlencode, urljoin
 from bs4 import BeautifulSoup, Tag
 
 from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
-from app.infrastructure.legado.engine.url_utils import UrlUtils
+from app.application.services.source_url_policy import SourceUrlPolicy
 
 
 class SourceProbeService:
-    def __init__(self, fetcher):
+    def __init__(self, fetcher, url_policy=SourceUrlPolicy):
         self._fetcher = fetcher
+        self._url_policy = url_policy
 
     def set_execution_deadline(self, deadline: float | None) -> None:
         setter = getattr(self._fetcher, 'set_execution_deadline', None)
@@ -40,7 +41,7 @@ class SourceProbeService:
             return source
 
         result = deepcopy(source)
-        headers = UrlUtils.parse_headers(result.get("header", ""))
+        headers = self._url_policy.parse_headers(result.get("header", ""))
         try:
             entry_response = await get(entry_url, headers=headers)
             if not _is_html_success(entry_response):
@@ -320,8 +321,8 @@ class SourceProbeService:
         if js_runtime is None or coerce is None:
             return {}
 
-        base_url = UrlUtils.get_base_url(source.get("bookSourceUrl", ""))
-        headers = UrlUtils.parse_headers(source.get("header", ""))
+        base_url = self._url_policy.get_base_url(source.get("bookSourceUrl", ""))
+        headers = self._url_policy.parse_headers(source.get("header", ""))
         code = search_url[4:].strip()
         raw_key = self._js_search_prefers_raw_key(code)
         encoded_keyword = keyword if raw_key else quote(keyword)
@@ -356,7 +357,7 @@ class SourceProbeService:
             if request_spec:
                 request_url = str(request_spec.get("url", "") or "")
                 if request_url and not request_url.startswith("http"):
-                    request_url = UrlUtils.resolve_relative(request_url, base_url)
+                    request_url = self._url_policy.resolve_relative(request_url, base_url)
                 request_spec = {**request_spec, "url": request_url}
                 preview = request_url
                 request_body = request_spec.get("body")
@@ -392,7 +393,7 @@ class SourceProbeService:
         if not request_url:
             return {}
         headers = {
-            **UrlUtils.parse_headers(source.get("header", "")),
+            **self._url_policy.parse_headers(source.get("header", "")),
             **(request_spec.get("headers") or {}),
         }
         method = str(request_spec.get("method", "GET") or "GET").upper()
@@ -428,8 +429,8 @@ class SourceProbeService:
         try:
             response, _ = await request(
                 raw_url,
-                headers=UrlUtils.parse_headers(source.get("header", "")),
-                base_url=UrlUtils.get_base_url(source.get("bookSourceUrl", "")),
+                headers=self._url_policy.parse_headers(source.get("header", "")),
+                base_url=self._url_policy.get_base_url(source.get("bookSourceUrl", "")),
             )
         except Exception as exc:
             return {

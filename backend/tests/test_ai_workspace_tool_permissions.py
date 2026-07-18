@@ -40,3 +40,31 @@ def test_workspace_candidate_draft_requires_a_configured_agent_provider(monkeypa
     names = ai_router._workspace_tool_names(Identity({"ai.run", "book_sources.read", "book_sources.write"}))
 
     assert "create_source_rule_draft" not in names
+
+
+def test_workspace_joint_test_requires_source_permissions_and_agent_provider(monkeypatch):
+    import app.interfaces.http.ai as ai_router
+
+    monkeypatch.setattr(
+        ai_router,
+        "build_system_settings_service",
+        lambda: SettingsService({"enabled": True, "provider_configured": True}),
+    )
+
+    names = ai_router._workspace_tool_names(Identity({"ai.run", "book_sources.read", "book_sources.write"}))
+
+    assert "source.joint_test" in names
+
+
+def test_workspace_joint_test_is_not_granted_without_source_write(monkeypatch):
+    import app.interfaces.http.ai as ai_router
+
+    monkeypatch.setattr(
+        ai_router,
+        "build_system_settings_service",
+        lambda: SettingsService({"enabled": True, "provider_configured": True}),
+    )
+
+    names = ai_router._workspace_tool_names(Identity({"ai.run", "book_sources.read"}))
+
+    assert "source.joint_test" not in names

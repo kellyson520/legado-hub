@@ -15,6 +15,7 @@ class ProviderAccount:
     api_key: str = ""
     default_model: str = ""
     enabled: bool = True
+    activation_at: datetime | None = None
     created_at: datetime = field(default_factory=utcnow)
 
 

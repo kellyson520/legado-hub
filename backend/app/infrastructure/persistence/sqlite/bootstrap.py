@@ -99,6 +99,8 @@ def _ensure_sqlite_provider_columns() -> None:
             connection.exec_driver_sql("ALTER TABLE provider_accounts ADD COLUMN api_key TEXT NOT NULL DEFAULT ''")
         if "default_model" not in columns:
             connection.exec_driver_sql("ALTER TABLE provider_accounts ADD COLUMN default_model VARCHAR NOT NULL DEFAULT ''")
+        if "activation_at" not in columns:
+            connection.exec_driver_sql("ALTER TABLE provider_accounts ADD COLUMN activation_at DATETIME")
 
 
 def _ensure_sqlite_novel_analysis_columns() -> None:

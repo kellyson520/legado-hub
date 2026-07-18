@@ -1,7 +1,6 @@
 from app.application.services.source_build_service import SourceBuildService
 from app.application.services.source_review_service import SourceReviewService
 from app.domain.repositories.source_runtime_repo import SourceRuntimeRepository
-from app.infrastructure.legado.engine.quality_gate import evaluate_runtime_health
 
 
 class SourceHealthService:
@@ -10,17 +9,19 @@ class SourceHealthService:
         repo: SourceRuntimeRepository,
         review_service: SourceReviewService | None = None,
         build_service: SourceBuildService | None = None,
+        health_evaluator=None,
     ):
         self._repo = repo
         self._review_service = review_service
         self._build_service = build_service
+        self._health_evaluator = health_evaluator
 
     async def verify_published_versions(self) -> list[dict]:
         decisions: list[dict] = []
         for version in self._repo.list_published_versions():
             runs = self._repo.list_test_runs(version.id)
             latest_run = runs[0] if runs else None
-            decision = evaluate_runtime_health(version, latest_run)
+            decision = self._evaluate(version, latest_run)
             decision_payload = decision.to_dict()
             if decision.action in {"rollback", "quarantine"}:
                 if self._build_service is not None:
@@ -64,7 +65,7 @@ class SourceHealthService:
         for version in self._repo.list_published_versions():
             runs = self._repo.list_test_runs(version.id)
             latest_run = runs[0] if runs else None
-            decision = evaluate_runtime_health(version, latest_run)
+            decision = self._evaluate(version, latest_run)
             if decision.action in {'rollback', 'quarantine'}:
                 candidates.append(
                     {
@@ -75,6 +76,11 @@ class SourceHealthService:
                     }
                 )
         return candidates
+
+    def _evaluate(self, version, latest_run):
+        if self._health_evaluator is None:
+            raise RuntimeError("source health evaluator is not configured")
+        return self._health_evaluator(version, latest_run)
 
 
 class RealSourceSmokeRunner:

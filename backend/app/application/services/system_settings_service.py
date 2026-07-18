@@ -1,7 +1,7 @@
 from app.application.services.system_settings_registry import SETTINGS_REGISTRY, SettingsTab
+from app.application.ports.provider import ProviderRegistry
 from app.application.services.provider_platform_service import PROVIDER_ROUTE_GROUPS
 from app.domain.repositories.system_settings_repo import SystemSettingsRepository, VersionedSetting
-from app.infrastructure.providers.registry import ProviderRegistry
 
 
 SOURCE_BUILD_AGENT_ENABLED = "source_build_agent_enabled"

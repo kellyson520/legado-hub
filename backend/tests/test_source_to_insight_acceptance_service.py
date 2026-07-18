@@ -706,3 +706,33 @@ async def test_acceptance_rejects_fallback_or_mismatched_content_evidence():
     assert report["status"] == "failed"
     assert report["source_builds"][0]["reading"]["status"] == "failed"
     assert "fallback" in report["source_builds"][0]["reading"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_acceptance_marks_agent_joint_test_without_changing_direct_flow():
+    from app.application.services.source_to_insight_acceptance_service import SourceToInsightAcceptanceService
+
+    service = SourceToInsightAcceptanceService(
+        source_build_service=FakeSourceBuildService(),
+        source_build_runtime=FakeBuildRuntime(),
+    )
+
+    direct_report = await service.run({
+        "source_urls": ["https://a.test"],
+        "book_name": "斗罗大陆",
+        "tenant_id": "operator",
+    })
+    agent_report = await service.run({
+        "source_urls": ["https://a.test"],
+        "book_name": "斗罗大陆",
+        "tenant_id": "operator",
+        "agent_joint_test": True,
+    })
+
+    assert "agent_joint_test" not in direct_report
+    assert agent_report["agent_joint_test"] == {
+        "enabled": True,
+        "tool_name": "source.joint_test",
+        "status": agent_report["status"],
+        "steps": [step["name"] for step in agent_report["steps"]],
+    }

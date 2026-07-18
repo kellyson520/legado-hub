@@ -22,7 +22,7 @@ class AgentToolRegistry:
         tools = self._builtin_tools()
         allowed_handlers = frozenset({
             'source.inspect', 'source.probe', 'page.inspect', 'page.request',
-            'rule.propose', 'rule.validate', 'review.request',
+            'rule.propose', 'rule.validate', 'review.request', 'source.joint_test',
         })
         for name, handler in (source_build_handlers or {}).items():
             if name not in allowed_handlers or name not in tools or not callable(handler):
@@ -53,7 +53,7 @@ class AgentToolRegistry:
             return ToolResult(status='rejected', error_code='tool_not_implemented')
         if self._is_async_handler(tool.handler):
             return ToolResult(status='rejected', error_code='async_tool_requires_ainvoke')
-        result = tool.handler(arguments)
+        result = tool.handler(self._handler_arguments(tool_name, arguments, tenant_id))
         if inspect.isawaitable(result):
             close = getattr(result, 'close', None)
             if callable(close):
@@ -72,7 +72,7 @@ class AgentToolRegistry:
         tool = self._authorize(agent_kind, tool_name, arguments, tenant_id)
         if tool.handler is None:
             return ToolResult(status='rejected', error_code='tool_not_implemented')
-        result = tool.handler(arguments)
+        result = tool.handler(self._handler_arguments(tool_name, arguments, tenant_id))
         return await result if inspect.isawaitable(result) else result
 
     def get(self, tool_name: str) -> AgentTool | None:
@@ -105,6 +105,9 @@ class AgentToolRegistry:
             'page.request': AgentTool('page.request', 'operate', frozenset({'source_build'})),
             'rule.propose': AgentTool('rule.propose', 'propose', frozenset({'source_build'})),
             'rule.validate': AgentTool('rule.validate', 'operate', frozenset({'source_build'})),
+            'source.joint_test': AgentTool(
+                'source.joint_test', 'operate', frozenset({'source_build'}),
+            ),
             'knowledge.propose': AgentTool(
                 'knowledge.propose', 'propose', frozenset({'knowledge'}), self._propose_knowledge,
             ),
@@ -138,6 +141,12 @@ class AgentToolRegistry:
         return inspect.iscoroutinefunction(handler) or inspect.iscoroutinefunction(
             getattr(handler, '__call__', None),
         )
+
+    @staticmethod
+    def _handler_arguments(tool_name: str, arguments: dict[str, Any], tenant_id: str) -> dict[str, Any]:
+        if tool_name != 'source.joint_test':
+            return arguments
+        return {**arguments, 'tenant_id': tenant_id}
 
     @staticmethod
     def _propose_knowledge(arguments: dict[str, Any]) -> ToolResult:

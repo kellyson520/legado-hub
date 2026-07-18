@@ -1,11 +1,10 @@
 import re
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 import httpx
 
-from app.infrastructure.providers.base import ProviderAdapter
-from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
-from app.infrastructure.providers.registry import ProviderRegistry
+from app.application.ports.provider import ProviderAdapter, ProviderRegistry
 
 
 PROVIDER_ROUTE_GROUPS = (
@@ -34,10 +33,17 @@ class ProviderInvocationError(RuntimeError):
 
 
 class ProviderPlatformService:
-    def __init__(self, registry: ProviderRegistry, quota_limiter: ProviderQuotaLimiter, provider_repo=None):
+    def __init__(
+        self,
+        registry: ProviderRegistry,
+        quota_limiter: ProviderQuotaLimiter,
+        provider_repo=None,
+        provider_factory=None,
+    ):
         self._registry = registry
         self._quota_limiter = quota_limiter
         self._provider_repo = provider_repo
+        self._provider_factory = provider_factory
 
     async def invoke_chat(
         self,
@@ -107,6 +113,7 @@ class ProviderPlatformService:
         api_key: str,
         default_model: str,
         enabled: bool,
+        activation_at: datetime | None = None,
         provider_id: str | None = None,
     ) -> dict:
         if self._provider_repo is None:
@@ -120,6 +127,7 @@ class ProviderPlatformService:
             api_key=api_key,
             default_model=default_model,
             enabled=enabled,
+            activation_at=activation_at,
         )
         self._ensure_initial_routes()
         return self._serialize_provider_account(account)
@@ -132,11 +140,9 @@ class ProviderPlatformService:
             raise LookupError("provider not found")
         if not account.enabled or not account.base_url or not account.api_key:
             raise ValueError("provider must be enabled and configured before models can be fetched")
-        provider = OpenAICompatibleProvider(
-            name=account.name,
-            endpoint_url=account.base_url,
-            api_key=account.api_key,
-        )
+        if self._provider_factory is None:
+            raise RuntimeError("provider factory is not configured")
+        provider = self._provider_factory(account.name, account.base_url, account.api_key)
         try:
             return sorted(set(await provider.list_models()))
         finally:
@@ -252,6 +258,10 @@ class ProviderPlatformService:
     def _serialize_provider_account(cls, account) -> dict:
         api_key = str(getattr(account, "api_key", "") or "")
         default_model = str(getattr(account, "default_model", "") or "")
+        activation_at = getattr(account, "activation_at", None)
+        if activation_at is not None and activation_at.tzinfo is None:
+            activation_at = activation_at.replace(tzinfo=timezone.utc)
+        scheduled = bool(activation_at is not None and activation_at > datetime.now(timezone.utc))
         return {
             "id": account.id,
             "name": account.name,
@@ -265,8 +275,10 @@ class ProviderPlatformService:
             "apiKeyConfigured": bool(api_key),
             "api_key_masked": cls._mask_api_key(api_key),
             "apiKeyMasked": cls._mask_api_key(api_key),
-            "status": "enabled" if account.enabled else "disabled",
+            "status": "scheduled" if account.enabled and scheduled else ("enabled" if account.enabled else "disabled"),
             "enabled": account.enabled,
+            "activation_at": activation_at.isoformat() if activation_at is not None else None,
+            "activationAt": activation_at.isoformat() if activation_at is not None else None,
             "created_at": account.created_at.isoformat() if account.created_at is not None else None,
         }
 

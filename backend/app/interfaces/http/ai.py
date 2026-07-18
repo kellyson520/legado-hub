@@ -42,7 +42,7 @@ def _workspace_tool_names(identity) -> set[str]:
         and source_agent_settings["enabled"]
         and source_agent_settings["provider_configured"]
     ):
-        names.add("create_source_rule_draft")
+        names.update({"create_source_rule_draft", "source.joint_test"})
     return names
 
 

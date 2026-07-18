@@ -13,6 +13,7 @@ from app.domain.entities.auth import AuditEvent
 _SENSITIVE_KEY_PARTS = ("cookie", "token", "authorization", "provider", "internal", "api_key", "apikey")
 _MAX_MODEL_TOOL_TURNS = 4
 _CONTENT_RETRIEVAL_TOOL_NAMES = frozenset({"source.search", "toc.get", "chapter.fetch"})
+_SOURCE_JOINT_TEST_TOOL_NAMES = frozenset({"source.joint_test"})
 _CONTENT_ANALYSIS_TERMS = (
     "人物", "角色", "生平", "经历", "身世", "主角", "配角", "剧情", "情节",
     "世界观", "设定", "时间线", "结局", "故事内容", "发生了什么",
@@ -22,7 +23,7 @@ _DEFAULT_TOOL_NAMES = frozenset({
 }) | _CONTENT_RETRIEVAL_TOOL_NAMES
 _SOURCE_READ_TOOL_NAMES = frozenset({"get_source_validation_summary"})
 _SOURCE_WRITE_TOOL_NAMES = frozenset({"create_source_rule_draft"})
-_ALL_TOOL_NAMES = _DEFAULT_TOOL_NAMES | _SOURCE_READ_TOOL_NAMES | _SOURCE_WRITE_TOOL_NAMES
+_ALL_TOOL_NAMES = _DEFAULT_TOOL_NAMES | _SOURCE_READ_TOOL_NAMES | _SOURCE_WRITE_TOOL_NAMES | _SOURCE_JOINT_TEST_TOOL_NAMES
 _ALLOWED_DRAFT_PATCH_FIELDS = frozenset({
     "bookSourceName", "bookSourceUrl", "bookSourceGroup", "enabled", "searchUrl",
     "ruleSearch", "ruleBookInfo", "ruleToc", "ruleContent", "bookSourceComment",
@@ -60,7 +61,17 @@ class _SourceRuleDraftArguments(BaseModel):
 
 
 class AIWorkspaceService:
-    def __init__(self, platform, conversations, sources, ai_tasks, audit, source_runtime=None, novel_tool_executor=None):
+    def __init__(
+        self,
+        platform,
+        conversations,
+        sources,
+        ai_tasks,
+        audit,
+        source_runtime=None,
+        novel_tool_executor=None,
+        source_joint_test_executor=None,
+    ):
         self._platform = platform
         self._conversations = conversations
         self._sources = sources
@@ -68,6 +79,7 @@ class AIWorkspaceService:
         self._audit = audit
         self._source_runtime = source_runtime
         self._novel_tool_executor = novel_tool_executor
+        self._source_joint_test_executor = source_joint_test_executor
 
     async def create_conversation(self, actor_id: str, title: str = "") -> dict:
         conversation = self._conversations.create_conversation(
@@ -271,6 +283,17 @@ class AIWorkspaceService:
             elif request.name == "create_source_rule_draft":
                 args = _SourceRuleDraftArguments.model_validate(request.arguments)
                 result = await self._create_source_rule_draft(args.source_version_id, args.patch, str(actor_id))
+            elif request.name == "source.joint_test":
+                if self._source_joint_test_executor is None:
+                    raise ValidationException("Source joint testing is unavailable")
+                tool_result = await self._source_joint_test_executor.ainvoke(
+                    {**request.arguments, "tenant_id": str(actor_id)},
+                )
+                result = (
+                    tool_result.data
+                    if tool_result.status == "accepted"
+                    else {"status": tool_result.status, "error": tool_result.error_code or "tool_rejected"}
+                )
             elif request.name in _CONTENT_RETRIEVAL_TOOL_NAMES:
                 if self._novel_tool_executor is None:
                     raise ValidationException("Novel content retrieval is unavailable")
@@ -376,6 +399,14 @@ class AIWorkspaceService:
                 "source_version_id": {"type": "string", "minLength": 1},
                 "patch": {"type": "object", "minProperties": 1},
             }, ["source_version_id", "patch"]),
+            schema("source.joint_test", "Run the candidate-only source build, search, TOC, content, complement, and insight acceptance chain with real evidence.", {
+                "source_urls": {"type": "array", "items": {"type": "string", "format": "uri"}, "minItems": 1, "maxItems": 4},
+                "book_name": {"type": "string", "minLength": 1, "maxLength": 300},
+                "author_hint": {"type": "string", "maxLength": 200},
+                "chapter_index": {"type": "integer", "minimum": 0, "maximum": 100000},
+                "chapter_title": {"type": "string", "maxLength": 300},
+                "use_ai": {"type": "boolean"},
+            }, ["source_urls", "book_name"]),
             schema("source.search", "Search the user's enabled book sources for a work before analysis.", {
                 "keyword": {"type": "string", "minLength": 1, "maxLength": 200},
                 "source_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
@@ -409,6 +440,10 @@ class AIWorkspaceService:
                 if require_content_evidence else ""
             )
             + (" Candidate rule drafts may be created but never published." if candidate_draft_allowed else "")
+            + (
+                " For source validation, you must call source.joint_test and base conclusions only on its returned search, TOC, content, complement, and insight evidence. Never use parametric knowledge or publish a source."
+                if "source.joint_test" in allowed_tool_names else ""
+            )
             + " Never request secrets, publish sources, browse arbitrary URLs, or run code."
         )
 

@@ -214,3 +214,33 @@ async def test_knowledge_agent_can_use_the_audited_chapter_fetch_handler_only():
             arguments={'chapter_index': 0},
             tenant_id='tenant-1',
         )
+
+
+@pytest.mark.asyncio
+async def test_source_joint_test_is_source_build_only_and_handler_is_bounded():
+    from app.application.services.agent_tool_registry import AgentToolRegistry
+    from app.domain.entities.agent_runtime import ToolResult
+
+    seen = []
+
+    async def handler(arguments):
+        seen.append(arguments)
+        return ToolResult(status='accepted', data={'book_name': arguments['book_name']})
+
+    registry = AgentToolRegistry(source_build_handlers={'source.joint_test': handler})
+    assert registry.get('source.joint_test').category == 'operate'
+    result = await registry.ainvoke(
+        agent_kind='source_build',
+        tool_name='source.joint_test',
+        arguments={'book_name': '斗罗大陆', 'tenant_id': 'tenant-1'},
+        tenant_id='tenant-1',
+    )
+    assert result.status == 'accepted'
+    assert seen[0]['tenant_id'] == 'tenant-1'
+    with pytest.raises(AuthorizationException):
+        await registry.ainvoke(
+            agent_kind='knowledge',
+            tool_name='source.joint_test',
+            arguments={'book_name': '斗罗大陆'},
+            tenant_id='tenant-1',
+        )
