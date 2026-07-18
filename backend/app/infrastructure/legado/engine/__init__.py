@@ -11,6 +11,7 @@ from app.infrastructure.legado.engine.js_session_models import (
 from app.infrastructure.legado.engine.js_runtime import JsResult, JsRuntime
 from app.infrastructure.legado.engine.native_models import RuntimeCapabilities, RuntimeResult
 from app.infrastructure.legado.engine.native_runtime_client import NativeRuntimeClient
+from app.infrastructure.legado.engine.runtime_process import RuntimeProcessManager
 from app.infrastructure.legado.engine.legado_native_semantics import LegadoJsCompatProfile
 from app.infrastructure.legado.engine.models import (
     EvaluationResult,
@@ -67,6 +68,7 @@ __all__ = [
     "RuntimeResult",
     "RuntimeCapabilities",
     "NativeRuntimeClient",
+    "RuntimeProcessManager",
     "LegadoRuntimeFacade",
     "PythonRuntimeFallback",
     "compare_runtime_results",

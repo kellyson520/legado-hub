@@ -41,7 +41,9 @@ services:
 
   # LegadoHub 主服务
   legado-hub:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: legado-hub
     ports:
       - "8000:8000"

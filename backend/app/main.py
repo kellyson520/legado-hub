@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from app.core.config import settings
 from app.core.response import ok
@@ -12,6 +12,7 @@ from app.infrastructure.persistence.factory import (
     build_source_runtime_service,
     close_interactive_browser_supervisor,
 )
+from app.infrastructure.legado.engine.runtime_process import RuntimeProcessManager
 from app.interfaces.http.router import api_router
 from app.tasks.scheduler import (
     run_event_delivery_job,
@@ -56,6 +57,9 @@ async def lifespan(app: FastAPI):
     source_build_worker_task = None
     source_build_stop_event = None
     scheduler_started = False
+    app.state.runtime_process = RuntimeProcessManager()
+    if settings.ENV != "test":
+        app.state.runtime_process.health()
     await build_source_runtime_service().register_published_book_sources()
     if settings.ENV != 'test' and settings.SOURCE_HEALTH_PROBE_WORKER_ENABLED:
         start_scheduler(job_ids={'probe_source_health'})
@@ -82,6 +86,7 @@ async def lifespan(app: FastAPI):
         if source_build_worker_task is not None:
             await source_build_worker_task
         await asyncio.to_thread(close_interactive_browser_supervisor)
+        app.state.runtime_process.close()
 
 
 app = FastAPI(
@@ -109,12 +114,14 @@ def root() -> dict:
 
 
 @app.get("/api/status")
-def status() -> dict:
+def status(request: Request) -> dict:
+    runtime_manager = getattr(request.app.state, "runtime_process", None)
     return ok(
         data={
             "service": settings.APP_NAME,
             "version": settings.APP_VERSION,
             "env": settings.ENV,
+            "runtime": runtime_manager.status() if runtime_manager is not None else {"state": "not_started"},
         },
         message="service ready",
         meta={},
