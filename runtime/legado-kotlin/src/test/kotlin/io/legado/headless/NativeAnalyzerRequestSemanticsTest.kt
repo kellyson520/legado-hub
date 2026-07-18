@@ -67,7 +67,7 @@ class NativeAnalyzerRequestSemanticsTest {
             """
             {
               "op":"extract_string",
-              "rule":"@js:return java.get('https://example.test/data').body()",
+              "rule":"@js:return java.get('https://example.test/data', {}).body()",
               "content":"ignored"
             }
             """.trimIndent()

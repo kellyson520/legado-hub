@@ -913,8 +913,9 @@ class AnalyzeRule(
     }
 
     /** JS request helpers used by source rules (java.get/post/head). */
-    @JvmOverloads
-    fun get(urlStr: String, headers: Any? = null, timeout: Int? = null): StrResponse =
+    fun get(urlStr: String, headers: Any?): StrResponse = get(urlStr, headers, null)
+
+    fun get(urlStr: String, headers: Any?, timeout: Int?): StrResponse =
         AnalyzeUrl(
             urlStr,
             baseUrl = baseUrl.orEmpty(),
