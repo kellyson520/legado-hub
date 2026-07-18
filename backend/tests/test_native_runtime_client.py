@@ -79,3 +79,32 @@ def test_client_answers_bridge_http_messages(tmp_path):
         assert calls == [{"url": "https://example.test", "method": "GET"}]
     finally:
         client.close()
+
+
+def test_client_answers_bridge_cache_messages(tmp_path):
+    script = tmp_path / "cache_runtime.py"
+    script.write_text(
+        "import json, sys\n"
+        "request = json.loads(sys.stdin.readline())\n"
+        "print(json.dumps({'type': 'bridge_cache', 'id': 'cache-1', 'request': {'op': 'get', 'scope': 'source-a', 'key': 'token'}}), flush=True)\n"
+        "bridge = json.loads(sys.stdin.readline())\n"
+        "print(json.dumps({'id': request['id'], 'success': True, 'value': bridge['response']['value'], 'value_type': 'string'}), flush=True)\n",
+        encoding="utf-8",
+    )
+    calls = []
+
+    def cache_handler(request):
+        calls.append(request)
+        return {"found": True, "value": "cache-ok"}
+
+    client = NativeRuntimeClient(
+        command=[sys.executable, "-u", str(script)],
+        cache_handler=cache_handler,
+    )
+    try:
+        result = client.call("extract_string", {}, timeout=1.0)
+        assert result.success
+        assert result.value == "cache-ok"
+        assert calls == [{"op": "get", "scope": "source-a", "key": "token"}]
+    finally:
+        client.close()

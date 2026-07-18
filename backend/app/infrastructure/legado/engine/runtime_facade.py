@@ -99,10 +99,12 @@ class LegadoRuntimeFacade:
         mode: str | None = None,
         timeout: float = 10.0,
         bridge_handler=None,
+        cache_handler=None,
     ):
         self.native_client = native_client or NativeRuntimeClient(
             response_timeout=timeout,
             bridge_handler=bridge_handler,
+            cache_handler=cache_handler,
         )
         self.fallback = fallback or PythonRuntimeFallback()
         self.mode = mode or os.getenv("LEGADO_RUNTIME_MODE", "python_primary")
@@ -220,7 +222,7 @@ class LegadoRuntimeFacade:
         """Keep transport payloads limited to JSON-compatible Legado scope data."""
         if not isinstance(context, dict):
             return {}
-        allowed = {"source", "book", "chapter", "variables", "baseUrl", "base_url", "page", "key", "title", "bookName"}
+        allowed = {"source", "book", "chapter", "variables", "baseUrl", "base_url", "page", "key", "title", "bookName", "cacheScope", "cache_scope"}
         result: dict[str, Any] = {}
         for key, value in context.items():
             if key not in allowed:

@@ -4,6 +4,7 @@ import io.legado.app.model.analyzeRule.AnalyzeRule
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
 import io.legado.app.data.entities.BookSource
+import io.legado.app.help.CacheManager
 import io.legado.app.model.analyzeRule.RuleData
 import io.legado.app.utils.NetworkUtils
 import io.legado.headless.protocol.RuntimeError
@@ -49,18 +50,21 @@ class NativeAnalyzer {
             .setContent(content, request.stringOrNull("base_url"))
         request.stringOrNull("redirect_url")?.let(analyzer::setRedirectUrl)
 
-        val result = when (operation) {
-            "extract_string" -> analyzer.getString(rule) to "string"
-            "extract_list" -> analyzer.getStringList(rule).orEmpty() to "list"
-            "extract_elements" -> analyzer.getElements(rule).map { it.toString() } to "list"
-            "resolve_url" -> {
-                val base = request.stringOrNull("redirect_url") ?: request.stringOrNull("base_url")
-                val parsedBase = base?.let { runCatching { URL(it) }.getOrNull() }
-                NetworkUtils.getAbsoluteURL(parsedBase, rule) to "string"
+        val cacheScope = context?.stringOrNull("cacheScope") ?: source.getKey().orEmpty()
+        val result = CacheManager.withScope(cacheScope) {
+            when (operation) {
+                "extract_string" -> analyzer.getString(rule) to "string"
+                "extract_list" -> analyzer.getStringList(rule).orEmpty() to "list"
+                "extract_elements" -> analyzer.getElements(rule).map { it.toString() } to "list"
+                "resolve_url" -> {
+                    val base = request.stringOrNull("redirect_url") ?: request.stringOrNull("base_url")
+                    val parsedBase = base?.let { runCatching { URL(it) }.getOrNull() }
+                    NetworkUtils.getAbsoluteURL(parsedBase, rule) to "string"
+                }
+                else -> throw RuntimeFailure(
+                    RuntimeError("UNSUPPORTED_OPERATION", "Unsupported runtime operation: $operation")
+                )
             }
-            else -> throw RuntimeFailure(
-                RuntimeError("UNSUPPORTED_OPERATION", "Unsupported runtime operation: $operation")
-            )
         }
         context?.let {
             syncContext(it, source, book, chapter, sharedVariables)

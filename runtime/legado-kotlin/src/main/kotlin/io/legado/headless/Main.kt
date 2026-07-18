@@ -1,6 +1,7 @@
 package io.legado.headless
 
 import io.legado.headless.protocol.RuntimeServer
+import io.legado.headless.protocol.StdioCacheBridge
 import io.legado.headless.protocol.StdioHttpBridge
 import io.legado.headless.ports.HeadlessRuntimeBridges
 import java.io.BufferedReader
@@ -15,6 +16,7 @@ fun main(args: Array<String>) {
     val input = BufferedReader(InputStreamReader(System.`in`))
     val output = PrintWriter(System.out, true)
     HeadlessRuntimeBridges.http = StdioHttpBridge(input, output)
+    HeadlessRuntimeBridges.cache = StdioCacheBridge(input, output)
     val server = RuntimeServer()
     while (true) {
         val line = input.readLine() ?: break

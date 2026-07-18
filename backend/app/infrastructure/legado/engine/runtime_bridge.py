@@ -43,6 +43,25 @@ class RuntimeBridge:
             return {"status": 599, "text": str(failure[0]), "headers": {}, "error_code": "BRIDGE_ERROR"}
         return result[0] if result else {"status": 599, "text": "bridge returned no response", "headers": {}, "error_code": "BRIDGE_ERROR"}
 
+    def handle_cache(self, request: dict[str, Any]) -> dict[str, Any]:
+        operation = str(request.get("op", "get") or "get").lower()
+        scope = str(request.get("scope", "default") or "default")
+        key = str(request.get("key", "") or "")
+        if not key:
+            return {"found": False, "error_code": "EMPTY_CACHE_KEY"}
+        cache_key = f"{scope}\x00{key}"
+        if operation == "get":
+            if cache_key not in self.cache:
+                return {"found": False}
+            return {"found": True, "value": self.cache[cache_key]}
+        if operation == "put":
+            self.cache[cache_key] = request.get("value")
+            return {"found": True}
+        if operation == "delete":
+            self.cache.pop(cache_key, None)
+            return {"found": False}
+        return {"found": False, "error_code": "UNSUPPORTED_CACHE_OPERATION"}
+
     async def _request(
         self,
         method: str,

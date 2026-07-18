@@ -27,4 +27,7 @@ fun interface HttpBridge {
 object HeadlessRuntimeBridges {
     @Volatile
     var http: HttpBridge? = null
+
+    @Volatile
+    var cache: CacheBridge? = null
 }

@@ -30,12 +30,14 @@ class NativeRuntimeClient:
         response_timeout: float = 10.0,
         max_response_bytes: int = 4 * 1024 * 1024,
         bridge_handler=None,
+        cache_handler=None,
         process_factory=subprocess.Popen,
     ):
         self.command = list(command or self._default_command())
         self.response_timeout = response_timeout
         self.max_response_bytes = max_response_bytes
         self.bridge_handler = bridge_handler
+        self.cache_handler = cache_handler
         self._process_factory = process_factory
         self._process: subprocess.Popen[bytes] | None = None
         self._stderr_lines: deque[str] = deque(maxlen=200)
@@ -102,17 +104,26 @@ class NativeRuntimeClient:
                     if not isinstance(response, dict):
                         self._restart_after_failure()
                         return self._failed("MALFORMED_RESPONSE", "native runtime returned a non-object response")
-                    if response.get("type") != "bridge_http":
+                    message_type = response.get("type")
+                    if message_type == "bridge_http":
+                        bridge_result = self._run_bridge(response, deadline)
+                        result_type = "bridge_http_result"
+                    elif message_type == "bridge_cache":
+                        bridge_result = self._run_cache(response, deadline)
+                        result_type = "bridge_cache_result"
+                    else:
                         break
-                    bridge_result = self._run_bridge(response, deadline)
                     if bridge_result is None:
                         self._restart_after_failure()
-                        return self._failed("BRIDGE_TIMEOUT", "native runtime bridge request timed out")
+                        return self._failed(
+                            "CACHE_TIMEOUT" if message_type == "bridge_cache" else "BRIDGE_TIMEOUT",
+                            "native runtime bridge request timed out",
+                        )
                     try:
                         self._write_json(
                             process,
                             {
-                                "type": "bridge_http_result",
+                                "type": result_type,
                                 "id": response.get("id"),
                                 "response": bridge_result,
                             },
@@ -145,6 +156,24 @@ class NativeRuntimeClient:
         except Exception as exc:  # noqa: BLE001 - bridge errors are part of the protocol
             return {"status": 599, "text": str(exc), "headers": {}, "error_code": "BRIDGE_ERROR"}
         return result if isinstance(result, dict) else {"status": 599, "text": "bridge returned non-object", "headers": {}, "error_code": "BRIDGE_ERROR"}
+
+    def _run_cache(self, message: dict[str, Any], deadline: float) -> dict[str, Any] | None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        request = message.get("request")
+        if not isinstance(request, dict):
+            return {"found": False, "error_code": "MALFORMED_CACHE_REQUEST"}
+        if self.cache_handler is None:
+            return {"found": False, "error_code": "CACHE_BRIDGE_UNAVAILABLE"}
+        future = _BRIDGE_EXECUTOR.submit(self.cache_handler, request)
+        try:
+            result = future.result(timeout=remaining)
+        except FutureTimeoutError:
+            return None
+        except Exception as exc:  # noqa: BLE001 - converted to a stable protocol error
+            return {"found": False, "error_code": "CACHE_BRIDGE_ERROR", "message": str(exc)}
+        return result if isinstance(result, dict) else {"found": False, "error_code": "CACHE_BRIDGE_ERROR"}
 
     @staticmethod
     def _write_json(process: subprocess.Popen[bytes], payload: dict[str, Any]) -> None:

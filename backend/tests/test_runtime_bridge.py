@@ -45,3 +45,14 @@ def test_bridge_timeout_returns_stable_error():
 def test_bridge_rejects_empty_url():
     response = RuntimeBridge(http_client=FakeHttp()).handle({"method": "GET", "url": ""})
     assert response["error_code"] == "EMPTY_URL"
+
+
+def test_cache_bridge_is_scoped_and_supports_delete():
+    bridge = RuntimeBridge(http_client=FakeHttp(), cache={})
+
+    assert bridge.handle_cache({"op": "get", "scope": "source-a", "key": "token"})["found"] is False
+    bridge.handle_cache({"op": "put", "scope": "source-a", "key": "token", "value": "abc"})
+    assert bridge.handle_cache({"op": "get", "scope": "source-a", "key": "token"})["value"] == "abc"
+    assert bridge.handle_cache({"op": "get", "scope": "source-b", "key": "token"})["found"] is False
+    bridge.handle_cache({"op": "delete", "scope": "source-a", "key": "token"})
+    assert bridge.handle_cache({"op": "get", "scope": "source-a", "key": "token"})["found"] is False

@@ -47,8 +47,10 @@ class LegadoBookSourceFetcher:
             max_concurrent=max_concurrent,
         )
         self._js_runtime = JsRuntime()
+        runtime_bridge = RuntimeBridge(http_client=self._http)
         self._runtime_facade = runtime_facade or LegadoRuntimeFacade(
-            bridge_handler=RuntimeBridge(http_client=self._http).handle,
+            bridge_handler=runtime_bridge.handle,
+            cache_handler=runtime_bridge.handle_cache,
         )
         self._native_context: Dict[str, Any] = {}
 
@@ -67,7 +69,11 @@ class LegadoBookSourceFetcher:
         return self._native_context
 
     def _begin_native_context(self, source: Dict[str, Any]) -> None:
-        self._native_context = {"source": source, "variables": {}}
+        self._native_context = {
+            "source": source,
+            "variables": {},
+            "cacheScope": str(source.get("bookSourceUrl") or source.get("sourceUrl") or "default"),
+        }
 
     async def search(
         self,

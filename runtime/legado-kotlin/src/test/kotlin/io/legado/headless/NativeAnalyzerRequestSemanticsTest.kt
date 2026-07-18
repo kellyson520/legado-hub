@@ -4,6 +4,7 @@ import io.legado.app.data.entities.BookSource
 import io.legado.headless.ports.HeadlessRuntimeBridges
 import io.legado.headless.ports.HttpRequestSpec
 import io.legado.headless.ports.HttpResponse
+import io.legado.headless.ports.MemoryCacheBridge
 import io.legado.app.model.analyzeRule.AnalyzeUrl
 import io.legado.app.help.http.CookieStore
 import com.google.gson.JsonParser
@@ -115,5 +116,22 @@ class NativeAnalyzerRequestSemanticsTest {
 
         assertTrue(response.contains("\"success\":true"))
         assertTrue(response.contains("\"updated\""))
+    }
+
+    @Test
+    fun cacheRulesUseTheContextScope() {
+        HeadlessRuntimeBridges.cache = MemoryCacheBridge()
+        val request = JsonParser.parseString(
+            """
+            {
+              "op":"extract_string",
+              "rule":"@js:cache.put('token', 'cached'); return cache.get('token')",
+              "content":"ignored",
+              "context":{"cacheScope":"source-a"}
+            }
+            """.trimIndent()
+        ).asJsonObject
+
+        assertEquals("cached", NativeAnalyzer().execute(request).first)
     }
 }

@@ -41,6 +41,7 @@ class RuntimeServer(
                             "engine" to "legado-kotlin",
                             "engine_commit" to "2c340d48bb1b9537690ec31eb9c23a57307f30a3",
                             "operations" to listOf("ping", "capabilities", "extract_string", "extract_list", "extract_elements", "resolve_url"),
+                            "bridges" to listOf("http", "cache"),
                         ),
                         valueType = "object",
                         trace = trace(started),
