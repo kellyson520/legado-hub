@@ -3,6 +3,8 @@ package io.legado.app.model.analyzeRule
 import io.legado.app.data.entities.BaseSource
 import io.legado.app.help.http.StrResponse
 import io.legado.app.model.analyzeRule.RuleDataInterface
+import io.legado.headless.ports.HeadlessRuntimeBridges
+import io.legado.headless.ports.HttpRequestSpec
 import java.util.regex.Pattern
 import kotlin.coroutines.CoroutineContext
 
@@ -19,8 +21,19 @@ class AnalyzeUrl(
     private val callTimeout: Long? = null,
     private val coroutineContext: CoroutineContext = kotlin.coroutines.EmptyCoroutineContext,
 ) {
-    fun getStrResponse(): StrResponse =
-        StrResponse(body = "", code = 501)
+    fun getStrResponse(): StrResponse {
+        val bridge = HeadlessRuntimeBridges.http
+            ?: return StrResponse(body = "", code = 503)
+        val response = bridge.request(
+            HttpRequestSpec(
+                method = "GET",
+                url = mUrl,
+                headers = source?.getHeaderMap(true).orEmpty(),
+                timeoutMs = callTimeout ?: 15_000,
+            )
+        )
+        return StrResponse(body = response.body, code = response.status, headers = response.headers)
+    }
 
     companion object {
         val paramPattern: Pattern = Pattern.compile(",\\s*(\\{[\\w\\W]*})$")

@@ -5,6 +5,7 @@ import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
 import io.legado.headless.NativeAnalyzer
 import io.legado.headless.RuntimeFailure
+import io.legado.headless.string
 
 class RuntimeServer(
     private val analyzer: NativeAnalyzer = NativeAnalyzer(),

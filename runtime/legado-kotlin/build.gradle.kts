@@ -31,6 +31,12 @@ kotlin {
     jvmToolchain(17)
 }
 
+sourceSets {
+    main {
+        kotlin.srcDir("vendor")
+    }
+}
+
 tasks.test {
     useJUnitPlatform()
 }

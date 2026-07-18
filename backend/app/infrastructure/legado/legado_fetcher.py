@@ -25,6 +25,7 @@ from .engine import (
     TextPipeline,
     UrlUtils,
 )
+from .engine.runtime_bridge import RuntimeBridge
 
 logger = logging.getLogger("legado_fetcher")
 
@@ -46,7 +47,9 @@ class LegadoBookSourceFetcher:
             max_concurrent=max_concurrent,
         )
         self._js_runtime = JsRuntime()
-        self._runtime_facade = runtime_facade or LegadoRuntimeFacade()
+        self._runtime_facade = runtime_facade or LegadoRuntimeFacade(
+            bridge_handler=RuntimeBridge(http_client=self._http).handle,
+        )
 
     def set_execution_deadline(self, deadline: float | None) -> None:
         setter = getattr(self._js_runtime, 'set_execution_deadline', None)

@@ -22,3 +22,8 @@ data class HttpResponse(
 fun interface HttpBridge {
     fun request(spec: HttpRequestSpec): HttpResponse
 }
+
+object HeadlessRuntimeBridges {
+    @Volatile
+    var http: HttpBridge? = null
+}
