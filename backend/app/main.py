@@ -114,8 +114,9 @@ def root() -> dict:
 
 
 @app.get("/api/status")
-def status(request: Request) -> dict:
-    runtime_manager = getattr(request.app.state, "runtime_process", None)
+def status(request: Request = None) -> dict:
+    app_state = getattr(getattr(request, "app", None), "state", None)
+    runtime_manager = getattr(app_state, "runtime_process", None)
     return ok(
         data={
             "service": settings.APP_NAME,

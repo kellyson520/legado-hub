@@ -224,11 +224,16 @@ class NativeRuntimeClient:
     def _drain_stderr(self, process: subprocess.Popen[bytes]) -> None:
         if process.stderr is None:
             return
-        for raw_line in iter(process.stderr.readline, b""):
-            line = raw_line.decode("utf-8", errors="replace").rstrip()
-            if line:
-                self._stderr_lines.append(line)
-                logger.debug("native runtime: %s", line)
+        try:
+            for raw_line in iter(process.stderr.readline, b""):
+                line = raw_line.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    self._stderr_lines.append(line)
+                    logger.debug("native runtime: %s", line)
+        except (OSError, ValueError):
+            # Closing a subprocess stream while the daemon drain thread is
+            # blocked is an expected shutdown path, not a runtime failure.
+            return
 
     def _restart_after_failure(self) -> None:
         self.restart_count += 1

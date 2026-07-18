@@ -162,6 +162,8 @@ def _ensure_sqlite_event_delivery_indexes() -> None:
 
 
 def bootstrap_sqlite() -> None:
+    global _bootstrapped_engine_url
+
     _ = _schema
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_user_columns()
@@ -202,6 +204,7 @@ def bootstrap_sqlite() -> None:
         db.commit()
     finally:
         db.close()
+    _bootstrapped_engine_url = str(engine.url)
 
 
 def ensure_sqlite_bootstrap() -> None:

@@ -108,3 +108,16 @@ def test_client_answers_bridge_cache_messages(tmp_path):
         assert calls == [{"op": "get", "scope": "source-a", "key": "token"}]
     finally:
         client.close()
+
+
+def test_stderr_drain_treats_closed_stream_as_normal_shutdown():
+    class ClosedStream:
+        def readline(self):
+            raise ValueError("I/O operation on closed file")
+
+    class Process:
+        stderr = ClosedStream()
+
+    client = NativeRuntimeClient(command=[sys.executable])
+    client._drain_stderr(Process())
+    assert list(client._stderr_lines) == []

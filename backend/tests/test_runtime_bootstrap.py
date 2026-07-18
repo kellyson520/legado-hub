@@ -69,3 +69,19 @@ def test_cached_sqlite_bootstrap_runs_once_per_engine(monkeypatch):
     bootstrap_module.ensure_sqlite_bootstrap()
 
     assert calls == 1
+
+
+def test_direct_sqlite_bootstrap_marks_the_active_engine(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "bootstrap-marker.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.infrastructure.persistence.sqlite import bootstrap as bootstrap_module
+
+    bootstrap_module._bootstrapped_engine_url = None
+    bootstrap_module.bootstrap_sqlite()
+    first_marker = bootstrap_module._bootstrapped_engine_url
+    bootstrap_module.ensure_sqlite_bootstrap()
+
+    assert first_marker == str(bootstrap_module.engine.url)
+    assert bootstrap_module._bootstrapped_engine_url == first_marker
