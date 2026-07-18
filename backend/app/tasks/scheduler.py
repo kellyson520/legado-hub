@@ -55,12 +55,13 @@ def job_fetch_subscriptions():
     logger.info(f"[定时任务] 开始拉取订阅", extra={"action": "job_start", "job": job_name})
 
     async def _do():
-        subs = (await build_source_repository().list_subscriptions(enabled_only=True))
+        source_repository = build_source_repository()
+        subs = (await source_repository.list_subscriptions(enabled_only=True))
         logger.info(f"[定时任务] 共 {len(subs)} 个活跃订阅", extra={"action": job_name, "count": len(subs)})
 
         success_count = 0
         fail_count = 0
-        async with SourceFetcher() as fetcher:
+        async with SourceFetcher(source_repository=source_repository) as fetcher:
             for sub in subs:
                 try:
                     result = await fetcher.fetch_subscription(sub.id)

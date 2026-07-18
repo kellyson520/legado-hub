@@ -1,3 +1,5 @@
+import ast
+from collections import defaultdict
 from pathlib import Path
 
 
@@ -11,6 +13,71 @@ def test_domain_and_application_layers_do_not_import_infrastructure():
                     violations.append(f"{path}:{line_no}: {line.strip()}")
 
     assert violations == []
+
+
+def test_application_module_import_graph_has_no_cycles():
+    """Keep runtime imports acyclic, including lazy imports inside methods."""
+    root = Path(__file__).resolve().parents[1] / "app"
+    modules = set()
+    paths = {}
+    for path in root.rglob("*.py"):
+        module = "app." + path.relative_to(root).with_suffix("").as_posix().replace("/", ".")
+        if module.endswith(".__init__"):
+            module = module[:-9]
+        modules.add(module)
+        paths[module] = path
+
+    graph = defaultdict(set)
+
+    def resolve(module: str) -> str | None:
+        candidate = module
+        while candidate and candidate not in modules:
+            candidate = candidate.rsplit(".", 1)[0] if "." in candidate else ""
+        return candidate or None
+
+    for module, path in paths.items():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                targets = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    package_parts = module.split(".")[:-1]
+                    base_parts = package_parts[: len(package_parts) - (node.level - 1)]
+                    imported = ".".join(base_parts)
+                    if node.module:
+                        imported = f"{imported}.{node.module}"
+                    targets = [imported]
+                else:
+                    targets = [node.module or ""]
+            else:
+                continue
+            for target in targets:
+                if target.startswith("app."):
+                    resolved = resolve(target)
+                    if resolved:
+                        graph[module].add(resolved)
+
+    visiting: list[str] = []
+    visited: set[str] = set()
+    cycles: list[tuple[str, ...]] = []
+
+    def visit(module: str) -> None:
+        if module in visiting:
+            cycles.append(tuple(visiting[visiting.index(module) :] + [module]))
+            return
+        if module in visited:
+            return
+        visiting.append(module)
+        for dependency in graph[module]:
+            visit(dependency)
+        visiting.pop()
+        visited.add(module)
+
+    for module in sorted(modules):
+        visit(module)
+
+    assert cycles == []
 
 
 def test_domain_layer_is_framework_and_application_free():

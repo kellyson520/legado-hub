@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 from app.core.logging import get_logger
 from app.core.exceptions import ExternalServiceException, ValidationException
 from app.core.events import publish_event, SourceFetchedEvent, FilterRuleTriggeredEvent
+from app.domain.repositories.source_repo import SourceRepository
 
 logger = get_logger("engine.fetcher")
 
@@ -78,8 +79,9 @@ class CrawlerPool:
 class SourceFetcher:
     """订阅源拉取与处理服务"""
 
-    def __init__(self):
+    def __init__(self, source_repository: SourceRepository | None = None):
         self._session: Optional[aiohttp.ClientSession] = None
+        self._source_repository = source_repository
 
     async def __aenter__(self):
         self._session = await CrawlerPool.acquire(timeout=30)
@@ -234,9 +236,10 @@ class SourceFetcher:
         异常覆盖：网络失败 / JSON 解析失败 / DB 保存失败 / 过滤异常
         """
         from app.domain.entities.source import BookSource, RssSource
-        from app.infrastructure.persistence.factory import build_source_repository
 
-        repo = build_source_repository()
+        repo = self._source_repository
+        if repo is None:
+            raise ValidationException("source repository is not configured")
 
         try:
             # 1. 获取订阅信息

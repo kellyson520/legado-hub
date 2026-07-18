@@ -338,7 +338,8 @@ def build_source_routing_service() -> SourceRoutingService:
 
 
 def build_source_service() -> SourceAppService:
-    return SourceAppService(build_source_repository(), SourceFetcher())
+    source_repository = build_source_repository()
+    return SourceAppService(source_repository, SourceFetcher(source_repository=source_repository))
 
 
 def build_source_read_service() -> SourceReadService:
