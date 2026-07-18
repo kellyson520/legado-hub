@@ -407,13 +407,16 @@ class AnalyzeUrl(
         val encoding = charsetName?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: Charsets.UTF_8
         return value.split('&').joinToString("&") { pair ->
             val index = pair.indexOf('=')
-            if (index < 0) URLEncoder.encode(pair, encoding) else {
-                val key = URLEncoder.encode(pair.substring(0, index), encoding)
-                val item = URLEncoder.encode(pair.substring(index + 1), encoding)
+            if (index < 0) encodeFormPart(pair, encoding) else {
+                val key = encodeFormPart(pair.substring(0, index), encoding)
+                val item = encodeFormPart(pair.substring(index + 1), encoding)
                 "$key=$item"
             }
         }
     }
+
+    private fun encodeFormPart(value: String, encoding: Charset): String =
+        if (value.contains('%')) value else URLEncoder.encode(value, encoding)
 
     private fun encodeQuery(value: String, charsetName: String): String {
         val queryStart = value.indexOf('?')
