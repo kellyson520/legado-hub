@@ -20,6 +20,7 @@ from .engine import (
     JsonPathExt,
     JsRuntime,
     LegadoHttpClient,
+    LegadoRuntimeFacade,
     RuleSelector,
     TextPipeline,
     UrlUtils,
@@ -36,6 +37,7 @@ class LegadoBookSourceFetcher:
         verify_ssl: bool = False,
         max_concurrent: int = 10,
         http_client=None,
+        runtime_facade=None,
     ):
         self._http = http_client or LegadoHttpClient(
             timeout=timeout,
@@ -44,6 +46,7 @@ class LegadoBookSourceFetcher:
             max_concurrent=max_concurrent,
         )
         self._js_runtime = JsRuntime()
+        self._runtime_facade = runtime_facade or LegadoRuntimeFacade()
 
     def set_execution_deadline(self, deadline: float | None) -> None:
         setter = getattr(self._js_runtime, 'set_execution_deadline', None)
@@ -53,6 +56,7 @@ class LegadoBookSourceFetcher:
     def _selector_context(self, **kwargs) -> Dict[str, Any]:
         return {
             "js_runtime": self._js_runtime,
+            "runtime_facade": self._runtime_facade,
             "cache": getattr(self._js_runtime, "_cache", {}),
             **kwargs,
         }
@@ -197,7 +201,13 @@ class LegadoBookSourceFetcher:
             return []
 
         extraction_base_url = parse_base_url or base_url
-        book_list = self._extract_list(resp_data, book_list_rule, response_is_html, extraction_base_url)
+        book_list = self._extract_list(
+            resp_data,
+            book_list_rule,
+            response_is_html,
+            extraction_base_url,
+            stage="search",
+        )
         if not book_list:
             return []
 
@@ -224,7 +234,14 @@ class LegadoBookSourceFetcher:
             for field, rule in field_map.items():
                 if not rule:
                     continue
-                value = self._extract_field(item, rule, extraction_base_url, response_is_html, field)
+                value = self._extract_field(
+                    item,
+                    rule,
+                    extraction_base_url,
+                    response_is_html,
+                    field,
+                    stage="search",
+                )
                 book_info[field] = value
 
             if book_info.get("bookUrl") and not book_info["bookUrl"].startswith("http"):
@@ -310,11 +327,12 @@ class LegadoBookSourceFetcher:
             detail_data = self._extract_response_data(detail_resp)
             init_rule = rule_book_info.get("init", "")
             if init_rule and isinstance(detail_data, dict):
-                init_result = RuleSelector.extract(
+                init_result = self._runtime_facade.extract(
                     detail_data,
                     init_rule,
-                    detail_base_url,
-                    detail_resp.is_html,
+                    operation="extract_string",
+                    stage="book_info_init",
+                    base_url=detail_base_url,
                     context=self._selector_context(source=source, stage="book_info_init"),
                 )
                 if init_result.success and init_result.value is not None:
@@ -330,11 +348,12 @@ class LegadoBookSourceFetcher:
                 extra_vars["cache"] = self._js_runtime._cache
                 toc_url = JsonPathExt.fill_template(toc_url_rule, detail_data, extra_vars=extra_vars)
             else:
-                result = RuleSelector.extract(
+                result = self._runtime_facade.extract(
                     detail_data,
                     toc_url_rule,
-                    detail_base_url,
-                    detail_resp.is_html,
+                    operation="extract_string",
+                    stage="toc_rule_js",
+                    base_url=detail_base_url,
                     context=self._selector_context(source=source, stage="toc_rule_js"),
                 )
                 if result.success and result.value:
@@ -370,7 +389,13 @@ class LegadoBookSourceFetcher:
         if not chapter_list_rule:
             return []
 
-        chapter_list = self._extract_list(resp_data, chapter_list_rule, resp.is_html, final_base_url)
+        chapter_list = self._extract_list(
+            resp_data,
+            chapter_list_rule,
+            resp.is_html,
+            final_base_url,
+            stage="toc",
+        )
         if not chapter_list:
             return []
 
@@ -379,8 +404,8 @@ class LegadoBookSourceFetcher:
 
         chapters: list[dict[str, Any]] = []
         for idx, item in enumerate(chapter_list):
-            title = self._extract_field(item, name_rule, final_base_url, resp.is_html, "name")
-            url = self._extract_field(item, url_rule, final_base_url, resp.is_html, "url")
+            title = self._extract_field(item, name_rule, final_base_url, resp.is_html, "name", stage="toc")
+            url = self._extract_field(item, url_rule, final_base_url, resp.is_html, "url", stage="toc")
             if url and not url.startswith("http"):
                 url = UrlUtils.resolve_relative(url, final_base_url)
             if title and url:
@@ -424,9 +449,9 @@ class LegadoBookSourceFetcher:
         title_rule = rule_content.get("title", "")
         next_url_rule = rule_content.get("nextContentUrl", "") or rule_content.get("nextUrl", "")
 
-        content = self._extract_field(resp_data, content_rule, response_base_url, resp.is_html, "content")
-        title = self._extract_field(resp_data, title_rule, response_base_url, resp.is_html, "name")
-        next_url = self._extract_field(resp_data, next_url_rule, response_base_url, resp.is_html, "url")
+        content = self._extract_field(resp_data, content_rule, response_base_url, resp.is_html, "content", stage="content")
+        title = self._extract_field(resp_data, title_rule, response_base_url, resp.is_html, "name", stage="content")
+        next_url = self._extract_field(resp_data, next_url_rule, response_base_url, resp.is_html, "url", stage="content")
 
         if next_url and not next_url.startswith("http"):
             next_url = UrlUtils.resolve_relative(next_url, response_base_url)
@@ -478,6 +503,7 @@ class LegadoBookSourceFetcher:
                     response_base_url,
                     resp.is_html,
                     field,
+                    stage="book_info",
                 )
         return info
 
@@ -531,16 +557,21 @@ class LegadoBookSourceFetcher:
         rule: str,
         is_html: bool,
         base_url: str,
+        stage: str = "unknown",
     ) -> List[Any]:
         if not rule:
             return []
-        return RuleSelector.extract_list(
+        result = self._runtime_facade.extract(
             data,
             rule,
-            base_url,
-            is_html,
-            context=self._selector_context(),
+            operation="extract_list",
+            stage=stage,
+            base_url=base_url,
+            context=self._selector_context(stage=stage),
         )
+        if not result.success or result.value is None:
+            return []
+        return result.value if isinstance(result.value, list) else [result.value]
 
     def _extract_field(
         self,
@@ -549,6 +580,7 @@ class LegadoBookSourceFetcher:
         base_url: str,
         is_html: bool,
         field_type: str = "",
+        stage: str = "unknown",
     ) -> str:
         if not rule:
             return ""
@@ -564,11 +596,12 @@ class LegadoBookSourceFetcher:
                 },
             )
         else:
-            result = RuleSelector.extract(
+            result = self._runtime_facade.extract(
                 data,
                 rule,
-                base_url,
-                is_html,
+                operation="extract_string",
+                stage=stage,
+                base_url=base_url,
                 context=self._selector_context(),
             )
             if not result.success or result.value is None:
@@ -604,6 +637,11 @@ class LegadoBookSourceFetcher:
             runtime_close = getattr(self._js_runtime, 'close', None)
             if callable(runtime_close):
                 result = runtime_close()
+                if inspect.isawaitable(result):
+                    await result
+            facade_close = getattr(self._runtime_facade, "close", None)
+            if callable(facade_close):
+                result = facade_close()
                 if inspect.isawaitable(result):
                     await result
 

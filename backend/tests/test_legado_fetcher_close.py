@@ -18,10 +18,13 @@ async def test_fetcher_close_releases_http_and_js_runtime_once():
     fetcher = LegadoBookSourceFetcher()
     http = FakeHttp()
     runtime = FakeRuntime()
+    facade = FakeRuntime()
     fetcher._http = http
     fetcher._js_runtime = runtime
+    fetcher._runtime_facade = facade
 
     await fetcher.close()
 
     assert http.close_calls == 1
     assert runtime.close_calls == 1
+    assert facade.close_calls == 1

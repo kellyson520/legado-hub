@@ -65,6 +65,26 @@ class RuleSelector:
             return SelectorResult()
 
         context = context or {}
+        runtime_facade = context.get("runtime_facade")
+        if runtime_facade is not None and not context.get("_skip_runtime_facade"):
+            delegated_context = {
+                key: value
+                for key, value in context.items()
+                if key not in {"runtime_facade", "_skip_runtime_facade"}
+            }
+            delegated = runtime_facade.extract(
+                data,
+                rule,
+                operation="extract_list" if as_list else "extract_string",
+                stage=str(context.get("stage", "selector")),
+                base_url=base_url,
+                context=delegated_context,
+            )
+            return SelectorResult(
+                value=delegated.value,
+                success=delegated.success,
+                rule_type=RuleType.AUTO,
+            )
         last_result = SelectorResult(rule_type=RuleType.NONE)
 
         for alternative in JsonPathExt._split_top_level(rule.strip(), "||"):

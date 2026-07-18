@@ -29,7 +29,11 @@ class PythonRuntimeFallback:
             rule,
             base_url=base_url,
             is_html=is_html,
-            context=context or {},
+            context={
+                key: value
+                for key, value in (context or {}).items()
+                if key not in {"runtime_facade", "_skip_runtime_facade"}
+            },
             as_list=operation in {"extract_list", "extract_elements"},
         )
         value = result.value
