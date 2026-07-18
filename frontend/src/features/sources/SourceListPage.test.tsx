@@ -24,6 +24,14 @@ vi.mock('@/api/modules/sources', () => ({
     meta: { page: 1, total: 1 },
     trace_id: null,
   }),
+  listRuntimeSourceVersions: vi.fn().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [],
+    meta: { page: 1, total: 0 },
+    trace_id: null,
+  }),
   importLegadoSources: vi.fn().mockResolvedValue({
     success: true,
     code: 'OK',
@@ -60,7 +68,7 @@ vi.mock('@/api/modules/sources', () => ({
 }))
 
 import { SourceListPage } from './SourceListPage'
-import { listBookSources } from '@/api/modules/sources'
+import { listBookSources, listRuntimeSourceVersions } from '@/api/modules/sources'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -83,6 +91,62 @@ beforeEach(() => {
     meta: { page: 1, total: 1 },
     trace_id: null,
   })
+  vi.mocked(listRuntimeSourceVersions).mockReset().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{
+      id: 'candidate-source-1',
+      bookSourceName: '候选版本书源',
+      bookSourceUrl: 'https://candidate.example.test',
+      bookSourceGroup: '测试',
+      enabled: true,
+      sourceStatus: 'candidate',
+      sourceOrigin: 'runtime_version',
+      lastCheckTime: '2026-07-15T10:00:00Z',
+      errorMsg: '',
+      payload: {},
+    }],
+    meta: { page: 1, total: 1 },
+    trace_id: null,
+  })
+})
+
+test('source list reads the temporary source database by default', async () => {
+  vi.mocked(listBookSources).mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{
+      id: 1,
+      bookSourceName: '临时库书源',
+      bookSourceUrl: 'https://temporary-source.example.test',
+      bookSourceGroup: '测试',
+      enabled: true,
+      sourceStatus: 'ok',
+      sourceOrigin: 'temporary_database',
+      lastCheckTime: '2026-07-15T10:00:00Z',
+      errorMsg: '',
+      payload: {},
+    }],
+    meta: { page: 1, total: 1 },
+    trace_id: null,
+  })
+  render(<MemoryRouter><SourceListPage /></MemoryRouter>)
+
+  expect(await screen.findByText('临时库书源')).toBeInTheDocument()
+  expect(listBookSources).toHaveBeenCalledWith({ page: 1, page_size: 100, search: '' })
+})
+
+test('source list exposes candidate versions without replacing the temporary database view', async () => {
+  render(<MemoryRouter><SourceListPage /></MemoryRouter>)
+
+  expect(await screen.findByText('运行书源')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '候选版本' }))
+
+  expect(await screen.findByText('候选版本书源')).toBeInTheDocument()
+  expect(listRuntimeSourceVersions).toHaveBeenCalledWith({ page: 1, page_size: 100, search: '' })
+  expect(screen.queryByText('运行书源')).not.toBeInTheDocument()
 })
 
 test('source list renders legacy runtime name, URL, and source status', async () => {
@@ -93,7 +157,7 @@ test('source list renders legacy runtime name, URL, and source status', async ()
   expect(screen.getByText('已启用')).toBeInTheDocument()
   expect(screen.queryByText('已发布版本')).not.toBeInTheDocument()
   expect(screen.queryByText('最近评分')).not.toBeInTheDocument()
-  expect(screen.getByRole('heading', { name: '书源运行库存' })).toBeVisible()
+  expect(screen.getByRole('heading', { name: '书源临时库' })).toBeVisible()
   expect(screen.getByRole('link', { name: '打开书源健康控制台' })).toHaveClass('inline-flex')
 })
 

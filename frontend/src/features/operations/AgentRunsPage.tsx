@@ -8,9 +8,14 @@ import {
   type OperationAgentRunRow,
   type OperationAgentToolInvocationRow,
 } from '@/api/modules/operations'
+import { DataTable } from '@/components/data/DataTable'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusBadge } from '@/components/data/StatusBadge'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
+import { SectionHeader } from '@/components/layout/SectionHeader'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 function getAgentKind(row: OperationAgentRunRow | OperationAgentRunDetail) {
@@ -88,7 +93,7 @@ export function AgentRunsPage() {
   }
 
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="Operations"
       title="Agent runs"
       description="按租户查看最近 Agent run、工具调用结果与证据轨迹，用于回溯自动构建与知识处理过程。"
@@ -103,61 +108,35 @@ export function AgentRunsPage() {
           emptyLabel="No agent runs yet"
           searchLabel="搜索 Agent run"
         />
-        <div className="overflow-hidden rounded-2xl border border-border bg-card">
-          <table className="min-w-full divide-y divide-border text-sm">
-            <thead className="bg-muted/40 text-left text-muted-foreground">
-              <tr>
-                <th className="px-4 py-3 font-medium">Run</th>
-                <th className="px-4 py-3 font-medium">Tenant</th>
-                <th className="px-4 py-3 font-medium">Summary</th>
-                <th className="px-4 py-3 font-medium">Created</th>
-                <th className="px-4 py-3 font-medium">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {rows.map((row) => {
+        <DataTable
+          rows={rows}
+          getRowKey={(row) => row.id}
+          columns={[
+            {
+              id: 'run',
+              header: t('Run'),
+              cell: (row) => <div className="space-y-1"><div className="font-medium text-foreground">{getAgentKind(row)}</div><StatusBadge status={row.status} /></div>,
+            },
+            { id: 'tenant', header: t('Tenant'), cell: (row) => <span className="text-muted-foreground">{getTenantId(row)}</span> },
+            {
+              id: 'summary',
+              header: t('Summary'),
+              cell: (row) => <><div>{t('Tools ')}{getToolInvocationCount(row)} · {t('Accepted ')}{getAcceptedCount(row)} · {t('Rejected ')}{getRejectedCount(row)}</div><div className="text-xs text-muted-foreground">{t('Evidence ')}{getEvidenceCount(row)} · {t('Latest ')}{getLatestToolName(row)}</div></>,
+            },
+            { id: 'created', header: t('Created'), cell: (row) => <span className="text-muted-foreground">{getCreatedAt(row)}</span> },
+            {
+              id: 'action',
+              header: t('Action'),
+              cell: (row) => {
                 const inspecting = loadingDetail && selectedId === row.id
-                return (
-                  <tr key={row.id}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-foreground">{getAgentKind(row)}</div>
-                      <div className="text-xs text-muted-foreground">{row.status}</div>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{getTenantId(row)}</td>
-                    <td className="px-4 py-3">
-                      <div>
-                        {t('Tools ')}{getToolInvocationCount(row)} · {t('Accepted ')}{getAcceptedCount(row)} · {t('Rejected ')}{getRejectedCount(row)}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {t('Evidence ')}{getEvidenceCount(row)} · {t('Latest ')}{getLatestToolName(row)}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{getCreatedAt(row)}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => void inspect(row.id)}
-                        disabled={inspecting}
-                        aria-label={`${t('Inspect')} ${getAgentKind(row)} ${row.id}`}
-                      >
-                        {inspecting ? 'Loading…' : 'Inspect'}
-                      </button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                return <Button type="button" variant="outline" size="sm" onClick={() => void inspect(row.id)} disabled={inspecting} aria-label={`${t('Inspect')} ${getAgentKind(row)} ${row.id}`}>{inspecting ? t('Loading…') : t('Inspect')}</Button>
+              },
+            },
+          ]}
+        />
 
-        <section className="rounded-2xl border border-border bg-card p-4">
-          <div className="mb-3">
-            <h2 className="text-base font-semibold text-foreground">Run detail</h2>
-            <p className="text-sm text-muted-foreground">
-              {detail ? `${getAgentKind(detail)} · ${getTenantId(detail)}` : 'Select a run to inspect its tool history'}
-            </p>
-          </div>
+        <Card className="p-4">
+          <SectionHeader title="Run detail" description={detail ? `${getAgentKind(detail)} · ${getTenantId(detail)}` : 'Select a run to inspect its tool history'} className="mb-3" />
           {detail ? (
             <div className="space-y-4">
               <div className="grid gap-3 md:grid-cols-2">
@@ -220,8 +199,8 @@ export function AgentRunsPage() {
           ) : (
             <p className="text-sm text-muted-foreground">Select a run to inspect its tool history</p>
           )}
-        </section>
+        </Card>
       </div>
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

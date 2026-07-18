@@ -58,6 +58,10 @@ export interface SourceVersionResponse {
 }
 
 export async function listBookSources(params: SourceListParams = {}): Promise<PaginatedEnvelope<SourceRow>> {
+  return apiClient.get<SourceRow[]>('/sources/book_sources', { params })
+}
+
+export async function listRuntimeSourceVersions(params: SourceListParams = {}): Promise<PaginatedEnvelope<SourceRow>> {
   return apiClient.get<SourceRow[]>('/sources/visible', { params })
 }
 

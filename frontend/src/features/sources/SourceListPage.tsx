@@ -2,10 +2,12 @@ import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 
-import { exportLegadoSources, importLegadoSourceFile, importLegadoSources, listBookSources, type LegadoSource, type SourceRow } from '@/api/modules/sources'
+import { exportLegadoSources, importLegadoSourceFile, importLegadoSources, listBookSources, listRuntimeSourceVersions, type LegadoSource, type SourceRow } from '@/api/modules/sources'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusBadge } from '@/components/data/StatusBadge'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
+import { SectionHeader } from '@/components/layout/SectionHeader'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -15,12 +17,38 @@ import { useServerPagination } from '@/hooks/useServerPagination'
 const MAX_LEGADO_FILE_BYTES = 32 * 1024 * 1024
 const SOURCE_PAGE_SIZE = 100
 
-export function SourceListPage() {
+type SourceInventory = 'temporary' | 'versions'
+
+function SourceInventoryPanel({ inventory }: { inventory: SourceInventory }) {
   const pagination = useServerPagination<SourceRow>({
     pageSize: SOURCE_PAGE_SIZE,
-    load: listBookSources,
+    load: inventory === 'temporary' ? listBookSources : listRuntimeSourceVersions,
   })
   const { rows } = pagination
+  const isTemporary = inventory === 'temporary'
+
+  return <>
+    <PaginatedListControls
+      pagination={pagination}
+      empty={!pagination.loading && rows.length === 0}
+      loadingLabel="正在加载书源…"
+      errorLabel="无法加载书源库存，请重试。"
+      emptyLabel={pagination.appliedSearch
+        ? `没有匹配“${pagination.appliedSearch}”的书源。`
+        : isTemporary
+          ? '临时库中还没有书源。可上传或粘贴 Legado JSON 创建候选版本。'
+          : '当前账户没有可见候选或已发布书源。'}
+      searchLabel="搜索书源"
+      itemLabel="个书源"
+    />
+    <div className="grid gap-4">
+      {rows.map((row) => <Card key={row.id} className="grid gap-4 p-5 md:grid-cols-[1.6fr_1fr]"><div><p className="text-xs font-medium text-muted-foreground">书源</p><h3 className="mt-2 text-lg font-semibold">{row.bookSourceName}</h3><p className="mt-2 break-all text-sm text-muted-foreground">{row.bookSourceUrl}</p></div><div className="rounded-md border border-border bg-muted/40 p-4"><p className="text-xs font-medium text-muted-foreground">书源状态</p><StatusBadge status={row.sourceStatus} className="mt-2" />{row.sourceStatus === 'candidate' ? <Link to={`/sources/rules/${row.id}`} className="mt-3 inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline">审核规则</Link> : null}</div></Card>)}
+    </div>
+  </>
+}
+
+export function SourceListPage() {
+  const [inventory, setInventory] = useState<SourceInventory>('temporary')
   const [legadoJson, setLegadoJson] = useState('')
   const [feedback, setFeedback] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -144,22 +172,19 @@ export function SourceListPage() {
     } catch { setError('导出失败，请检查登录权限。') }
   }
 
-  return <ConsoleLayout eyebrow="书源" title="书源运行库存" description="查看当前运行中的书源。Legado JSON 导入始终作为候选版本，验证完成后才可发布。">
-    <div className="flex justify-end"><Link to="/sources/health" className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90">打开书源健康控制台</Link></div>
-    <PaginatedListControls
-      pagination={pagination}
-      empty={!pagination.loading && rows.length === 0}
-      loadingLabel="正在加载书源…"
-      errorLabel="无法加载书源库存，请重试。"
-      emptyLabel={pagination.appliedSearch ? `没有匹配“${pagination.appliedSearch}”的书源。` : '当前运行库存中还没有书源。可上传 Legado JSON 文件创建候选书源。'}
-      searchLabel="搜索书源"
-      itemLabel="个书源"
-    />
-    <Card className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">Legado 书源导入与导出</h2><p className="mt-1 text-sm text-muted-foreground">导入仅创建候选书源，并移除 cookie、令牌和 Provider 等敏感字段。</p></div><Button type="button" variant="outline" onClick={() => void handleExport()}>导出可见书源</Button></div>
+  return <ConsolePageShell
+    eyebrow="书源"
+    title="书源临时库"
+    description="查看临时库中的书源。Legado JSON 导入会创建候选版本，验证完成后才可发布。"
+    actions={<><Button type="button" onClick={() => fileInputRef.current?.click()} disabled={submitting || readingFile}><Upload className="mr-2 h-4 w-4" aria-hidden="true" />上传书源 JSON</Button><Link to="/sources/health" className="inline-flex h-10 items-center rounded-md border border-input bg-card px-3 text-sm font-medium text-foreground hover:bg-accent">打开书源健康控制台</Link></>}
+  >
+    <div className="flex flex-wrap gap-2" aria-label="书源视图">
+      <Button type="button" size="sm" variant={inventory === 'temporary' ? 'default' : 'outline'} onClick={() => setInventory('temporary')}>临时库</Button>
+      <Button type="button" size="sm" variant={inventory === 'versions' ? 'default' : 'outline'} onClick={() => setInventory('versions')}>候选版本</Button>
+    </div>
+    <SourceInventoryPanel key={inventory} inventory={inventory} />
+    <Card className="p-5"><SectionHeader title="Legado 书源导入与导出" description="导入仅创建候选书源，并移除 cookie、令牌和 Provider 等敏感字段。" actions={<Button type="button" variant="outline" onClick={() => void handleExport()}>导出可见书源</Button>} />
       <form className="mt-4 space-y-3" onSubmit={handleImport}><label className="text-sm font-medium" htmlFor="legado-json">Legado JSON</label><Textarea id="legado-json" value={legadoJson} onChange={(event) => setLegadoJson(event.target.value)} placeholder={'[{"bookSourceName":"示例书源","bookSourceUrl":"https://example.com"}]'} /><div className="flex flex-wrap items-end gap-3"><label className="sr-only" htmlFor="legado-json-file">选择 Legado JSON 文件</label><Input ref={fileInputRef} id="legado-json-file" className="sr-only" type="file" accept=".json,application/json" onChange={(event) => void handleFileSelection(event)} disabled={submitting || readingFile} /><Button type="button" variant="outline" disabled={submitting || readingFile} onClick={() => fileInputRef.current?.click()}><Upload className="mr-2 h-4 w-4" aria-hidden="true" />上传 JSON 文件</Button><Button type="submit" disabled={submitting || readingFile}>导入书源</Button><StatusMessage tone="success" message={feedback} as="span" className="pb-2" /><StatusMessage tone="error" message={error} as="span" className="pb-2 text-rose-600" /></div>{createdVersionIds.length > 0 ? <div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span className="text-muted-foreground">候选书源已创建，可继续：</span>{createdVersionIds.map((sourceVersionId) => <Link key={sourceVersionId} to={`/sources/rules/${sourceVersionId}`} className="font-medium text-primary underline-offset-4 hover:underline">编辑规则</Link>)}</div> : null}</form>
     </Card>
-    <div className="grid gap-4">
-      {rows.map((row) => <Card key={row.id} className="grid gap-4 p-5 md:grid-cols-[1.6fr_1fr]"><div><p className="text-xs font-medium text-muted-foreground">书源</p><h3 className="mt-2 text-lg font-semibold">{row.bookSourceName}</h3><p className="mt-2 break-all text-sm text-muted-foreground">{row.bookSourceUrl}</p></div><div className="rounded-md border border-border bg-muted/40 p-4"><p className="text-xs font-medium text-muted-foreground">书源状态</p><p className="mt-2 text-lg font-medium text-primary">{row.sourceStatus}</p>{row.sourceStatus === 'candidate' ? <Link to={`/sources/rules/${row.id}`} className="mt-3 inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline">审核规则</Link> : null}</div></Card>)}
-    </div>
-  </ConsoleLayout>
+  </ConsolePageShell>
 }

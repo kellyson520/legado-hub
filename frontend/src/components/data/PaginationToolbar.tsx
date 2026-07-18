@@ -1,9 +1,6 @@
-import { useId } from 'react'
-import type { FormEvent } from 'react'
-
 import { useLanguage } from '@/app/providers/LanguageProvider'
+import { FilterBar } from '@/components/data/FilterBar'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 
 export interface PaginationToolbarProps {
   page: number
@@ -47,42 +44,21 @@ export function PaginationToolbar({
   const resolvedItemLabel = itemLabel ?? t('common.items')
   const resolvedEmptyLabel = emptyLabel ?? t('common.noResults')
   const safeTotalPages = Math.max(1, totalPages)
-  const searchId = useId()
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    onSearch()
-  }
-
   return (
     <div className="grid gap-3 rounded-md border border-border bg-card p-4">
       {showSearch ? (
-        <form className="flex flex-col gap-2 sm:flex-row sm:items-end" onSubmit={handleSubmit}>
-          <div className="min-w-0 flex-1">
-            <label className="text-sm font-medium" htmlFor={searchId}>
-              {resolvedSearchLabel}
-            </label>
-            <Input
-              id={searchId}
-              aria-label={resolvedSearchLabel}
-              className="mt-2"
-              value={searchInput}
-              onChange={(event) => onSearchInput(event.target.value)}
-              placeholder={t('pagination.searchPlaceholder')}
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit" disabled={loading}>{t('common.search')}</Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={loading || (!searchInput && !appliedSearch)}
-              onClick={onClearSearch}
-            >
-              {t('common.clear')}
-            </Button>
-          </div>
-        </form>
+        <FilterBar
+          label={resolvedSearchLabel}
+          placeholder={t('pagination.searchPlaceholder')}
+          value={searchInput}
+          loading={loading}
+          clearDisabled={loading || (!searchInput && !appliedSearch)}
+          submitLabel={t('common.search')}
+          clearLabel={t('common.clear')}
+          onChange={onSearchInput}
+          onSubmit={onSearch}
+          onClear={onClearSearch}
+        />
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {loading ? (
