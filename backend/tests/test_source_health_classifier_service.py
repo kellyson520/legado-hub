@@ -229,3 +229,49 @@ def test_classifier_marks_html_response_when_json_is_expected():
 
     assert decision.health_status == "degraded"
     assert decision.failure_reason == "html_instead_of_json"
+
+
+def test_classifier_marks_probe_with_no_keyword_hit_as_degraded_not_unknown():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=1,
+        source_name="无结果书源",
+        source_url="https://example.test",
+        probe_mode="full_chain",
+        keyword="捞尸人",
+        search=StageProbeResult(stage="search", status="failed", hit_count=0),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.failure_reason == "keyword_no_result"
+    assert decision.health_status == "degraded"
+    assert decision.route_policy == "deprioritize"
+
+
+def test_classifier_marks_diagnostic_gap_as_degraded_not_unknown():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=2,
+        source_name="诊断不足书源",
+        source_url="https://example.test",
+        probe_mode="full_chain",
+        keyword="捞尸人",
+        search=StageProbeResult(
+            stage="search",
+            status="failed",
+            error_message="parser returned no structured evidence",
+        ),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.failure_reason == "unknown_error"
+    assert decision.health_status == "degraded"
+    assert decision.decision_confidence == "low"

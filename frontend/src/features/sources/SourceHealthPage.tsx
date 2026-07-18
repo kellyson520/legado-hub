@@ -5,6 +5,7 @@ import { Eye } from 'lucide-react'
 import {
   listSourceHealth,
   probeSourceHealth,
+  probeSourceHealthBatch,
   recoverSourceHealth,
   type SourceHealthRow,
 } from '@/api/modules/sourceHealth'
@@ -16,6 +17,7 @@ import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 const PAGE_SIZE = 20
+const PROBE_KEYWORDS = ['捞尸人', '斗罗大陆', '剑来']
 
 function tone(status: string) {
   if (status === 'healthy' || status === 'ok') return 'text-emerald-600 dark:text-emerald-400'
@@ -31,6 +33,7 @@ export function SourceHealthPage() {
   })
   const { rows, meta } = pagination
   const [actionError, setActionError] = useState<string | null>(null)
+  const [batchPending, setBatchPending] = useState(false)
   const [pendingSourceIds, setPendingSourceIds] = useState<Set<number>>(() => new Set())
   const mountedRef = useRef(true)
   const nextActionRequestIdRef = useRef(0)
@@ -96,6 +99,20 @@ export function SourceHealthPage() {
     await handleSourceAction(sourceId, sourceName, 'recover', recoverSourceHealth)
   }
 
+  async function handleBatchProbe() {
+    if (!mountedRef.current || batchPending || !rows.length) return
+    setBatchPending(true)
+    setActionError(null)
+    try {
+      await probeSourceHealthBatch(rows.map((row) => row.source_id), PROBE_KEYWORDS)
+      if (mountedRef.current) pagination.reload()
+    } catch {
+      if (mountedRef.current) setActionError('Unable to probe the visible source page. Please try again.')
+    } finally {
+      if (mountedRef.current) setBatchPending(false)
+    }
+  }
+
   const summary = rows.reduce(
     (acc, row) => {
       acc[row.health_status] = (acc[row.health_status] || 0) + 1
@@ -110,18 +127,19 @@ export function SourceHealthPage() {
       title="Source health control plane"
       description="展示 search / toc / content 三层状态、失败原因、分流策略，并提供重探测与恢复入口。"
     >
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <Card className="p-4">Total: {meta.total}</Card>
         <Card className="p-4">本页 Healthy: {summary.healthy || 0}</Card>
         <Card className="p-4">本页 Blocked: {summary.blocked || 0}</Card>
         <Card className="p-4">本页 Dead: {summary.dead || 0}</Card>
+        <Card className="p-4">本页未探测: {summary.unknown || 0}</Card>
       </div>
 
       <Card className="p-5">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-foreground">Book source health</h3>
           <div className="flex gap-3">
-            <Button variant="outline" size="sm" onClick={() => pagination.reload()} disabled={pagination.loading}>Probe now</Button>
+            <Button variant="outline" size="sm" onClick={() => void handleBatchProbe()} disabled={pagination.loading || batchPending || !rows.length}>智能探测本页</Button>
             <Link to="/sources" className="text-sm font-medium text-primary">
               Back to inventory
             </Link>
@@ -146,7 +164,7 @@ export function SourceHealthPage() {
                   <div>
                     <h4 className="text-base font-semibold text-foreground">{row.source_name}</h4>
                     <p className="text-sm text-muted-foreground">{row.source_url}</p>
-                    <p className={`mt-2 text-sm ${tone(row.health_status)}`}>health: {row.health_status}</p>
+                    <p className={`mt-2 text-sm ${tone(row.health_status)}`}>health: {row.failure_reason === 'not_probed' ? '未探测' : row.health_status}</p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       reason:{' '}
                       <span>{row.failure_reason || '-'}</span>

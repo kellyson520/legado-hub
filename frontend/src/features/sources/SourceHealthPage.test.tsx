@@ -5,10 +5,11 @@ import { afterEach, beforeEach, vi } from 'vitest'
 vi.mock('@/api/modules/sourceHealth', () => ({
   listSourceHealth: vi.fn(),
   probeSourceHealth: vi.fn(),
+  probeSourceHealthBatch: vi.fn(),
   recoverSourceHealth: vi.fn(),
 }))
 
-import { listSourceHealth, probeSourceHealth, recoverSourceHealth } from '@/api/modules/sourceHealth'
+import { listSourceHealth, probeSourceHealth, probeSourceHealthBatch, recoverSourceHealth } from '@/api/modules/sourceHealth'
 import { SourceHealthPage } from './SourceHealthPage'
 
 const pageOneRows = [
@@ -87,6 +88,15 @@ beforeEach(() => {
   ))
   vi.mocked(probeSourceHealth).mockReset()
   vi.mocked(probeSourceHealth).mockResolvedValue(mutationResponse())
+  vi.mocked(probeSourceHealthBatch).mockReset()
+  vi.mocked(probeSourceHealthBatch).mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [],
+    meta: { total: 0 },
+    trace_id: null,
+  })
   vi.mocked(recoverSourceHealth).mockReset()
   vi.mocked(recoverSourceHealth).mockResolvedValue(mutationResponse())
 })
@@ -108,6 +118,7 @@ test('source health page shows stage statuses, page-scoped summaries, and unique
   expect(screen.getByText('本页健康： 1')).toBeInTheDocument()
   expect(screen.getByText('本页阻断： 1')).toBeInTheDocument()
   expect(screen.getByText('本页失效： 0')).toBeInTheDocument()
+  expect(screen.getByText('本页未探测： 0')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '探测书源 七猫小说' })).toBeEnabled()
   expect(screen.getByRole('button', { name: '恢复书源 七猫小说' })).toBeEnabled()
   expect(
@@ -115,6 +126,21 @@ test('source health page shows stage statuses, page-scoped summaries, and unique
       (link) => link.getAttribute('href') === '/sources/health/7'
     )
   ).toBeDefined()
+})
+
+test('smart probe button probes every visible source instead of only refreshing the list', async () => {
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('七猫小说')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '智能探测本页' }))
+
+  await waitFor(() => {
+    expect(probeSourceHealthBatch).toHaveBeenCalledWith([7, 4], ['捞尸人', '斗罗大陆', '剑来'])
+  })
 })
 
 test('source health page uses API metadata to navigate the inventory one page at a time', async () => {

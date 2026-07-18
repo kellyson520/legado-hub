@@ -13,7 +13,12 @@ from app.infrastructure.persistence.factory import (
     close_interactive_browser_supervisor,
 )
 from app.interfaces.http.router import api_router
-from app.tasks.scheduler import run_event_delivery_job, run_source_build_job
+from app.tasks.scheduler import (
+    run_event_delivery_job,
+    run_source_build_job,
+    start_scheduler,
+    stop_scheduler,
+)
 
 
 logger = get_logger("lifespan")
@@ -50,7 +55,11 @@ async def lifespan(app: FastAPI):
     stop_event = None
     source_build_worker_task = None
     source_build_stop_event = None
+    scheduler_started = False
     await build_source_runtime_service().register_published_book_sources()
+    if settings.ENV != 'test':
+        start_scheduler()
+        scheduler_started = True
     if settings.ENV != 'test' and settings.EVENT_DELIVERY_WORKER_ENABLED:
         stop_event = asyncio.Event()
         worker_task = asyncio.create_task(_event_delivery_worker(stop_event))
@@ -62,6 +71,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if scheduler_started:
+            stop_scheduler()
         if stop_event is not None:
             stop_event.set()
         if source_build_stop_event is not None:

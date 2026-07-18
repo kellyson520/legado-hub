@@ -115,6 +115,57 @@ async def test_run_source_health_probe_job_invokes_admin_service(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_smart_source_health_probe_uses_bounded_unprobed_candidates(monkeypatch):
+    from app.tasks import scheduler
+
+    class FakeAdminService:
+        def list_probe_candidate_ids(self, limit):
+            assert limit == 3
+            return [4, 7, 8]
+
+        async def probe_book_sources(self, source_ids, keyword_samples, probe_mode="full_chain"):
+            return {
+                "results": [{"snapshot": {"source_id": source_id}} for source_id in source_ids],
+                "total": len(source_ids),
+                "keyword_samples": keyword_samples,
+            }
+
+    monkeypatch.setattr(scheduler, "build_source_health_admin_service", lambda: FakeAdminService())
+
+    result = await scheduler.run_smart_source_health_probe_job(
+        limit=3,
+        keyword_samples=["捞尸人", "斗罗大陆"],
+    )
+
+    assert result["total"] == 3
+    assert [item["snapshot"]["source_id"] for item in result["results"]] == [4, 7, 8]
+    assert result["keyword_samples"] == ["捞尸人", "斗罗大陆"]
+
+
+@pytest.mark.asyncio
+async def test_smart_source_health_probe_closes_probe_service(monkeypatch):
+    from app.tasks import scheduler
+
+    class FakeAdminService:
+        def __init__(self):
+            self.closed = False
+
+        def list_probe_candidate_ids(self, limit):
+            return []
+
+        async def aclose(self):
+            self.closed = True
+
+    service = FakeAdminService()
+    monkeypatch.setattr(scheduler, "build_source_health_admin_service", lambda: service)
+
+    result = await scheduler.run_smart_source_health_probe_job(limit=3)
+
+    assert result["total"] == 0
+    assert service.closed is True
+
+
+@pytest.mark.asyncio
 async def test_run_catalog_source_discovery_job_enqueues_enabled_sources(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "source-catalog-discovery.sqlite3"))

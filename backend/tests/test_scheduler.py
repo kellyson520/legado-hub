@@ -407,6 +407,7 @@ def test_jobs_list_defined():
     expected_jobs = {
         "fetch_subscriptions",
         "check_sources",
+        "probe_source_health",
         "mark_stale_sources",
         "reset_daily_quota",
         "sync_quota_to_db",

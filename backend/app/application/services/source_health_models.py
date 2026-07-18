@@ -26,6 +26,8 @@ class SourceProbeEvidence:
     search: StageProbeResult
     toc: StageProbeResult
     content: StageProbeResult
+    attempted_keywords: list[str] = field(default_factory=list)
+    attempts: list[dict] = field(default_factory=list)
 
 
 @dataclass

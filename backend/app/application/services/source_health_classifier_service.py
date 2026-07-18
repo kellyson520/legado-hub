@@ -36,6 +36,8 @@ class SourceHealthClassifierService:
             route_score=route_score,
             metadata={
                 "keyword": evidence.keyword,
+                "attempted_keywords": evidence.attempted_keywords,
+                "attempts": evidence.attempts,
                 "next_probe_after_minutes": self._next_probe_minutes(failure_reason),
             },
         )
@@ -153,7 +155,7 @@ class SourceHealthClassifierService:
             evidence.toc.status == "failed" or evidence.content.status == "failed"
         ):
             return "degraded"
-        if failure_reason in {"html_instead_of_json", "parse_empty"}:
+        if failure_reason in {"html_instead_of_json", "parse_empty", "keyword_no_result", "unknown_error"}:
             return "degraded"
         return "unknown"
 

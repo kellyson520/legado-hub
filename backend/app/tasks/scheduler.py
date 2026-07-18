@@ -9,11 +9,13 @@
 """
 
 import asyncio
+import inspect
 import logging
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from ..core.config import settings
 from ..core.logging import get_logger, set_log_context, clear_log_context
 from ..core.events import publish_event, SourceFetchedEvent, SystemNoticeEvent
 from ..infrastructure.persistence.factory import (
@@ -29,6 +31,7 @@ from ..services.fetcher import SourceFetcher, SourceChecker
 
 logger = get_logger("scheduler")
 scheduler = BackgroundScheduler()
+SMART_SOURCE_HEALTH_KEYWORDS = ("捞尸人", "斗罗大陆", "剑来")
 
 
 def _safe_async_run(coro):
@@ -39,9 +42,9 @@ def _safe_async_run(coro):
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, coro)
-            future.result(timeout=300)
+            return future.result(timeout=300)
     except RuntimeError:
-        asyncio.run(coro)
+        return asyncio.run(coro)
 
 
 def job_fetch_subscriptions():
@@ -150,6 +153,39 @@ def job_check_sources():
         _safe_async_run(_do())
     except Exception as e:
         logger.error(f"[定时任务] 检查任务全局异常: {e}", extra={"action": "job_error", "job": job_name}, exc_info=True)
+    finally:
+        clear_log_context()
+
+
+def job_probe_source_health():
+    """按最久未探测优先级执行有界的 Legado 全链路健康探测。"""
+    job_name = "probe_source_health"
+    if not settings.SOURCE_HEALTH_PROBE_WORKER_ENABLED:
+        logger.info("[定时任务] 智能书源探测已关闭", extra={"action": "job_skipped", "job": job_name})
+        return
+
+    set_log_context(trace_id=f"job_{datetime.utcnow().timestamp():.0f}")
+    try:
+        result = _safe_async_run(
+            run_smart_source_health_probe_job(
+                limit=settings.SOURCE_HEALTH_PROBE_BATCH_SIZE,
+                keyword_samples=list(SMART_SOURCE_HEALTH_KEYWORDS),
+            )
+        )
+        logger.info(
+            "[定时任务] 智能书源探测完成",
+            extra={
+                "action": "job_end",
+                "job": job_name,
+                "total": result.get("total", 0) if isinstance(result, dict) else 0,
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            f"[定时任务] 智能书源探测异常: {exc}",
+            extra={"action": "job_error", "job": job_name, "error": str(exc)},
+            exc_info=True,
+        )
     finally:
         clear_log_context()
 
@@ -393,6 +429,7 @@ def _sanitize_analysis_task_error(exc: Exception) -> str:
 JOBS = [
     ("fetch_subscriptions", "0 */2 * * *", job_fetch_subscriptions, "每2小时拉取订阅"),
     ("check_sources", "0 */4 * * *", job_check_sources, "每4小时检查可用性"),
+    ("probe_source_health", "*/30 * * * *", job_probe_source_health, "每30分钟智能探测书源"),
     ("mark_stale_sources", "0 3 * * *", job_mark_stale_sources, "每天3点清理失效源"),
     ("reset_daily_quota", "0 0 * * *", job_reset_daily_quota, "每天0点重置配额"),
     ("sync_quota_to_db", "*/30 * * * *", job_sync_quota_to_db, "每30分钟同步配额"),
@@ -429,11 +466,44 @@ async def run_source_health_probe_job(
     probe_mode: str = "full_chain",
 ) -> dict:
     service = build_source_health_admin_service()
-    return await service.probe_book_sources(
-        source_ids,
-        keyword_samples=keyword_samples,
-        probe_mode=probe_mode,
-    )
+    try:
+        return await service.probe_book_sources(
+            source_ids,
+            keyword_samples=keyword_samples,
+            probe_mode=probe_mode,
+        )
+    finally:
+        await _close_async_service(service)
+
+
+async def run_smart_source_health_probe_job(
+    limit: int = 10,
+    keyword_samples: list[str] | None = None,
+    probe_mode: str = "full_chain",
+) -> dict:
+    service = build_source_health_admin_service()
+    try:
+        source_ids = service.list_probe_candidate_ids(limit=max(int(limit), 0))
+        keywords = keyword_samples or list(SMART_SOURCE_HEALTH_KEYWORDS)
+        if not source_ids:
+            return {"results": [], "total": 0, "keyword_samples": keywords}
+        result = await service.probe_book_sources(
+            source_ids,
+            keyword_samples=keywords,
+            probe_mode=probe_mode,
+        )
+        return {**result, "keyword_samples": keywords, "source_ids": source_ids}
+    finally:
+        await _close_async_service(service)
+
+
+async def _close_async_service(service) -> None:
+    close = getattr(service, "aclose", None)
+    if not callable(close):
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
 
 
 async def run_catalog_source_discovery_job(limit: int = 50, origin_budget: int = 1) -> dict:

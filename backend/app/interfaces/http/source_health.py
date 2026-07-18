@@ -11,13 +11,13 @@ router = APIRouter()
 
 
 class ProbeRequest(BaseModel):
-    keyword_samples: list[str] = ["捞尸人", "斗罗大陆"]
+    keyword_samples: list[str] = ["捞尸人", "斗罗大陆", "剑来"]
     probe_mode: str = "full_chain"
 
 
 class ProbeBatchRequest(BaseModel):
     source_ids: list[int]
-    keyword_samples: list[str] = ["捞尸人", "斗罗大陆"]
+    keyword_samples: list[str] = ["捞尸人", "斗罗大陆", "剑来"]
     probe_mode: str = "full_chain"
 
 

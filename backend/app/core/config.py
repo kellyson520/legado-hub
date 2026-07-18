@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     SOURCE_BUILD_WORKER_ENABLED: bool = True
     SOURCE_BUILD_POLL_SECONDS: float = 5.0
     SOURCE_BUILD_BATCH_SIZE: int = 1
+    SOURCE_HEALTH_PROBE_WORKER_ENABLED: bool = True
+    SOURCE_HEALTH_PROBE_BATCH_SIZE: int = 10
     INTERACTIVE_BROWSER_PROFILE_ROOT: str = "/tmp/legado-hub-browser-sessions"
     INTERACTIVE_BROWSER_CHROMIUM_PATH: str = "chromium-browser"
     INTERACTIVE_BROWSER_XVFB_PATH: str = "Xvfb"

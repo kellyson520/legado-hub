@@ -35,6 +35,58 @@ async def test_probe_service_collects_three_stage_evidence_and_content_failure()
 
 
 @pytest.mark.asyncio
+async def test_probe_service_falls_back_to_second_keyword_and_records_attempts():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class KeywordAwareFetcher:
+        async def search(self, source, keyword, page=1):
+            if keyword == "无结果关键词":
+                return []
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return [{"title": "第一章", "url": f"{book_url}/1"}]
+
+        async def get_content(self, source, chapter_url):
+            return {"title": "第一章", "content": "正文"}
+
+    probe = await SourceProbeService(KeywordAwareFetcher()).probe_source(
+        source={"id": 1, "bookSourceName": "智能书源", "bookSourceUrl": "https://example.test"},
+        keyword_samples=["无结果关键词", "命中关键词"],
+    )
+
+    assert probe.keyword == "命中关键词"
+    assert probe.attempted_keywords == ["无结果关键词", "命中关键词"]
+    assert probe.search.status == "ok"
+    assert probe.toc.status == "ok"
+    assert probe.content.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_probe_service_keeps_trying_when_first_search_hit_breaks_full_chain():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class ChainAwareFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": f"https://example.test/{keyword}"}]
+
+        async def get_toc(self, source, book_url):
+            return [{"title": "第一章", "url": f"{book_url}/1"}]
+
+        async def get_content(self, source, chapter_url):
+            return {"title": "第一章", "content": "" if "首个" in chapter_url else "有效正文"}
+
+    probe = await SourceProbeService(ChainAwareFetcher()).probe_source(
+        source={"id": 2, "bookSourceName": "链路兜底", "bookSourceUrl": "https://example.test"},
+        keyword_samples=["首个关键词", "备用关键词"],
+    )
+
+    assert probe.keyword == "备用关键词"
+    assert probe.attempted_keywords == ["首个关键词", "备用关键词"]
+    assert probe.content.status == "ok"
+
+
+@pytest.mark.asyncio
 async def test_probe_service_keeps_toc_evidence_json_serializable():
     import json
 

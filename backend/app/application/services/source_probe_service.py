@@ -113,7 +113,85 @@ class SourceProbeService:
         keyword_samples: list[str],
         probe_mode: str = "full_chain",
     ) -> SourceProbeEvidence:
-        keyword = keyword_samples[0]
+        keywords = self._normalize_keywords(keyword_samples)
+        attempts: list[dict] = []
+        selected: SourceProbeEvidence | None = None
+
+        for keyword in keywords:
+            candidate = await self._probe_single_keyword(
+                source=source,
+                keyword=keyword,
+                probe_mode=probe_mode,
+            )
+            attempts.append(
+                {
+                    "keyword": keyword,
+                    "search_status": candidate.search.status,
+                    "search_hits": candidate.search.hit_count,
+                    "toc_status": candidate.toc.status,
+                    "content_status": candidate.content.status,
+                    "error_message": candidate.search.error_message,
+                }
+            )
+            if selected is None or self._probe_quality(candidate) > self._probe_quality(selected):
+                selected = candidate
+            chain_succeeded = (
+                candidate.search.status == "ok"
+                and (
+                    probe_mode != "full_chain"
+                    or (candidate.toc.status == "ok" and candidate.content.status == "ok")
+                )
+            )
+            if chain_succeeded:
+                selected = candidate
+                break
+
+        if selected is None:
+            selected = await self._probe_single_keyword(
+                source=source,
+                keyword="捞尸人",
+                probe_mode=probe_mode,
+            )
+            attempts.append(
+                {
+                    "keyword": "捞尸人",
+                    "search_status": selected.search.status,
+                    "search_hits": selected.search.hit_count,
+                    "toc_status": selected.toc.status,
+                    "content_status": selected.content.status,
+                    "error_message": selected.search.error_message,
+                }
+            )
+
+        selected.attempted_keywords = [item["keyword"] for item in attempts]
+        selected.attempts = attempts
+        return selected
+
+    @staticmethod
+    def _normalize_keywords(keyword_samples: list[str] | None) -> list[str]:
+        normalized: list[str] = []
+        for value in keyword_samples or []:
+            keyword = str(value or "").strip()
+            if keyword and keyword not in normalized:
+                normalized.append(keyword)
+        return normalized or ["捞尸人", "斗罗大陆", "剑来"]
+
+    @staticmethod
+    def _probe_quality(evidence: SourceProbeEvidence) -> tuple[int, int, int, int]:
+        return (
+            int(evidence.search.status == "ok"),
+            int(evidence.toc.status == "ok"),
+            int(evidence.content.status == "ok"),
+            evidence.search.hit_count,
+        )
+
+    async def _probe_single_keyword(
+        self,
+        *,
+        source: dict,
+        keyword: str,
+        probe_mode: str,
+    ) -> SourceProbeEvidence:
         preflight = self._build_search_preflight(source, keyword)
 
         search_started = time.perf_counter()

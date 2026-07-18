@@ -102,7 +102,12 @@ class SourceHealthAdminService:
                 search_result=evidence.search.__dict__,
                 toc_result=evidence.toc.__dict__,
                 content_result=evidence.content.__dict__,
-                summary={"route_policy": decision.route_policy, "route_score": decision.route_score},
+                summary={
+                    "route_policy": decision.route_policy,
+                    "route_score": decision.route_score,
+                    "attempted_keywords": evidence.attempted_keywords,
+                    "attempts": evidence.attempts,
+                },
             )
         )
         await self._source_repo.update_book_source_health_fields(
@@ -134,6 +139,9 @@ class SourceHealthAdminService:
             )
         return {"results": results, "total": len(results)}
 
+    def list_probe_candidate_ids(self, limit: int = 20) -> list[int]:
+        return self._health_repo.list_probe_candidate_ids(limit=max(int(limit), 0))
+
     async def recover_source(self, source_id: int) -> dict:
         source = (await self._source_repo.list_book_sources_full(ids=[source_id]))[0]
         snapshot = self._health_repo.upsert_snapshot(
@@ -146,7 +154,8 @@ class SourceHealthAdminService:
                 toc_status="unknown",
                 content_status="unknown",
                 route_policy="probe_only",
-                failure_reason="",
+                route_score=10.0,
+                failure_reason="not_probed",
                 decision_confidence="low",
             )
         )

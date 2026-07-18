@@ -108,6 +108,50 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
 
 
 @pytest.mark.asyncio
+async def test_admin_service_prioritizes_unprobed_enabled_sources(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-candidates.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.domain.entities.source_health import SourceHealthSnapshot
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    first = await source_repo.create_book_source(
+        {"bookSourceName": "未探测 A", "bookSourceUrl": "https://a.example", "enabled": True},
+        actor_id=1,
+    )
+    second = await source_repo.create_book_source(
+        {"bookSourceName": "已探测 B", "bookSourceUrl": "https://b.example", "enabled": True},
+        actor_id=1,
+    )
+    health_repo.upsert_snapshot(
+        SourceHealthSnapshot(
+            source_id=second["id"],
+            source_name=second["bookSourceName"],
+            source_url=second["bookSourceUrl"],
+            health_status="healthy",
+            search_status="ok",
+            toc_status="ok",
+            content_status="ok",
+        )
+    )
+
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=None,
+        classifier=None,
+    )
+
+    assert service.list_probe_candidate_ids(limit=1) == [first["id"]]
+
+
+@pytest.mark.asyncio
 async def test_health_inventory_paginates_in_repository_without_loading_full_sources(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-inventory-page.sqlite3"))
@@ -274,4 +318,5 @@ async def test_admin_service_recover_source_resets_blocked_snapshot(monkeypatch,
     result = await service.recover_source(created["id"])
 
     assert result["health_status"] == "unknown"
+    assert result["failure_reason"] == "not_probed"
     assert result["route_policy"] == "probe_only"

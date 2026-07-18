@@ -104,3 +104,28 @@ def test_app_lifespan_closes_interactive_browser_supervisor_on_shutdown(monkeypa
 
     assert calls == ['closed']
     assert to_thread_calls == [close_interactive_browser_supervisor]
+
+
+def test_app_lifespan_starts_and_stops_scheduler_outside_test_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'scheduler-lifespan.sqlite3'))
+    monkeypatch.setenv('SECRET_KEY', 'test-secret-key-32-bytes-minimum')
+
+    from app.main import app
+    import app.main as app_main
+
+    class RuntimeService:
+        async def register_published_book_sources(self) -> None:
+            return None
+
+    calls: list[str] = []
+    monkeypatch.setattr(app_main.settings, 'ENV', 'dev')
+    monkeypatch.setattr(app_main.settings, 'EVENT_DELIVERY_WORKER_ENABLED', False)
+    monkeypatch.setattr(app_main.settings, 'SOURCE_BUILD_WORKER_ENABLED', False)
+    monkeypatch.setattr(app_main, 'build_source_runtime_service', lambda: RuntimeService())
+    monkeypatch.setattr(app_main, 'start_scheduler', lambda: calls.append('start'), raising=False)
+    monkeypatch.setattr(app_main, 'stop_scheduler', lambda: calls.append('stop'), raising=False)
+
+    with TestClient(app) as client:
+        assert client.get('/api/status').status_code == 200
+
+    assert calls == ['start', 'stop']

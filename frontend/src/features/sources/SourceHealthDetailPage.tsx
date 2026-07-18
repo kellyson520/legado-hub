@@ -33,6 +33,11 @@ function latestStageWithEvidence(runs: SourceProbeRun[]): SourceProbeStage | nul
   return null
 }
 
+function attemptedKeywords(run: SourceProbeRun | undefined): string[] {
+  const values = run?.summary?.attempted_keywords
+  return Array.isArray(values) ? values.filter((value): value is string => typeof value === 'string' && value.length > 0) : []
+}
+
 export function SourceHealthDetailPage() {
   const { sourceId } = useParams()
   const id = Number(sourceId)
@@ -65,6 +70,7 @@ export function SourceHealthDetailPage() {
 
   const latestEvidence = useMemo(() => latestStageWithEvidence(detail?.runs || []), [detail])
   const snapshot = detail?.snapshot
+  const latestKeywords = attemptedKeywords(detail?.runs?.[0])
 
   return (
     <ConsoleLayout
@@ -113,7 +119,7 @@ export function SourceHealthDetailPage() {
             <div>
               <p className="text-xs text-zinc-500">Health</p>
               <p className={`mt-1 text-sm font-medium ${stageTone(snapshot?.health_status || 'unknown')}`}>
-                {snapshot?.health_status || 'unknown'}
+                {snapshot?.failure_reason === 'not_probed' ? '未探测' : (snapshot?.health_status || 'unknown')}
               </p>
             </div>
             <div>
@@ -137,6 +143,7 @@ export function SourceHealthDetailPage() {
               <p className="text-zinc-300">Score: <span className="text-white">{detail.route_decision.score}</span></p>
               <p className="text-zinc-300">Reason: <span className="text-white">{detail.route_decision.reason}</span></p>
             </div>
+            {latestKeywords.length ? <p className="mt-3 text-sm text-zinc-300">尝试关键词：<span className="text-white">{latestKeywords.join('、')}</span></p> : null}
           </section>
 
           <section className="border border-white/10 p-4">

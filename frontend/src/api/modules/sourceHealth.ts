@@ -74,8 +74,19 @@ export async function getSourceHealth(sourceId: number) {
   return apiClient.get<SourceHealthDetail>(`/source-health/book-sources/${sourceId}`)
 }
 
-export async function probeSourceHealth(sourceId: number, keywordSamples = ['捞尸人', '斗罗大陆']) {
+export async function probeSourceHealth(sourceId: number, keywordSamples = ['捞尸人', '斗罗大陆', '剑来']) {
   return apiClient.post(`/source-health/book-sources/${sourceId}/probe`, {
+    keyword_samples: keywordSamples,
+    probe_mode: 'full_chain',
+  })
+}
+
+export async function probeSourceHealthBatch(
+  sourceIds: number[],
+  keywordSamples = ['捞尸人', '斗罗大陆', '剑来'],
+) {
+  return apiClient.post(`/source-health/book-sources/probe-batch`, {
+    source_ids: sourceIds,
     keyword_samples: keywordSamples,
     probe_mode: 'full_chain',
   })

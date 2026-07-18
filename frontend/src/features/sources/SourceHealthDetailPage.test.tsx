@@ -36,7 +36,7 @@ vi.mock('@/api/modules/sourceHealth', () => ({
           },
           toc_result: { status: 'skipped', detail: {} },
           content_result: { status: 'skipped', detail: {} },
-          summary: { route_policy: 'skip', route_score: 0 },
+          summary: { route_policy: 'skip', route_score: 0, attempted_keywords: ['捞尸人', '斗罗大陆'] },
         },
       ],
       failure_timeline: [
@@ -72,4 +72,5 @@ test('source health detail renders route decision and probe diagnostics', async 
   expect(screen.getAllByText('waf_blocked').length).toBeGreaterThan(0)
   expect(screen.getByText('失败时间线')).toBeInTheDocument()
   expect(screen.getByText('https://example.test/search')).toBeInTheDocument()
+  expect(screen.getByText('捞尸人、斗罗大陆')).toBeInTheDocument()
 })

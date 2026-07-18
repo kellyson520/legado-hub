@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.database import SessionLocal
@@ -263,5 +263,36 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                 .all()
             )
             return [self._run_to_entity(row) for row in rows]
+        finally:
+            self._close(db)
+
+    def list_probe_candidate_ids(self, limit: int = 20) -> list[int]:
+        db = self._db()
+        try:
+            unprobed_first = case(
+                (SourceHealthSnapshotModel.source_id.is_(None), 0),
+                else_=1,
+            )
+            no_probe_time_first = case(
+                (SourceHealthSnapshotModel.last_probe_at.is_(None), 0),
+                else_=1,
+            )
+            rows = (
+                db.query(BookSourceModel.id)
+                .outerjoin(
+                    SourceHealthSnapshotModel,
+                    SourceHealthSnapshotModel.source_id == BookSourceModel.id,
+                )
+                .filter(BookSourceModel.enabled == True)
+                .order_by(
+                    unprobed_first.asc(),
+                    no_probe_time_first.asc(),
+                    SourceHealthSnapshotModel.last_probe_at.asc(),
+                    BookSourceModel.id.asc(),
+                )
+                .limit(max(int(limit), 0))
+                .all()
+            )
+            return [int(row[0]) for row in rows]
         finally:
             self._close(db)

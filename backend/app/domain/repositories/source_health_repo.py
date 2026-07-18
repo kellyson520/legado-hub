@@ -38,3 +38,6 @@ class SourceHealthRepository(ABC):
     @abstractmethod
     def list_probe_runs(self, source_id: int, limit: int = 20) -> list[SourceProbeRun]:
         raise NotImplementedError
+
+    def list_probe_candidate_ids(self, limit: int = 20) -> list[int]:
+        raise NotImplementedError
