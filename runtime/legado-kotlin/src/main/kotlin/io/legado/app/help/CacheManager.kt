@@ -1,6 +1,8 @@
 package io.legado.app.help
 
 import io.legado.headless.ports.HeadlessRuntimeBridges
+import io.legado.headless.ports.CacheTraceEvent
+import io.legado.headless.ports.RuntimeTraceContext
 
 object CacheManager {
     private val memory = linkedMapOf<String, String>()
@@ -21,9 +23,18 @@ object CacheManager {
 
     fun get(key: String): String? {
         val bridge = HeadlessRuntimeBridges.cache
-        return if (bridge != null) {
-            runCatching { bridge.get(currentScope(), key) }.getOrNull()
-        } else {
+        val scope = currentScope()
+        if (bridge == null) {
+            return getFromMemory(key).also { value ->
+                RuntimeTraceContext.record(CacheTraceEvent("get", scope, key.length, found = value != null))
+            }
+        }
+        return try {
+            bridge.get(scope, key).also { value ->
+                RuntimeTraceContext.record(CacheTraceEvent("get", scope, key.length, found = value != null))
+            }
+        } catch (_: Exception) {
+            RuntimeTraceContext.record(CacheTraceEvent("get", scope, key.length, errorCode = "CACHE_BRIDGE_ERROR"))
             getFromMemory(key)
         }
     }
@@ -31,9 +42,17 @@ object CacheManager {
     fun put(key: String, value: Any?, saveTime: Int = 0): String {
         val encoded = value?.toString().orEmpty()
         val bridge = HeadlessRuntimeBridges.cache
-        if (bridge != null) {
-            runCatching { bridge.put(currentScope(), key, encoded) }
-        } else {
+        val scope = currentScope()
+        if (bridge == null) {
+            putMemory(key, encoded)
+            RuntimeTraceContext.record(CacheTraceEvent("put", scope, key.length, changed = true))
+            return encoded
+        }
+        try {
+            bridge.put(scope, key, encoded)
+            RuntimeTraceContext.record(CacheTraceEvent("put", scope, key.length, changed = true))
+        } catch (_: Exception) {
+            RuntimeTraceContext.record(CacheTraceEvent("put", scope, key.length, changed = false, errorCode = "CACHE_BRIDGE_ERROR"))
             putMemory(key, encoded)
         }
         return encoded
@@ -41,9 +60,17 @@ object CacheManager {
 
     fun delete(key: String) {
         val bridge = HeadlessRuntimeBridges.cache
-        if (bridge != null) {
-            runCatching { bridge.delete(currentScope(), key) }
-        } else {
+        val scope = currentScope()
+        if (bridge == null) {
+            remove(key)
+            RuntimeTraceContext.record(CacheTraceEvent("delete", scope, key.length, changed = true))
+            return
+        }
+        try {
+            bridge.delete(scope, key)
+            RuntimeTraceContext.record(CacheTraceEvent("delete", scope, key.length, changed = true))
+        } catch (_: Exception) {
+            RuntimeTraceContext.record(CacheTraceEvent("delete", scope, key.length, changed = false, errorCode = "CACHE_BRIDGE_ERROR"))
             remove(key)
         }
     }

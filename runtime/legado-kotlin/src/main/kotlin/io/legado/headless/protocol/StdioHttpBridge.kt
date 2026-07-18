@@ -6,6 +6,7 @@ import io.legado.headless.ports.HttpRequestSpec
 import io.legado.headless.ports.HttpResponse
 import java.io.BufferedReader
 import java.io.PrintWriter
+import java.util.Base64
 import java.util.UUID
 
 class StdioHttpBridge(
@@ -28,6 +29,13 @@ class StdioHttpBridge(
                         "timeout_ms" to spec.timeoutMs,
                         "cookie_scope" to spec.cookieScope,
                         "follow_redirects" to spec.followRedirects,
+                        "charset" to spec.charset,
+                        "content_type" to spec.contentType,
+                        "proxy" to spec.proxy,
+                        "dns_ip" to spec.dnsIp,
+                        "origin" to spec.origin,
+                        "server_id" to spec.serverId,
+                        "accept_bytes" to spec.acceptBytes,
                     ),
                 )
             )
@@ -46,7 +54,11 @@ class StdioHttpBridge(
                     ?.toMap()
                     .orEmpty(),
                 body = response["text"]?.toString() ?: response["body"]?.toString().orEmpty(),
+                bodyBytes = response["body_base64"]?.toString()?.let { encoded ->
+                    runCatching { Base64.getDecoder().decode(encoded) }.getOrNull()
+                },
                 finalUrl = response["final_url"]?.toString(),
+                charset = response["charset"]?.toString(),
                 elapsedMs = (response["elapsed_ms"] as? Number)?.toLong() ?: 0,
                 errorCode = response["error_code"]?.toString(),
             )

@@ -27,4 +27,30 @@ class RuntimeProtocolTest {
         assertFalse(response["success"].asBoolean)
         assertEquals("MALFORMED_REQUEST", response["error"].asJsonObject["code"].asString)
     }
+
+    @Test
+    fun traceContainsSafeRequestMetadataWithoutPayloadContents() {
+        val response = JsonParser.parseString(
+            server.dispatchLine(
+                """
+                {
+                  "id":"trace-1",
+                  "op":"extract_string",
+                  "stage":"content",
+                  "rule":"#content@text",
+                  "content":"<div id=\"content\">secret body</div>",
+                  "content_type":"html"
+                }
+                """.trimIndent()
+            )
+        ).asJsonObject
+
+        val trace = response["trace"].asJsonObject
+        assertEquals("content", trace["stage"].asString)
+        assertEquals("extract_string", trace["operation"].asString)
+        assertEquals("#content@text".length, trace["rule_length"].asInt)
+        assertEquals("<div id=\"content\">secret body</div>".length, trace["content_length"].asInt)
+        assertEquals("html", trace["content_type"].asString)
+        assertFalse(trace.toString().contains("secret body"))
+    }
 }

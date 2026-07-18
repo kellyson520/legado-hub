@@ -134,4 +134,60 @@ class NativeAnalyzerRequestSemanticsTest {
 
         assertEquals("cached", NativeAnalyzer().execute(request).first)
     }
+
+    @Test
+    fun dataUrlIsDecodedWithoutUsingTheHttpBridge() {
+        HeadlessRuntimeBridges.http = { error("data URLs must not use HTTP bridge") }
+
+        val response = AnalyzeUrl("data:text/plain;charset=utf-8,hello%20world").getStrResponse()
+
+        assertEquals("hello world", response.body)
+    }
+
+    @Test
+    fun dataUrlHonorsDeclaredCharsetForPercentEncodedBytes() {
+        val response = AnalyzeUrl("data:text/plain;charset=GBK,%C4%E3%BA%C3").getStrResponse()
+
+        assertEquals("你好", response.body)
+    }
+
+    @Test
+    fun requestOptionsCarryTransportMetadataAndMultipartBody() {
+        HeadlessRuntimeBridges.http = { spec ->
+            requests += spec
+            HttpResponse(status = 200, body = "ok", finalUrl = spec.url)
+        }
+        val source = BookSource(mutableMapOf("bookSourceUrl" to "https://example.test/"))
+        AnalyzeUrl(
+            "https://example.test/upload,{\"method\":\"POST\",\"type\":\"multipart/form-data\",\"body\":{\"name\":\"alice\"},\"origin\":\"https://origin.test\",\"proxy\":\"http://proxy.test:8080\",\"dnsIp\":\"192.0.2.10\"}",
+            source = source,
+        ).getStrResponse()
+
+        val request = requests.single()
+        assertEquals("multipart/form-data", request.contentType)
+        assertEquals("https://origin.test", request.origin)
+        assertEquals("http://proxy.test:8080", request.proxy)
+        assertEquals("192.0.2.10", request.dnsIp)
+        assertEquals("{\"name\":\"alice\"}", request.body)
+    }
+
+    @Test
+    fun bridgeFailuresAreVisibleInRuntimeTrace() {
+        HeadlessRuntimeBridges.http = null
+        val response = JsonParser.parseString(
+            io.legado.headless.protocol.RuntimeServer().dispatchLine(
+                """
+                {
+                  "id":"bridge-trace",
+                  "op":"extract_string",
+                  "stage":"content",
+                  "rule":"@js:return java.ajax('https://example.test/data')",
+                  "content":"ignored"
+                }
+                """.trimIndent()
+            )
+        ).asJsonObject
+
+        assertEquals("BRIDGE_UNAVAILABLE", response["trace"].asJsonObject["http_events"].asJsonArray[0].asJsonObject["error_code"].asString)
+    }
 }

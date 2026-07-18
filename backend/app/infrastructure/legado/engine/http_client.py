@@ -12,12 +12,13 @@
 """
 
 import asyncio
+import ipaddress
 import json
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 from aiohttp import CookieJar
@@ -39,6 +40,7 @@ class HttpResponse:
     is_html: bool = False
     elapsed_ms: int = 0
     error: Optional[str] = None
+    charset: Optional[str] = None
 
     @property
     def success(self) -> bool:
@@ -218,6 +220,7 @@ class LegadoHttpClient:
         json_data: Any = None,
         headers: Dict[str, str] = None,
         encoding: str = None,
+        dns_ip: str = None,
         **kwargs,
     ) -> HttpResponse:
         """执行单次请求"""
@@ -227,6 +230,21 @@ class LegadoHttpClient:
         req_headers = {}
         if headers:
             req_headers.update(headers)
+
+        request_url = url
+        if dns_ip and self._is_ip_address(dns_ip):
+            parsed = urlparse(url)
+            if parsed.hostname:
+                port = parsed.port
+                replacement = f"[{dns_ip}]" if ":" in dns_ip else dns_ip
+                if port:
+                    replacement = f"{replacement}:{port}"
+                request_url = urlunparse(parsed._replace(netloc=replacement))
+                if not any(key.lower() == "host" for key in req_headers):
+                    original_host = parsed.hostname
+                    if port:
+                        original_host = f"{original_host}:{port}"
+                    req_headers["Host"] = original_host
 
         kwargs_final = {}
         if params:
@@ -243,7 +261,7 @@ class LegadoHttpClient:
             if k not in kwargs_final:
                 kwargs_final[k] = v
 
-        async with session.request(method, url, **kwargs_final) as resp:
+        async with session.request(method, request_url, **kwargs_final) as resp:
             content = await resp.read()
             elapsed = int((time.time() - start) * 1000)
 
@@ -270,11 +288,12 @@ class LegadoHttpClient:
             resp_headers = {k: v for k, v in resp.headers.items()}
 
             return HttpResponse(
-                url=str(resp.url),
+                url=url if request_url != url else str(resp.url),
                 status=resp.status,
                 headers=resp_headers,
                 text=text,
                 content=content,
+                charset=getattr(resp, "charset", None),
                 json_data=json_data_parsed,
                 is_json=is_json,
                 is_html=is_html,
@@ -329,6 +348,14 @@ class LegadoHttpClient:
 
         # 6. 最后用 utf-8 替换错误
         return content.decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _is_ip_address(value: str) -> bool:
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except ValueError:
+            return False
 
     async def close(self):
         """关闭 session"""

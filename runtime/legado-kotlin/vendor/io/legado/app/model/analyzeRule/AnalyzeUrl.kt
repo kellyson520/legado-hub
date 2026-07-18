@@ -11,17 +11,22 @@ import org.mozilla.javascript.ScriptableObject
 import io.legado.app.data.entities.BaseSource
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.help.CacheManager
 import io.legado.app.help.JsExtensions
 import io.legado.app.help.http.BackstageWebView
 import io.legado.app.help.http.CookieStore
 import io.legado.app.help.http.StrResponse
 import io.legado.headless.ports.HeadlessRuntimeBridges
+import io.legado.headless.ports.HttpTraceEvent
 import io.legado.headless.ports.HttpRequestSpec
 import io.legado.headless.ports.HttpResponse
+import io.legado.headless.ports.RuntimeTraceContext
 import io.legado.app.utils.NetworkUtils
 import java.net.URL
 import java.net.URLEncoder
+import java.io.ByteArrayOutputStream
 import java.nio.charset.Charset
+import java.util.Base64
 import java.util.Locale
 import java.util.regex.Pattern
 import kotlin.coroutines.CoroutineContext
@@ -74,6 +79,8 @@ class AnalyzeUrl(
     private var webJs: String? = null
     private var webView: Boolean = false
     private var webViewDelayTime: Long = 0
+    private var proxy: String? = null
+    private var origin: String? = null
     private var dnsIp: String? = null
     private var serverID: Long? = null
     private var followRedirects: Boolean = true
@@ -85,6 +92,10 @@ class AnalyzeUrl(
         if (baseMatcher.find()) baseUrl = rawBase.substring(0, baseMatcher.start())
         headerMapF?.let(headerMap::putAll)
             ?: source?.getHeaderMap(hasLoginHeader)?.let(headerMap::putAll)
+        headerMap.entries.firstOrNull { it.key.equals("proxy", ignoreCase = true) }?.let { entry ->
+            proxy = entry.value
+            headerMap.remove(entry.key)
+        }
         initUrl()
     }
 
@@ -147,7 +158,7 @@ class AnalyzeUrl(
             val optionText = ruleUrl.substring(matcher.end()).trim()
             parseOptions(optionText)
         }
-        urlNoQuery = url.substringBefore('?')
+        urlNoQuery = if (url.startsWith("data:", ignoreCase = true)) url else url.substringBefore('?')
         if (method == "GET" && !charset.isNullOrBlank()) {
             url = encodeQuery(url, charset!!)
             urlNoQuery = url.substringBefore('?')
@@ -171,6 +182,11 @@ class AnalyzeUrl(
         options["body"]?.let { body = jsonValue(it) }
         type = options.string("type")
         charset = options.string("charset")
+        proxy = options.string("proxy") ?: proxy
+        origin = options.string("origin")
+        origin?.takeIf(String::isNotBlank)?.let { value ->
+            if (headerMap.keys.none { it.equals("Origin", ignoreCase = true) }) headerMap["Origin"] = value
+        }
         retry = options.int("retry")?.coerceIn(0, 5) ?: 0
         webView = options.boolean("webView")
         webJs = options.string("webJs")
@@ -194,7 +210,16 @@ class AnalyzeUrl(
         followRedirects: Boolean = this.followRedirects,
     ): HttpResponse {
         val bridge = HeadlessRuntimeBridges.http
-            ?: return HttpResponse(status = 503, body = "", finalUrl = requestUrl, errorCode = "BRIDGE_UNAVAILABLE")
+            ?: return HttpResponse(status = 503, body = "", finalUrl = requestUrl, errorCode = "BRIDGE_UNAVAILABLE").also {
+                RuntimeTraceContext.record(
+                    HttpTraceEvent(
+                        method = requestMethod,
+                        host = runCatching { URL(requestUrl).host }.getOrDefault(""),
+                        status = it.status,
+                        errorCode = it.errorCode,
+                    )
+                )
+            }
         val mergedHeaders = linkedMapOf<String, String>().apply {
             putAll(requestHeaders)
             val scope = cookieScope(requestUrl)
@@ -208,15 +233,35 @@ class AnalyzeUrl(
         }
         var lastResponse = HttpResponse(status = 599, finalUrl = requestUrl, errorCode = "REQUEST_FAILED")
         repeat(retry + 1) {
-            lastResponse = bridge.request(
-                HttpRequestSpec(
+            lastResponse = try {
+                bridge.request(
+                    HttpRequestSpec(
+                        method = requestMethod,
+                        url = requestUrl,
+                        headers = mergedHeaders,
+                        body = requestBody,
+                        timeoutMs = timeoutMs,
+                        cookieScope = cookieScope(requestUrl),
+                        followRedirects = followRedirects,
+                        charset = charset,
+                        contentType = type,
+                        proxy = proxy,
+                        dnsIp = dnsIp,
+                        origin = origin,
+                        serverId = serverID,
+                        acceptBytes = !type.isNullOrBlank(),
+                    )
+                )
+            } catch (_: Exception) {
+                HttpResponse(status = 599, finalUrl = requestUrl, errorCode = "BRIDGE_ERROR")
+            }
+            RuntimeTraceContext.record(
+                HttpTraceEvent(
                     method = requestMethod,
-                    url = requestUrl,
-                    headers = mergedHeaders,
-                    body = requestBody,
-                    timeoutMs = timeoutMs,
-                    cookieScope = cookieScope(requestUrl),
-                    followRedirects = followRedirects,
+                    host = runCatching { URL(requestUrl).host }.getOrDefault(""),
+                    status = lastResponse.status,
+                    errorCode = lastResponse.errorCode,
+                    elapsedMs = lastResponse.elapsedMs,
                 )
             )
             saveResponseCookies(requestUrl, lastResponse)
@@ -230,9 +275,16 @@ class AnalyzeUrl(
         sourceRegex: String? = null,
         useWebView: Boolean = true,
     ): StrResponse {
+        dataUrlBytes()?.let { bytes ->
+            return bytesResponse(bytes)
+        }
         val response = executeRequest(
             requestBody = if (method == "POST" && encodedForm != null) encodedForm else body,
         )
+        if (!type.isNullOrBlank()) {
+            val bytes = response.bodyBytes ?: response.body.toByteArray(response.charset?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: resolveCharset())
+            return bytesResponse(bytes, response)
+        }
         var responseBody = response.body
         if (webView && useWebView && !webJs.isNullOrBlank()) {
             responseBody = runBlocking {
@@ -266,7 +318,11 @@ class AnalyzeUrl(
         requestBody = if (method == "POST" && encodedForm != null) encodedForm else body,
     )
 
-    fun getByteArray(): ByteArray = getStrResponse().body.orEmpty().toByteArray(resolveCharset())
+    fun getByteArray(): ByteArray {
+        dataUrlBytes()?.let { return it }
+        val response = getResponse()
+        return response.bodyBytes ?: response.body.toByteArray(response.charset?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: resolveCharset())
+    }
 
     fun getInputStream() = getByteArray().inputStream()
 
@@ -357,6 +413,7 @@ class AnalyzeUrl(
             binding["java"] = this
             binding["baseUrl"] = baseUrl
             binding["cookie"] = CookieStore
+            binding["cache"] = CacheManager
             binding["source"] = source
             binding["book"] = ruleData as? Book
             binding["chapter"] = chapter
@@ -402,6 +459,73 @@ class AnalyzeUrl(
     private fun parseBaseUrl(value: String): URL? = value.takeIf(String::isNotBlank)?.let { runCatching { URL(it) }.getOrNull() }
 
     private fun resolveCharset(): Charset = charset?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: Charsets.UTF_8
+
+    private fun dataUrlBytes(): ByteArray? {
+        if (!url.startsWith("data:", ignoreCase = true)) return null
+        val comma = url.indexOf(',')
+        if (comma < 0) return ByteArray(0)
+        val metadata = url.substring(5, comma)
+        val payload = url.substring(comma + 1)
+        return if (metadata.split(';').any { it.equals("base64", ignoreCase = true) }) {
+            runCatching { Base64.getMimeDecoder().decode(payload) }.getOrNull()
+        } else {
+            runCatching { decodeDataPayload(payload) }.getOrNull()
+        }
+    }
+
+    private fun decodeDataPayload(payload: String): ByteArray {
+        val result = ByteArrayOutputStream(payload.length)
+        var index = 0
+        while (index < payload.length) {
+            if (payload[index] == '%' && index + 2 < payload.length) {
+                val value = payload.substring(index + 1, index + 3).toIntOrNull(16)
+                if (value != null) {
+                    result.write(value)
+                    index += 3
+                    continue
+                }
+            }
+            val codePoint = payload.codePointAt(index)
+            result.write(String(Character.toChars(codePoint)).toByteArray(Charsets.UTF_8))
+            index += Character.charCount(codePoint)
+        }
+        return result.toByteArray()
+    }
+
+    private fun dataUrlCharset(): Charset? {
+        if (!url.startsWith("data:", ignoreCase = true)) return null
+        val comma = url.indexOf(',')
+        if (comma < 0) return null
+        val metadata = url.substring(5, comma)
+        val value = metadata.split(';')
+            .firstOrNull { it.trim().startsWith("charset=", ignoreCase = true) }
+            ?.substringAfter('=', "")
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+        return value?.let { runCatching { Charset.forName(it) }.getOrNull() }
+    }
+
+    private fun bytesResponse(bytes: ByteArray, response: HttpResponse? = null): StrResponse {
+        if (!type.isNullOrBlank()) {
+            return StrResponse(
+                url = url,
+                body = bytes.joinToString("") { byte -> "%02x".format(Locale.ROOT, byte.toInt() and 0xff) },
+                code = response?.status ?: 200,
+                headers = response?.headers ?: emptyMap(),
+                finalUrl = response?.finalUrl ?: url,
+            )
+        }
+        val dataCharset = response?.charset?.let { runCatching { Charset.forName(it) }.getOrNull() }
+            ?: dataUrlCharset()
+            ?: resolveCharset()
+        return StrResponse(
+            url = url,
+            body = String(bytes, dataCharset),
+            code = response?.status ?: 200,
+            headers = response?.headers ?: emptyMap(),
+            finalUrl = response?.finalUrl ?: url,
+        )
+    }
 
     private fun encodeForm(value: String, charsetName: String?): String {
         val encoding = charsetName?.let { runCatching { Charset.forName(it) }.getOrNull() } ?: Charsets.UTF_8

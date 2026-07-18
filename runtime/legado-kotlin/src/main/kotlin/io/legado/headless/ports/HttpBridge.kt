@@ -8,6 +8,13 @@ data class HttpRequestSpec(
     val timeoutMs: Long = 15_000,
     val cookieScope: String? = null,
     val followRedirects: Boolean = true,
+    val charset: String? = null,
+    val contentType: String? = null,
+    val proxy: String? = null,
+    val dnsIp: String? = null,
+    val origin: String? = null,
+    val serverId: Long? = null,
+    val acceptBytes: Boolean = false,
 )
 
 data class HttpResponse(
@@ -18,6 +25,7 @@ data class HttpResponse(
     val charset: String? = null,
     val elapsedMs: Long = 0,
     val errorCode: String? = null,
+    val bodyBytes: ByteArray? = null,
 )
 
 fun interface HttpBridge {

@@ -66,7 +66,15 @@ class PythonRuntimeFallback:
             success=result.success,
             value=value,
             value_type="list" if isinstance(value, list) else "string",
-            trace={"engine": "python-fallback", "rule_type": result.rule_type},
+            trace={
+                "engine": "python-fallback",
+                "rule_type": result.rule_type,
+                "stage": str(_.get("stage", "") or ""),
+                "operation": operation,
+                "rule_length": len(rule or ""),
+                "content_length": len(content) if isinstance(content, str) else len(str(content or "")),
+                "content_type": "html" if isinstance(content, str) else "json",
+            },
         )
 
     def resolve_url(self, rule_url: str, base_url: str, redirect_url: str = "", **_: Any) -> RuntimeResult:
@@ -76,7 +84,14 @@ class PythonRuntimeFallback:
             success=True,
             value=UrlUtils.resolve_relative(rule_url, redirect_url or base_url),
             value_type="string",
-            trace={"engine": "python-fallback"},
+            trace={
+                "engine": "python-fallback",
+                "stage": str(_.get("stage", "") or ""),
+                "operation": "resolve_url",
+                "rule_length": len(rule_url or ""),
+                "content_length": 0,
+                "content_type": None,
+            },
         )
 
 

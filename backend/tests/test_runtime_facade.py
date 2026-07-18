@@ -71,3 +71,22 @@ def test_facade_merges_native_context_updates_for_following_rules():
 
     assert context["variables"]["token"] == "updated"
     assert client.calls[0][1]["context"]["variables"]["token"] == "old"
+
+
+def test_python_fallback_trace_keeps_request_shape_without_content():
+    client = FakeClient(RuntimeResult(success=False, error_code="RUNTIME_UNAVAILABLE"))
+    facade = LegadoRuntimeFacade(native_client=client, mode="native_kotlin")
+
+    result = facade.extract(
+        "<div>private body</div>",
+        "div@text",
+        operation="extract_string",
+        stage="content",
+    )
+
+    assert result.success
+    assert result.trace["stage"] == "content"
+    assert result.trace["operation"] == "extract_string"
+    assert result.trace["rule_length"] == len("div@text")
+    assert result.trace["content_length"] == len("<div>private body</div>")
+    assert "private body" not in result.trace

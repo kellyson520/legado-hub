@@ -2,11 +2,15 @@ package io.legado.headless
 
 import io.legado.app.help.CacheManager
 import io.legado.headless.ports.HeadlessRuntimeBridges
+import io.legado.headless.ports.CacheBridge
 import io.legado.headless.ports.MemoryCacheBridge
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import com.google.gson.JsonParser
 
 class CacheBridgeTest {
     @AfterTest
@@ -45,5 +49,42 @@ class CacheBridgeTest {
 
         assertEquals("abc", bridge.get("cache-test", "token"))
         assertEquals(true, output.toString().contains("bridge_cache"))
+    }
+
+    @Test
+    fun cacheOperationsAreIncludedInRequestTraceWithoutValues() {
+        HeadlessRuntimeBridges.cache = MemoryCacheBridge()
+        val response = JsonParser.parseString(
+            io.legado.headless.protocol.RuntimeServer().dispatchLine(
+                """
+                {
+                  "id":"cache-trace",
+                  "op":"extract_string",
+                  "stage":"search",
+                  "rule":"@js:cache.put('token', 'secret'); return cache.get('token')",
+                  "content":"ignored",
+                  "context":{"cacheScope":"source-a"}
+                }
+                """.trimIndent()
+            )
+        ).asJsonObject
+
+        val trace = response["trace"].asJsonObject
+        assertTrue(trace["cache_events"].asJsonArray.size() >= 2)
+        assertFalse(trace.toString().contains("secret"))
+    }
+
+    @Test
+    fun cacheBridgeFailureFallsBackToScopedMemory() {
+        HeadlessRuntimeBridges.cache = object : CacheBridge {
+            override fun get(scope: String, key: String): String? = error("bridge down")
+            override fun put(scope: String, key: String, value: String) = error("bridge down")
+            override fun delete(scope: String, key: String) = error("bridge down")
+        }
+
+        CacheManager.withScope("fallback-source") {
+            CacheManager.put("token", "local")
+            assertEquals("local", CacheManager.get("token"))
+        }
     }
 }

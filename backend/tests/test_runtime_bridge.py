@@ -56,3 +56,43 @@ def test_cache_bridge_is_scoped_and_supports_delete():
     assert bridge.handle_cache({"op": "get", "scope": "source-b", "key": "token"})["found"] is False
     bridge.handle_cache({"op": "delete", "scope": "source-a", "key": "token"})
     assert bridge.handle_cache({"op": "get", "scope": "source-a", "key": "token"})["found"] is False
+
+
+def test_bridge_forwards_charset_proxy_and_origin_metadata():
+    http = FakeHttp()
+    bridge = RuntimeBridge(http_client=http, timeout=1.0)
+
+    response = bridge.handle(
+        {
+            "method": "GET",
+            "url": "https://example.test/",
+            "charset": "gb18030",
+            "proxy": "http://proxy.test:8080",
+            "origin": "https://origin.test",
+            "dns_ip": "192.0.2.10",
+        }
+    )
+
+    assert response["status"] == 200
+    kwargs = http.calls[0][2]
+    assert kwargs["encoding"] == "gb18030"
+    assert kwargs["proxy"] == "http://proxy.test:8080"
+    assert kwargs["headers"]["Origin"] == "https://origin.test"
+
+
+def test_bridge_decodes_structured_multipart_body():
+    http = FakeHttp()
+    bridge = RuntimeBridge(http_client=http, timeout=1.0)
+
+    bridge.handle(
+        {
+            "method": "POST",
+            "url": "https://example.test/upload",
+            "content_type": "multipart/form-data",
+            "body": '{"name":"alice"}',
+        }
+    )
+
+    kwargs = http.calls[0][2]
+    form = kwargs["data"]
+    assert any(field[0].get("name") == "name" and field[2] == "alice" for field in form._fields)
