@@ -9,6 +9,8 @@ from app.infrastructure.legado.engine.js_session_models import (
     JsExecutionTrace,
 )
 from app.infrastructure.legado.engine.js_runtime import JsResult, JsRuntime
+from app.infrastructure.legado.engine.native_models import RuntimeCapabilities, RuntimeResult
+from app.infrastructure.legado.engine.native_runtime_client import NativeRuntimeClient
 from app.infrastructure.legado.engine.legado_native_semantics import LegadoJsCompatProfile
 from app.infrastructure.legado.engine.models import (
     EvaluationResult,
@@ -26,6 +28,7 @@ from app.infrastructure.legado.engine.rule_selector import (
     SelectorResult,
     select_values,
 )
+from app.infrastructure.legado.engine.runtime_facade import LegadoRuntimeFacade, PythonRuntimeFallback
 from app.infrastructure.legado.engine.text_pipeline import ReplaceRule, TextPipeline
 from app.infrastructure.legado.engine.url_utils import UrlUtils
 from app.infrastructure.legado.engine.validator import validate_source_rules
@@ -60,4 +63,9 @@ __all__ = [
     "JsExecutionTrace",
     "JsCompatDiff",
     "LegadoJsCompatProfile",
+    "RuntimeResult",
+    "RuntimeCapabilities",
+    "NativeRuntimeClient",
+    "LegadoRuntimeFacade",
+    "PythonRuntimeFallback",
 ]
