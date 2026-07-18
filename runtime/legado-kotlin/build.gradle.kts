@@ -17,6 +17,8 @@ dependencies {
     implementation("cn.wanghaomiao:JsoupXpath:2.5.5")
     implementation("com.jayway.jsonpath:json-path:3.0.0")
     implementation("org.mozilla:rhino:1.8.1")
+    implementation("org.apache.commons:commons-text:1.15.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
 
     testImplementation(kotlin("test"))
 }
