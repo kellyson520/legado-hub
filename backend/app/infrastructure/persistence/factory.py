@@ -1,4 +1,5 @@
 from threading import Lock
+from functools import partial
 
 from app.application.services.ai_service import AIService
 from app.application.services.ai_workspace_service import AIWorkspaceService
@@ -11,6 +12,7 @@ from app.application.services.event_delivery_service import EventDeliveryService
 from app.application.services.engine_service import EngineService
 from app.application.services.evidence_service import EvidenceService
 from app.application.services.job_service import JobService
+from app.application.services.maintenance_service import MaintenanceService
 from app.application.services.interactive_browser_service import InteractiveBrowserService
 from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
 from app.application.services.novel_agent_service import NovelAgentService
@@ -19,10 +21,8 @@ from app.application.services.novel_analysis_audit_service import NovelAnalysisA
 from app.application.services.novel_analysis_task_service import NovelAnalysisTaskService
 from app.application.services.narrative_knowledge_service import NarrativeKnowledgeService
 from app.application.services.novel_app_service import NovelAppService
-from app.application.services.provider_platform_service import (
-    PROVIDER_ROUTE_GROUPS,
-    ProviderPlatformService,
-)
+from app.application.services.provider_platform_service import ProviderPlatformService
+from app.application.ports.provider import PROVIDER_ROUTE_GROUPS
 from app.application.services.source_complement_app_service import SourceComplementAppService
 from app.application.services.source_build_agent import SourceBuildAgent
 from app.application.services.source_build_ai_repair_service import SourceBuildAIRepairService
@@ -79,6 +79,7 @@ from app.infrastructure.persistence.sqlite.interactive_browser_repo_impl import 
 from app.infrastructure.persistence.sqlite.translation_runtime_repo_impl import (
     SQLiteTranslationRuntimeRepository,
 )
+from app.infrastructure.persistence.sqlite.quota_usage_repo_impl import SQLiteQuotaUsageRepository
 from app.infrastructure.persistence.sqlite.work_knowledge_repo_impl import SQLiteWorkKnowledgeRepository
 
 
@@ -99,6 +100,11 @@ def build_job_service() -> JobService:
 def build_job_repository() -> SQLiteJobRepository:
     ensure_sqlite_bootstrap()
     return SQLiteJobRepository()
+
+
+def build_quota_usage_repository() -> SQLiteQuotaUsageRepository:
+    ensure_sqlite_bootstrap()
+    return SQLiteQuotaUsageRepository()
 
 
 def build_agent_runtime_service() -> AgentRuntimeService:
@@ -373,6 +379,20 @@ def build_event_delivery_service() -> EventDeliveryService:
     return EventDeliveryService(SQLiteEventDeliveryRepository(), sender=SafeWebhookSender())
 
 
+def build_maintenance_service() -> MaintenanceService:
+    # Resolve the shared quota adapter lazily so tests and deployments can
+    # replace the Redis-backed implementation without importing it into the
+    # application layer.
+    from app.core.redis_client import redis_client
+
+    return MaintenanceService(
+        source_repo=build_source_repository(),
+        auth_repo=build_auth_repository(),
+        quota_repo=build_quota_usage_repository(),
+        quota_store=redis_client,
+    )
+
+
 def build_engine_service() -> EngineService:
     return EngineService(
         evaluator=evaluate_source_rules,
@@ -478,7 +498,7 @@ def build_interactive_browser_service() -> InteractiveBrowserSupervisor:
                         ),
                         settings=build_system_settings_service(),
                         profile_root=settings.INTERACTIVE_BROWSER_PROFILE_ROOT,
-                        probe_runner=run_browser_probe,
+                        probe_runner=partial(run_browser_probe, probe_factory=SourceProbeService),
                     )
                 )
     return _interactive_browser_service_singleton

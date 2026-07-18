@@ -75,6 +75,11 @@ class AuthRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_enabled_api_keys(self) -> list[ApiKey]:
+        """Return only API keys that can consume quota."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def set_api_key_enabled(self, api_key_id: int, enabled: bool) -> None:
         raise NotImplementedError
 

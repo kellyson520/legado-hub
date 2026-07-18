@@ -23,6 +23,7 @@ from ..infrastructure.persistence.factory import (
     build_event_delivery_service,
     build_novel_analysis_pipeline_service,
     build_novel_analysis_task_service,
+    build_maintenance_service,
     build_source_repository,
     build_source_health_admin_service,
     build_system_settings_service,
@@ -216,48 +217,31 @@ def job_mark_stale_sources():
     logger.info(f"[定时任务] 开始清理失效源", extra={"action": "job_start", "job": job_name})
 
     async def _do():
-        from datetime import datetime
         stale_threshold = datetime.utcnow() - timedelta(days=7)
-
-        # 使用底层 DB 直接更新（避免领域层逻辑干扰清理任务）
-        from ..infrastructure.persistence.sqlite.session import SessionLocal
-        from ..infrastructure.persistence.sqlite.schema import BookSourceModel, RssSourceModel
-        db = SessionLocal()
         try:
-            disabled_books = db.query(BookSourceModel).filter(
-                BookSourceModel.sourceStatus == "error",
-                BookSourceModel.lastCheckTime < stale_threshold,
-                BookSourceModel.enabled == True
-            ).limit(100).all()
-
-            for s in disabled_books:
-                s.enabled = False
-                logger.info(f"[定时任务] 禁用失效书源: {s.bookSourceName}", extra={"action": job_name, "source_url": s.bookSourceUrl})
-
-            disabled_rss = db.query(RssSourceModel).filter(
-                RssSourceModel.sourceStatus == "error",
-                RssSourceModel.lastCheckTime < stale_threshold,
-                RssSourceModel.enabled == True
-            ).limit(100).all()
-
-            for s in disabled_rss:
-                s.enabled = False
-                logger.info(f"[定时任务] 禁用失效订阅源: {s.sourceName}", extra={"action": job_name, "source_url": s.sourceUrl})
-
-            db.commit()
-            total = len(disabled_books) + len(disabled_rss)
+            disabled = await build_maintenance_service().disable_stale_sources(
+                cutoff=stale_threshold,
+                limit=100,
+            )
+            for source in disabled:
+                logger.info(
+                    "禁用长期失效书源",
+                    extra={
+                        "action": job_name,
+                        "source_url": source.get("source_url", ""),
+                        "source_type": source.get("source_type", ""),
+                    },
+                )
+            total = len(disabled)
             if total > 0:
-                logger.info(f"[定时任务] 自动禁用 {total} 个失效源", extra={"action": "job_end", "job": job_name, "disabled": total})
+                logger.info("自动禁用长期失效源", extra={"action": "job_end", "job": job_name, "disabled": total})
                 await publish_event(SystemNoticeEvent(
                     level="warning",
                     title="失效源清理",
                     content=f"已自动禁用 {total} 个连续 7 天不可用的源"
                 ))
         except Exception as e:
-            db.rollback()
             logger.error(f"[定时任务] 失效源清理异常: {e}", extra={"action": "job_error", "job": job_name, "error": str(e)}, exc_info=True)
-        finally:
-            db.close()
 
     try:
         _safe_async_run(_do())
@@ -274,21 +258,11 @@ def job_reset_daily_quota():
     logger.info(f"[定时任务] 开始重置日配额", extra={"action": "job_start", "job": job_name})
 
     async def _do():
-        from ..core.redis_client import redis_client
-        from ..infrastructure.persistence.sqlite.session import SessionLocal
-        from ..infrastructure.persistence.sqlite.schema import ApiKeyModel
-        db = SessionLocal()
         try:
-            keys = db.query(ApiKeyModel).filter(ApiKeyModel.is_enabled == True).all()
-            for key in keys:
-                await redis_client.reset_quota(key.id, "fetch_count")
-                await redis_client.reset_quota(key.id, "ai_chars")
-                await redis_client.reset_quota(key.id, "storage_mb")
-            logger.info(f"[定时任务] 已重置 {len(keys)} 个 API Key 配额", extra={"action": "job_end", "job": job_name, "count": len(keys)})
+            count = await build_maintenance_service().reset_daily_quotas()
+            logger.info(f"[定时任务] 已重置 {count} 个 API Key 配额", extra={"action": "job_end", "job": job_name, "count": count})
         except Exception as e:
             logger.error(f"[定时任务] 配额重置异常: {e}", extra={"action": "job_error", "job": job_name, "error": str(e)}, exc_info=True)
-        finally:
-            db.close()
 
     try:
         _safe_async_run(_do())
@@ -304,45 +278,13 @@ def job_sync_quota_to_db():
     set_log_context(trace_id=f"job_{datetime.utcnow().timestamp():.0f}")
 
     async def _do():
-        from ..core.redis_client import redis_client
-        from ..infrastructure.persistence.sqlite.session import SessionLocal
-        from ..infrastructure.persistence.sqlite.schema import ApiKeyModel, QuotaUsageModel
-        db = SessionLocal()
         try:
-            keys = db.query(ApiKeyModel).filter(ApiKeyModel.is_enabled == True).all()
             today = datetime.utcnow().strftime("%Y-%m-%d")
-            synced = 0
-            for key in keys:
-                fetch_count = await redis_client.get_quota(key.id, "fetch_count")
-                ai_chars = await redis_client.get_quota(key.id, "ai_chars")
-                storage_mb = await redis_client.get_quota(key.id, "storage_mb")
-                if fetch_count > 0 or ai_chars > 0 or storage_mb > 0:
-                    usage = db.query(QuotaUsageModel).filter(
-                        QuotaUsageModel.api_key_id == key.id,
-                        QuotaUsageModel.date == today
-                    ).first()
-                    if not usage:
-                        usage = QuotaUsageModel(
-                            api_key_id=key.id,
-                            date=today,
-                            fetch_count=fetch_count,
-                            ai_chars=ai_chars,
-                            storage_mb=storage_mb,
-                        )
-                        db.add(usage)
-                    else:
-                        usage.fetch_count = max(usage.fetch_count or 0, fetch_count)
-                        usage.ai_chars = max(usage.ai_chars or 0, ai_chars)
-                        usage.storage_mb = max(usage.storage_mb or 0, storage_mb)
-                    synced += 1
-            db.commit()
+            synced = await build_maintenance_service().sync_quotas(date=today)
             if synced > 0:
                 logger.info(f"[定时任务] 配额同步: {synced} 个 key", extra={"action": job_name, "synced": synced})
         except Exception as e:
-            db.rollback()
             logger.error(f"[定时任务] 配额同步异常: {e}", extra={"action": "job_error", "job": job_name, "error": str(e)}, exc_info=True)
-        finally:
-            db.close()
 
     try:
         _safe_async_run(_do())

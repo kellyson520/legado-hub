@@ -208,6 +208,23 @@ class TestMemoryEventBusStartStop:
         await fresh_event_bus.stop()
         await fresh_event_bus.stop()  # 不应抛出异常
 
+    async def test_stop_drains_multiple_queued_events(self, fresh_event_bus):
+        from app.core.events import SourceCreatedEvent
+
+        received = []
+
+        @fresh_event_bus.subscribe(SourceCreatedEvent)
+        async def handler(event):
+            received.append(event.source_url)
+
+        await fresh_event_bus.start()
+        for index in range(4):
+            await fresh_event_bus.publish(SourceCreatedEvent(source_url=f"https://{index}.example"))
+
+        await fresh_event_bus.stop()
+
+        assert received == [f"https://{index}.example" for index in range(4)]
+
 
 class TestPublishEvent:
     """publish_event 全局便捷函数测试"""

@@ -1,4 +1,4 @@
-import { apiClient, getConfiguredAccessToken } from '@/api/client'
+import { apiClient } from '@/api/client'
 import type { ApiEnvelope, PaginatedEnvelope, PaginatedStatusQueryParams } from '@/api/types'
 
 export interface OperationJobRow {
@@ -337,16 +337,14 @@ export async function subscribeOperationEvents({
   onEvent: (event: OperationStreamEvent) => void
   onDisconnect?: () => void
 }) {
-  const token = getConfiguredAccessToken()
   const controller = new AbortController()
   const params = new URLSearchParams()
   if (tenantId) params.set('tenant_id', tenantId)
   params.set('limit', String(limit))
   if (once) params.set('once', 'true')
 
-  const response = await fetch(`/api/events/stream?${params.toString()}`, {
+  const response = await apiClient.stream(`/events/stream?${params.toString()}`, {
     method: 'GET',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
     signal: controller.signal,
   })
 

@@ -85,3 +85,46 @@ async def test_source_repository_keeps_ephemeral_sources_tenant_scoped_and_expir
 
     await repo.delete_ephemeral_book_sources("tenant-a", ids)
     assert await repo.list_ephemeral_book_sources("tenant-a", ids=ids) == []
+
+
+async def test_source_repository_disables_only_stale_error_sources(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "stale-sources.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.infrastructure.persistence.factory import build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.schema import BookSourceModel
+    from app.infrastructure.persistence.sqlite.session import SessionLocal
+
+    bootstrap_sqlite()
+    db = SessionLocal()
+    try:
+        from datetime import datetime, timedelta
+
+        old = BookSourceModel(
+            bookSourceName="旧失败源",
+            bookSourceUrl="https://old.example",
+            payload="{}",
+            sourceStatus="error",
+            lastCheckTime=datetime.utcnow() - timedelta(days=8),
+            enabled=True,
+        )
+        recent = BookSourceModel(
+            bookSourceName="近期失败源",
+            bookSourceUrl="https://recent.example",
+            payload="{}",
+            sourceStatus="error",
+            lastCheckTime=datetime.utcnow() - timedelta(days=1),
+            enabled=True,
+        )
+        db.add_all([old, recent])
+        db.commit()
+    finally:
+        db.close()
+
+    disabled = await build_source_repository().disable_stale_sources(
+        datetime.utcnow() - timedelta(days=7),
+    )
+
+    assert [item["source_url"] for item in disabled] == ["https://old.example"]

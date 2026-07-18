@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from app.application.services.source_health_models import SourceHealthDecision, SourceProbeEvidence
+from app.domain.entities.source_health import SourceHealthDecision, SourceProbeEvidence
 
 
 class SourceHealthClassifierService:

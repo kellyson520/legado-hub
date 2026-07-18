@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from app.application.services.interactive_browser_service import BrowserAttemptResult
+from app.application.ports.browser import BrowserAttemptResult
 
 
 class BrowserRuntimeUnavailable(RuntimeError):

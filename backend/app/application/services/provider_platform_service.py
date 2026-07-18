@@ -2,21 +2,13 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from app.application.ports.provider import ProviderAdapter, ProviderRegistry, provider_http_status
-from app.core.redaction import sanitize_error
-
-
-PROVIDER_ROUTE_GROUPS = (
-    "default",
-    "ai",
-    "source_build",
-    "translation",
-    "novel",
-    "novel_extract",
-    "novel_verify",
-    "novel_adjudicate",
-    "novel_audit",
+from app.application.ports.provider import (
+    PROVIDER_ROUTE_GROUPS,
+    ProviderAdapter,
+    ProviderRegistry,
+    provider_http_status,
 )
+from app.core.redaction import sanitize_error
 
 
 class ProviderQuotaLimiter(Protocol):

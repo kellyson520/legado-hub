@@ -204,28 +204,16 @@ async def test_job_mark_stale_sources_disables_old_error_sources(mock_set_ctx, m
     """测试 job_mark_stale_sources — 禁用连续 7 天不可用的源"""
     from app.tasks.scheduler import job_mark_stale_sources
 
-    mock_book = MagicMock()
-    mock_book.enabled = True
-
-    mock_db = MagicMock()
-    mock_db.query = MagicMock(return_value=MagicMock(
-        filter=MagicMock(return_value=MagicMock(
-            limit=MagicMock(return_value=[mock_book])
-        ))
-    ))
-    mock_db.commit = MagicMock()
-    mock_db.close = MagicMock()
-
-    mock_event = AsyncMock()
-    mock_event.__aenter__ = AsyncMock(return_value=mock_event)
-    mock_event.__aexit__ = AsyncMock(return_value=False)
+    maintenance = MagicMock()
+    maintenance.disable_stale_sources = AsyncMock(return_value=[{"source_url": "https://old.example"}])
 
     with (
-        patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db),
+        patch("app.tasks.scheduler.build_maintenance_service", return_value=maintenance),
         patch("app.tasks.scheduler.publish_event", new_callable=AsyncMock),
     ):
         job_mark_stale_sources()
 
+    maintenance.disable_stale_sources.assert_awaited_once()
     mock_set_ctx.assert_called_once()
     mock_clear_ctx.assert_called_once()
 
@@ -237,16 +225,12 @@ async def test_job_mark_stale_sources_handles_db_error(mock_set_ctx, mock_clear_
     """测试 job_mark_stale_sources — 数据库异常时回滚且不中断任务"""
     from app.tasks.scheduler import job_mark_stale_sources
 
-    mock_db = MagicMock()
-    mock_db.query = MagicMock(side_effect=RuntimeError("DB 查询异常"))
-    mock_db.rollback = MagicMock()
-    mock_db.close = MagicMock()
+    maintenance = MagicMock()
+    maintenance.disable_stale_sources = AsyncMock(side_effect=RuntimeError("存储异常"))
 
-    with patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db):
+    with patch("app.tasks.scheduler.build_maintenance_service", return_value=maintenance):
         job_mark_stale_sources()
 
-    # 异常后回滚
-    mock_db.rollback.assert_called_once()
     # 日志上下文仍清理
     mock_clear_ctx.assert_called_once()
 
@@ -261,34 +245,12 @@ async def test_job_reset_daily_quota_resets_all_keys(mock_set_ctx, mock_clear_ct
     """测试 job_reset_daily_quota — 重置所有启用 API Key 的配额计数"""
     from app.tasks.scheduler import job_reset_daily_quota
 
-    mock_key1 = MagicMock(id=1)
-    mock_key2 = MagicMock(id=2)
-
-    # 正确构建 mock 链：query() → .filter() → .all()
-    mock_all_result = MagicMock()
-    mock_all_result.all = MagicMock(return_value=[mock_key1, mock_key2])
-
-    mock_filter_result = MagicMock()
-    mock_filter_result.all = MagicMock(return_value=[mock_key1, mock_key2])
-
-    mock_query = MagicMock()
-    mock_query.filter = MagicMock(return_value=mock_filter_result)
-
-    mock_db = MagicMock()
-    mock_db.query = MagicMock(return_value=mock_query)
-    mock_db.close = MagicMock()
-
-    mock_redis = AsyncMock()
-    mock_redis.reset_quota = AsyncMock()
-
-    with (
-        patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db),
-        patch("app.core.redis_client.redis_client", mock_redis),
-    ):
+    maintenance = MagicMock()
+    maintenance.reset_daily_quotas = AsyncMock(return_value=2)
+    with patch("app.tasks.scheduler.build_maintenance_service", return_value=maintenance):
         job_reset_daily_quota()
 
-    # 验证每个 key 的三个配额指标都被重置
-    assert mock_redis.reset_quota.call_count == 6  # 2 keys * 3 metrics
+    maintenance.reset_daily_quotas.assert_awaited_once()
 
 
 # ==================== job_sync_quota_to_db 测试 ====================
@@ -301,41 +263,12 @@ async def test_job_sync_quota_to_db_syncs_active_keys(mock_set_ctx, mock_clear_c
     """测试 job_sync_quota_to_db — 将 Redis 配额数据同步到数据库"""
     from app.tasks.scheduler import job_sync_quota_to_db
 
-    mock_key = MagicMock(id=1)
-
-    # 第一次 query()：ApiKeyModel 查询链 → .filter().all() 返回 [mock_key]
-    mock_filter_api_keys = MagicMock()
-    mock_filter_api_keys.all = MagicMock(return_value=[mock_key])
-
-    mock_query_api_keys = MagicMock()
-    mock_query_api_keys.filter = MagicMock(return_value=mock_filter_api_keys)
-
-    # 第二次 query()：QuotaUsageModel 查询链 → .filter().first() 返回 None
-    mock_filter_usage = MagicMock()
-    mock_filter_usage.first = MagicMock(return_value=None)
-
-    mock_query_usage = MagicMock()
-    mock_query_usage.filter = MagicMock(return_value=mock_filter_usage)
-
-    mock_db = MagicMock()
-    mock_db.query = MagicMock(side_effect=[mock_query_api_keys, mock_query_usage])
-    mock_db.add = MagicMock()
-    mock_db.commit = MagicMock()
-    mock_db.close = MagicMock()
-
-    mock_redis = AsyncMock()
-    mock_redis.get_quota = AsyncMock(side_effect=[10, 200, 3.5])  # fetch_count=10, ai_chars=200, storage_mb=3.5
-
-    with (
-        patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db),
-        patch("app.core.redis_client.redis_client", mock_redis),
-    ):
+    maintenance = MagicMock()
+    maintenance.sync_quotas = AsyncMock(return_value=1)
+    with patch("app.tasks.scheduler.build_maintenance_service", return_value=maintenance):
         job_sync_quota_to_db()
 
-    # 有配额使用时，应新增记录
-    mock_db.add.assert_called_once()
-    mock_db.commit.assert_called_once()
-    assert mock_db.add.call_args.args[0].storage_mb == 3.5
+    maintenance.sync_quotas.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -345,18 +278,12 @@ async def test_job_sync_quota_to_db_handles_exception(mock_set_ctx, mock_clear_c
     """测试 job_sync_quota_to_db — 数据库异常时回滚且不中断任务"""
     from app.tasks.scheduler import job_sync_quota_to_db
 
-    mock_db = MagicMock()
-    mock_db.query = MagicMock(side_effect=RuntimeError("DB 异常"))
-    mock_db.rollback = MagicMock()
-    mock_db.close = MagicMock()
+    maintenance = MagicMock()
+    maintenance.sync_quotas = AsyncMock(side_effect=RuntimeError("存储异常"))
 
-    with (
-        patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db),
-        patch("app.core.redis_client.redis_client", new_callable=AsyncMock),
-    ):
+    with patch("app.tasks.scheduler.build_maintenance_service", return_value=maintenance):
         job_sync_quota_to_db()
 
-    mock_db.rollback.assert_called_once()
     mock_clear_ctx.assert_called_once()
 
 

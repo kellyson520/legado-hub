@@ -10,6 +10,7 @@ from secrets import token_urlsafe
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
+from app.application.ports.browser import BrowserAttemptResult, BrowserValidationResult
 from app.domain.entities.interactive_browser import (
     InteractiveBrowserSession,
     InteractiveBrowserState,
@@ -22,20 +23,6 @@ ACTIVE_BROWSER_STATES = frozenset({
     InteractiveBrowserState.AWAITING_MANUAL,
     InteractiveBrowserState.VALIDATING,
 })
-
-
-@dataclass(frozen=True)
-class BrowserAttemptResult:
-    state: str
-    reason: str = ''
-
-    @classmethod
-    def needs_manual(cls, reason: str) -> 'BrowserAttemptResult':
-        return cls(state='needs_manual', reason=reason)
-
-    @classmethod
-    def succeeded(cls) -> 'BrowserAttemptResult':
-        return cls(state='succeeded')
 
 
 @dataclass(frozen=True)
@@ -64,21 +51,6 @@ class BrowserVerificationResult:
         validation: 'BrowserValidationResult',
     ) -> 'BrowserVerificationResult':
         return cls(state='validated', session_id=session_id, validation=validation)
-
-
-@dataclass(frozen=True)
-class BrowserValidationResult:
-    passed: bool
-    reason: str = ''
-    stages: dict[str, dict] | None = None
-
-    @classmethod
-    def passed(cls, stages: dict[str, dict]) -> 'BrowserValidationResult':
-        return cls(passed=True, stages=stages)
-
-    @classmethod
-    def failed(cls, reason: str, stages: dict[str, dict]) -> 'BrowserValidationResult':
-        return cls(passed=False, reason=reason, stages=stages)
 
 
 @dataclass(frozen=True)

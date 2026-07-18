@@ -1,15 +1,20 @@
 from typing import Any
 
-from app.application.services.interactive_browser_service import BrowserValidationResult
-from app.application.services.source_probe_service import SourceProbeService
+from app.application.ports.browser import BrowserValidationResult
 from app.infrastructure.browser.browser_http_client import BrowserHttpClient
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
 
 
-async def run_browser_probe(handle: Any, source_rule: dict, keyword: str) -> BrowserValidationResult:
+async def run_browser_probe(
+    handle: Any,
+    source_rule: dict,
+    keyword: str,
+    *,
+    probe_factory,
+) -> BrowserValidationResult:
     source = {**source_rule}
     source.setdefault("id", 0)
-    probe = SourceProbeService(
+    probe = probe_factory(
         fetcher=LegadoBookSourceFetcher(
             http_client=BrowserHttpClient(
                 page=handle.page,

@@ -50,6 +50,14 @@ function unwrapResponse<T>(response: { data: ApiEnvelope<T> }) {
   return response.data
 }
 
+function resolveRequestUrl(baseURL: string, url: string) {
+  if (/^https?:\/\//i.test(url)) return url
+  const base = baseURL.replace(/\/$/, '')
+  if (!base || base === '/') return url
+  if (url === base || url.startsWith(`${base}/`)) return url
+  return `${base}/${url.replace(/^\//, '')}`
+}
+
 export function createApiClient(options: CreateApiClientOptions = {}) {
   const instance: AxiosInstance = axios.create({
     baseURL: options.baseURL ?? '/',
@@ -102,6 +110,24 @@ export function createApiClient(options: CreateApiClientOptions = {}) {
       unwrapResponse<T>(await instance.patch<ApiEnvelope<T>>(url, data, config)),
     delete: async <T>(url: string, config?: AxiosRequestConfig) =>
       unwrapResponse<T>(await instance.delete<ApiEnvelope<T>>(url, config)),
+    stream: async (url: string, init: RequestInit = {}) => {
+      const requestUrl = resolveRequestUrl(options.baseURL ?? '/', url)
+      const headers = new Headers(init.headers)
+      const token = options.getAccessToken?.()
+      if (token) headers.set('Authorization', `Bearer ${token}`)
+
+      let response = await fetch(requestUrl, { ...init, headers })
+      if (response.status === 401 && options.onRefresh) {
+        const session = await options.onRefresh()
+        if (session?.accessToken) {
+          headers.set('Authorization', `Bearer ${session.accessToken}`)
+          response = await fetch(requestUrl, { ...init, headers })
+        } else {
+          options.onAuthFailure?.()
+        }
+      }
+      return response
+    },
   }
 }
 

@@ -7,8 +7,8 @@ from urllib.parse import quote, urlencode, urljoin
 
 from bs4 import BeautifulSoup, Tag
 
-from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
-from app.application.services.source_url_policy import SourceUrlPolicy
+from app.domain.entities.source_health import SourceProbeEvidence, StageProbeResult
+from app.core.url_safety import SourceUrlPolicy
 
 
 class SourceProbeService:

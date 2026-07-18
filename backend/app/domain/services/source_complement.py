@@ -20,18 +20,13 @@ from dataclasses import dataclass, field
 
 from ..entities.novel import NovelChapter
 from ..value_objects import AlignmentResult
-from .chapter_aligner import CrossSourceChapterAligner
-from .content_merger import ContentMerger, ContentMergeResult
-from ...core.logging import get_logger
-from ...core.events import (
+from ..events import (
     ChapterComplementRequestedEvent,
     ChapterFetchedFromSourceEvent,
     ChapterComplementCompletedEvent,
-    SourceComplementProgressEvent,
-    publish_event,
 )
-
-logger = get_logger("source_complement")
+from .chapter_aligner import CrossSourceChapterAligner
+from .content_merger import ContentMerger, ContentMergeResult
 
 
 @dataclass
@@ -86,6 +81,7 @@ class SourceComplementService:
         max_concurrent: int = 5,
         timeout_per_source: int = 30,
         merge_strategy: str = "hybrid",
+        event_publisher: Optional[Callable] = None,
     ):
         """
         Args:
@@ -99,7 +95,15 @@ class SourceComplementService:
         self._max_concurrent = max_concurrent
         self._timeout_per_source = timeout_per_source
         self._merge_strategy = merge_strategy
+        self._event_publisher = event_publisher
         self._semaphore: Optional[asyncio.Semaphore] = None
+
+    async def _publish(self, event: Any, enabled: bool) -> None:
+        if not enabled or self._event_publisher is None:
+            return
+        result = self._event_publisher(event)
+        if hasattr(result, "__await__"):
+            await result
 
     async def complement_chapter(
         self,
@@ -127,20 +131,13 @@ class SourceComplementService:
         start_time = time.time()
         job_id = f"comp_{uuid.uuid4().hex[:12]}"
 
-        logger.info(
-            f"[SourceComplement] 开始章节互补 job={job_id} "
-            f"book={book_name} chapter={chapter_title}({chapter_num}) "
-            f"sources={len(source_urls)}"
-        )
-
-        if publish_events:
-            await publish_event(ChapterComplementRequestedEvent(
+        await self._publish(ChapterComplementRequestedEvent(
                 job_id=job_id,
                 book_name=book_name,
                 chapter_title=chapter_title,
                 chapter_num=chapter_num,
                 source_urls=source_urls,
-            ))
+            ), publish_events)
 
         # 1. 并行抓取所有书源
         self._semaphore = asyncio.Semaphore(self._max_concurrent)
@@ -236,14 +233,7 @@ class SourceComplementService:
             elapsed_ms=elapsed,
         )
 
-        logger.info(
-            f"[SourceComplement] 完成 job={job_id} "
-            f"status={status} success={success_count}/{len(source_urls)} "
-            f"quality={quality_score:.1f} elapsed={elapsed}ms"
-        )
-
-        if publish_events:
-            await publish_event(ChapterComplementCompletedEvent(
+        await self._publish(ChapterComplementCompletedEvent(
                 job_id=job_id,
                 book_name=book_name,
                 chapter_title=chapter_title,
@@ -264,7 +254,7 @@ class SourceComplementService:
                 ],
                 status=status,
                 merged_from=merged_from,
-            ))
+            ), publish_events)
 
         return result
 
@@ -305,8 +295,7 @@ class SourceComplementService:
                         response_time_ms=elapsed,
                     )
 
-                if publish_events:
-                    await publish_event(ChapterFetchedFromSourceEvent(
+                await self._publish(ChapterFetchedFromSourceEvent(
                         job_id=job_id,
                         source_url=source_url,
                         source_name=result.source_name,
@@ -317,7 +306,7 @@ class SourceComplementService:
                         success=result.success,
                         error=result.error,
                         response_time_ms=result.response_time_ms,
-                    ))
+                    ), publish_events)
 
                 return result
 
@@ -330,7 +319,6 @@ class SourceComplementService:
                     chapter_num=chapter_num,
                 )
             except Exception as e:
-                logger.warning(f"[SourceComplement] 抓取失败 source={source_url} error={e}")
                 return SourceFetchResult(
                     source_url=source_url,
                     success=False,

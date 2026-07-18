@@ -142,7 +142,7 @@ test('review queue page renders source, knowledge, and translation review candid
   render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
 
   expect(await screen.findByRole('heading', { name: '审核队列' })).toBeInTheDocument()
-  expect(screen.getByText('build_escalation')).toBeInTheDocument()
+  expect(await screen.findByText('build_escalation')).toBeInTheDocument()
   expect(screen.getByText('Manual source build review required')).toBeInTheDocument()
   expect(screen.getByText('character_relation')).toBeInTheDocument()
   expect(screen.getAllByText('Lin trusts Mei')).toHaveLength(2)

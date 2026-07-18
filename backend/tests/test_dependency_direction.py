@@ -13,6 +13,30 @@ def test_domain_and_application_layers_do_not_import_infrastructure():
     assert violations == []
 
 
+def test_domain_layer_is_framework_and_application_free():
+    root = Path(__file__).resolve().parents[1] / "app" / "domain"
+    forbidden = (
+        "from app.core",
+        "import app.core",
+        "from app.application",
+        "import app.application",
+        "from app.infrastructure",
+        "import app.infrastructure",
+        "from ..core",
+        "from ...core",
+        "from ..application",
+        "from ...application",
+    )
+    violations = []
+    for path in root.rglob("*.py"):
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith(forbidden):
+                violations.append(f"{path}:{line_no}: {stripped}")
+
+    assert violations == []
+
+
 def test_core_layer_does_not_import_application_or_infrastructure():
     root = Path(__file__).resolve().parents[1] / "app" / "core"
     violations = []
@@ -43,6 +67,22 @@ def test_infrastructure_persistence_does_not_import_legacy_database_module():
     assert violations == []
 
 
+def test_infrastructure_adapters_depend_on_ports_not_application_services():
+    root = Path(__file__).resolve().parents[1] / "app" / "infrastructure"
+    violations = []
+    for path in root.rglob("*.py"):
+        # The persistence factory is the composition root by design. SQLite
+        # bootstrap only reads a port-level provider constant.
+        if path.name == "factory.py" or path.name == "bootstrap.py":
+            continue
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith(("from app.application.services", "import app.application.services")):
+                violations.append(f"{path}:{line_no}: {stripped}")
+
+    assert violations == []
+
+
 def test_legacy_database_module_is_only_a_compatibility_facade():
     database_module = (Path(__file__).resolve().parents[1] / "app" / "database.py").read_text(
         encoding="utf-8"
@@ -56,6 +96,19 @@ def test_application_services_do_not_import_legacy_services_package():
     root = Path(__file__).resolve().parents[1] / "app" / "application"
     violations = []
     for path in root.rglob("*.py"):
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if "from app.services" in line or "import app.services" in line:
+                violations.append(f"{path}:{line_no}: {line.strip()}")
+
+    assert violations == []
+
+
+def test_active_production_modules_do_not_import_legacy_services_namespace():
+    app_root = Path(__file__).resolve().parents[1] / "app"
+    violations = []
+    for path in app_root.rglob("*.py"):
+        if "services" in path.relative_to(app_root).parts:
+            continue
         for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if "from app.services" in line or "import app.services" in line:
                 violations.append(f"{path}:{line_no}: {line.strip()}")
@@ -135,6 +188,21 @@ def test_scheduler_uses_canonical_sqlite_session_path():
 
     assert "from ..database import" not in scheduler
     assert "from app.database import" not in scheduler
+
+
+def test_scheduler_delegates_storage_mutations_to_application_services():
+    scheduler = (Path(__file__).resolve().parents[1] / "app" / "tasks" / "scheduler.py").read_text(
+        encoding="utf-8"
+    )
+
+    forbidden = (
+        "SessionLocal",
+        "BookSourceModel",
+        "RssSourceModel",
+        "ApiKeyModel",
+        "QuotaUsageModel",
+    )
+    assert not any(name in scheduler for name in forbidden)
 
 
 def test_unmounted_legacy_sqlite_repositories_are_retired():

@@ -83,3 +83,8 @@ class SourceRepository(ABC):
         last_check_time,
     ) -> dict:
         raise NotImplementedError
+
+    @abstractmethod
+    async def disable_stale_sources(self, cutoff: datetime, limit: int = 100) -> list[dict]:
+        """Disable enabled sources that have been in an error state since cutoff."""
+        raise NotImplementedError

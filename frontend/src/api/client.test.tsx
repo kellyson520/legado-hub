@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { AxiosError } from 'axios'
+import { vi } from 'vitest'
 
 import { AuthProvider, useAuth } from '@/app/providers/AuthProvider'
 import { createApiClient } from './client'
@@ -103,4 +104,24 @@ test('client unwraps patch and delete envelopes through shared methods', async (
   expect(patched.data.id).toBe('row-1')
   expect(deleted.data.id).toBe('row-1')
   expect(calls).toEqual(['patch:/api/items/row-1', 'delete:/api/items/row-1'])
+})
+
+test('stream requests use the shared base URL and authorization binding', async () => {
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }))
+  const client = createApiClient({
+    baseURL: '/api',
+    getAccessToken: () => 'stream-token',
+  })
+
+  await client.stream('/events/stream?once=true')
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    '/api/events/stream?once=true',
+    expect.objectContaining({
+      headers: expect.any(Headers),
+    }),
+  )
+  const [, init] = fetchMock.mock.calls[0]
+  expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer stream-token')
+  fetchMock.mockRestore()
 })

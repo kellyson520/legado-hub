@@ -1,10 +1,8 @@
 import json
+from dataclasses import dataclass
 from uuid import uuid4
 
 from app.core.pagination import paginated_result
-from pydantic import BaseModel, ConfigDict
-
-from app.application.services.ai_service import AIService
 from app.core.redaction import sanitize_error, sanitize_for_boundary
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
@@ -37,28 +35,61 @@ MODE_PROMPTS = {
 }
 
 
-class _ToolRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+@dataclass(frozen=True)
+class _ToolRequest:
     name: str
-    arguments: dict = {}
+    arguments: dict
+
+    @classmethod
+    def parse(cls, value: object) -> "_ToolRequest":
+        payload = _strict_mapping(value, required=("name",), optional=("arguments",))
+        name = payload["name"]
+        arguments = payload.get("arguments", {})
+        if not isinstance(name, str) or not isinstance(arguments, dict):
+            raise ValidationException("Invalid AI tool request")
+        return cls(name=name, arguments=arguments)
 
 
-class _EmptyArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class _SourceVersionArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+@dataclass(frozen=True)
+class _SourceVersionArguments:
     source_version_id: str
 
+    @classmethod
+    def parse(cls, value: object) -> "_SourceVersionArguments":
+        payload = _strict_mapping(value, required=("source_version_id",))
+        source_version_id = payload["source_version_id"]
+        if not isinstance(source_version_id, str):
+            raise ValidationException("Invalid source version arguments")
+        return cls(source_version_id=source_version_id)
 
-class _SourceRuleDraftArguments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
 
+@dataclass(frozen=True)
+class _SourceRuleDraftArguments:
     source_version_id: str
     patch: dict
+
+    @classmethod
+    def parse(cls, value: object) -> "_SourceRuleDraftArguments":
+        payload = _strict_mapping(value, required=("source_version_id", "patch"))
+        source_version_id = payload["source_version_id"]
+        patch = payload["patch"]
+        if not isinstance(source_version_id, str) or not isinstance(patch, dict):
+            raise ValidationException("Invalid source rule draft arguments")
+        return cls(source_version_id=source_version_id, patch=patch)
+
+
+def _strict_mapping(value: object, *, required: tuple[str, ...], optional: tuple[str, ...] = ()) -> dict:
+    if not isinstance(value, dict):
+        raise ValidationException("Invalid AI tool arguments")
+    allowed = set(required) | set(optional)
+    if set(value) - allowed or any(key not in value for key in required):
+        raise ValidationException("Invalid AI tool arguments")
+    return value
+
+
+def _require_empty_arguments(value: object) -> None:
+    if not isinstance(value, dict) or value:
+        raise ValidationException("Invalid AI tool arguments")
 
 
 class AIWorkspaceService:
@@ -199,7 +230,7 @@ class AIWorkspaceService:
                     conversation_id=conversation.id,
                     role="assistant",
                     mode=mode,
-                    content=AIService._sanitize_error(exc),
+                    content=sanitize_error(exc),
                     status="failed",
                     tool_calls=tool_calls,
                 )
@@ -264,25 +295,25 @@ class AIWorkspaceService:
     ) -> list[dict]:
         calls: list[dict] = []
         for raw_request in tool_requests:
-            request = _ToolRequest.model_validate(raw_request)
+            request = _ToolRequest.parse(raw_request)
             if request.name not in _ALL_TOOL_NAMES:
                 raise ValidationException("Unsupported AI tool")
             if request.name not in allowed_tool_names:
                 raise ValidationException("AI tool is not granted for this request")
             if request.name == "list_visible_sources":
-                _EmptyArguments.model_validate(request.arguments)
+                _require_empty_arguments(request.arguments)
                 result = self._list_visible_sources(str(actor_id))
             elif request.name == "get_source_rule_summary":
-                args = _SourceVersionArguments.model_validate(request.arguments)
+                args = _SourceVersionArguments.parse(request.arguments)
                 result = self._get_source_rule_summary(args.source_version_id, str(actor_id))
             elif request.name == "list_ai_analysis_results":
-                _EmptyArguments.model_validate(request.arguments)
+                _require_empty_arguments(request.arguments)
                 result = self._list_ai_results(str(actor_id))
             elif request.name == "get_source_validation_summary":
-                args = _SourceVersionArguments.model_validate(request.arguments)
+                args = _SourceVersionArguments.parse(request.arguments)
                 result = self._get_source_validation_summary(args.source_version_id, str(actor_id))
             elif request.name == "create_source_rule_draft":
-                args = _SourceRuleDraftArguments.model_validate(request.arguments)
+                args = _SourceRuleDraftArguments.parse(request.arguments)
                 result = await self._create_source_rule_draft(args.source_version_id, args.patch, str(actor_id))
             elif request.name == "source.joint_test":
                 if self._source_joint_test_executor is None:

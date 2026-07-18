@@ -324,6 +324,36 @@ class SQLiteAuthRepository(AuthRepository):
         finally:
             db.close()
 
+    async def list_enabled_api_keys(self) -> list[ApiKey]:
+        db = SessionLocal()
+        try:
+            models = (
+                db.query(ApiKeyModel)
+                .filter(ApiKeyModel.is_enabled == True)
+                .order_by(ApiKeyModel.id.asc())
+                .all()
+            )
+            result = []
+            for model in models:
+                permission_rows = (
+                    db.query(ApiKeyPermissionModel.permission_name)
+                    .filter(ApiKeyPermissionModel.api_key_id == model.id)
+                    .all()
+                )
+                result.append(
+                    ApiKey(
+                        id=model.id,
+                        name=model.name,
+                        key_hash=model.key_hash,
+                        permissions=[row[0] for row in permission_rows],
+                        is_enabled=model.is_enabled,
+                        created_at=model.created_at,
+                    )
+                )
+            return result
+        finally:
+            db.close()
+
     async def list_api_keys_page(
         self,
         *,

@@ -4,8 +4,8 @@ import time
 import inspect
 from typing import Any
 
-from app.application.services.source_url_policy import SourceUrlPolicy
 from app.core.redaction import sanitize_error
+from app.core.url_safety import SourceUrlPolicy
 
 REAL_SITE_URLS = [
     "https://www.biquga.com/list/0/1.html",

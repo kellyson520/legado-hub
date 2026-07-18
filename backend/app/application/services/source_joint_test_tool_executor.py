@@ -5,7 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.domain.entities.agent_runtime import ToolResult
-from app.application.services.source_url_policy import SourceUrlPolicy
+from app.core.url_safety import SourceUrlPolicy
 from app.core.redaction import sanitize_for_boundary
 
 

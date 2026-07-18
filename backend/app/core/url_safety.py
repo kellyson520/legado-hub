@@ -7,8 +7,10 @@ adapters can apply the same checks without importing one another.
 from __future__ import annotations
 
 import ipaddress
+import json
 from collections.abc import Mapping
-from urllib.parse import urlparse
+from typing import Any
+from urllib.parse import urljoin, urlparse
 
 
 _BLOCKED_HOSTNAMES = frozenset({"localhost", "localhost.localdomain", "ip6-localhost"})
@@ -93,3 +95,60 @@ def headers_for_redirect(
         for key, value in headers.items()
         if str(key).lower() not in {"authorization", "proxy-authorization", "cookie", "host"}
     }
+
+
+class SourceUrlPolicy:
+    """Shared pure URL/header helpers used by source application workflows."""
+
+    public_http_url_error = staticmethod(public_http_url_error)
+
+    @staticmethod
+    def resolve_relative(url: str, base_url: str) -> str:
+        if not url:
+            return ""
+        if url.startswith(("http://", "https://", "data:", "ftp://")):
+            return url
+        try:
+            if not base_url:
+                return url
+            if not base_url.endswith("/") and "." not in base_url.rsplit("/", 1)[-1]:
+                base_url = base_url + "/"
+            return urljoin(base_url, url)
+        except Exception:
+            return url
+
+    @staticmethod
+    def parse_headers(header_data: Any) -> dict[str, str]:
+        if not header_data:
+            return {}
+        if isinstance(header_data, dict):
+            return {str(key): str(value) for key, value in header_data.items()}
+        if not isinstance(header_data, str) or not header_data.strip():
+            return {}
+        raw = header_data.strip()
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return {str(key): str(value) for key, value in parsed.items()}
+        except (json.JSONDecodeError, TypeError):
+            pass
+        headers: dict[str, str] = {}
+        for line in raw.split("\n"):
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            if key.strip():
+                headers[key.strip()] = value.strip()
+        return headers
+
+    @staticmethod
+    def get_base_url(book_source_url: str) -> str:
+        if not book_source_url:
+            return ""
+        url = book_source_url.split("#", 1)[0]
+        try:
+            parsed = urlparse(url)
+            return f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            return url

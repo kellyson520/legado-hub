@@ -4,6 +4,19 @@ from collections.abc import Mapping
 from typing import Any, Protocol
 
 
+PROVIDER_ROUTE_GROUPS = (
+    "default",
+    "ai",
+    "source_build",
+    "translation",
+    "novel",
+    "novel_extract",
+    "novel_verify",
+    "novel_adjudicate",
+    "novel_audit",
+)
+
+
 class ProviderAdapter(Protocol):
     name: str
 

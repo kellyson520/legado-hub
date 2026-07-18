@@ -44,3 +44,46 @@ class SourceProbeRun:
     content_result: dict = field(default_factory=dict)
     summary: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=utcnow)
+
+
+@dataclass
+class StageProbeResult:
+    stage: str
+    status: str = "unknown"
+    elapsed_ms: int = 0
+    request_preview: str = ""
+    response_kind: str = ""
+    hit_count: int = 0
+    sample_title: str = ""
+    error_message: str = ""
+    detail: dict = field(default_factory=dict)
+
+
+@dataclass
+class SourceProbeEvidence:
+    source_id: int
+    source_name: str
+    source_url: str
+    probe_mode: str
+    keyword: str
+    search: StageProbeResult
+    toc: StageProbeResult
+    content: StageProbeResult
+    attempted_keywords: list[str] = field(default_factory=list)
+    attempts: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class SourceHealthDecision:
+    source_id: int
+    source_name: str
+    source_url: str
+    health_status: str
+    search_status: str
+    toc_status: str
+    content_status: str
+    failure_reason: str
+    decision_confidence: str
+    route_policy: str
+    route_score: float
+    metadata: dict = field(default_factory=dict)

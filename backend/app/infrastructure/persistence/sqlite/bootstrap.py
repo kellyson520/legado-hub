@@ -127,7 +127,7 @@ def _ensure_sqlite_novel_analysis_columns() -> None:
 
 
 def _ensure_default_provider_routes() -> None:
-    from app.application.services.provider_platform_service import PROVIDER_ROUTE_GROUPS
+    from app.application.ports.provider import PROVIDER_ROUTE_GROUPS
 
     from .provider_repo_impl import SQLiteProviderRepository
 

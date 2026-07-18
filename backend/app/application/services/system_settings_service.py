@@ -1,6 +1,5 @@
 from app.application.services.system_settings_registry import SETTINGS_REGISTRY, SettingsTab
-from app.application.ports.provider import ProviderRegistry
-from app.application.services.provider_platform_service import PROVIDER_ROUTE_GROUPS
+from app.application.ports.provider import PROVIDER_ROUTE_GROUPS, ProviderRegistry
 from app.domain.repositories.system_settings_repo import SystemSettingsRepository, VersionedSetting
 
 

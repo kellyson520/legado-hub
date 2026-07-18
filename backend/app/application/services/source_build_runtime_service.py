@@ -16,9 +16,9 @@ from app.application.services.source_build_tool_executor import (
 from app.application.services.source_page_tool_executor import SourcePageToolExecutor
 from app.application.services.site_profile_service import SiteProfile
 from app.application.services.source_build_agent import SourceBuildAgent
-from app.core.compatibility import CompatibilityEngine
 from app.domain.entities.job import Job
 from app.domain.repositories.source_runtime_repo import SourceRuntimeRepository
+from app.domain.services.source_compatibility import CompatibilityEngine
 
 
 def _utcnow() -> datetime:

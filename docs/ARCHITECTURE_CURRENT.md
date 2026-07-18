@@ -27,7 +27,7 @@ core (logging, response, exceptions, security, URL safety, redaction)
 
 硬性规则：
 
-- `domain` 只依赖标准库；仓储、外部模型和网络能力必须是抽象接口。
+- `domain` 只依赖标准库；仓储、外部模型和网络能力必须是抽象接口。领域事件定义在 `domain/events.py`，事件总线不属于领域层。
 - `application` 只能依赖 `domain`、`core` 和 `application.ports`，不能导入 ORM、HTTP 客户端或 `app.services`。
 - `infrastructure` 实现 domain 仓储和 application ports；组合工厂集中在 `app.infrastructure.persistence.factory`。
 - `interfaces` 只做请求校验、权限依赖和响应映射，不访问数据库会话。
@@ -43,15 +43,21 @@ core (logging, response, exceptions, security, URL safety, redaction)
 - URL 出站策略位于 `app.core.url_safety`，联合测试、页面探针和 Legado HTTP 客户端共享它；DNS 解析结果如果指向私有地址会被拒绝。
 - 具体 HTTP 传输只位于 `app.infrastructure.http` 和 Legado 运行时基础设施。应用层通过 `app.application.ports.http` 注入异步页面客户端或 webhook sender；每次请求、`dnsIp` 覆盖和重定向都会重新经过公共地址策略。
 - Agent 结果和异常跨越模型、对话或持久化边界前必须通过 `app.core.redaction.sanitize_for_boundary`。
+- 书源兼容性规则实现位于 `domain.services.source_compatibility`；`app.core.compatibility` 仅保留旧导入路径。
 - 审计写入使用响应绑定的 ASGI `BackgroundTask`，由响应生命周期负责完成，不能在核心中创建脱离生命周期的裸后台任务。
 - 分页、响应 envelope、异常处理、认证上下文和事件总线均由 `app.core` 提供，业务模块不重新实现。
 - 持久化包不再导出失效的 `RepositoryFactory`、`get_*_repo` 兼容别名；所有服务通过命名工厂显式组装。
+- `tasks` 只负责调度和日志上下文；失效源清理、API Key 配额重置/同步由 `MaintenanceService` 编排，不能直接操作 SQLite ORM。
+- 前端流式事件也通过 `frontend/src/api/client.ts` 的统一 `stream` 端口发送，页面模块不再自行拼接认证头或 `/api` 前缀。
+- 浏览器/Playwright 适配器只依赖 `application.ports.browser`；探针实现由组合根注入，不在基础设施适配器中实例化应用服务。
 
 ## 源阅读与联合测试
 
 正式书源规则写入 `source_versions`，只有审核流水线可以发布。`source.joint_test` 使用 `ephemeral_book_sources` 临时表：记录带租户范围和 15 分钟过期时间，阅读服务必须携带租户范围；测试完成后主动清理，过期时间作为兜底。联合测试不会写入全局 `book_sources`，也不会改变发布状态。
 
 源导入解析通过 `application.ports.SourceImportParser` 注入。当前实现位于 `app.infrastructure.crawler.source_fetcher`，旧的 `app.services.fetcher` 仅保留兼容导出。联合测试的临时源由启动清理、异常路径清理和 `cleanup_ephemeral_sources` 调度任务共同回收。
+
+`app.services` 中的旧搜索器、生成器、翻译器和实验性小说 Agent/理解模块不在 FastAPI 运行入口中，也没有任何 `app` 生产模块反向引用它们；它们只为外部脚本和历史测试保留。新功能禁止继续依赖这个命名空间，迁移后的运行能力必须落在当前应用/领域/基础设施边界内。
 
 ## 组合与扩展
 

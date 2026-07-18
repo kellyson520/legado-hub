@@ -323,3 +323,38 @@ class SQLiteSourceRepository(SourceRepository):
             return self._book_to_dict(model)
         finally:
             db.close()
+
+    async def disable_stale_sources(self, cutoff: datetime, limit: int = 100) -> list[dict]:
+        db = SessionLocal()
+        try:
+            disabled: list[dict] = []
+            book_rows = (
+                db.query(BookSourceModel)
+                .filter(
+                    BookSourceModel.sourceStatus == "error",
+                    BookSourceModel.lastCheckTime < cutoff,
+                    BookSourceModel.enabled == True,
+                )
+                .order_by(BookSourceModel.id.asc())
+                .limit(limit)
+                .all()
+            )
+            # RSS subscriptions do not carry health timestamps in the current
+            # schema, so only book sources participate in stale health cleanup.
+            for row in book_rows:
+                row.enabled = False
+                disabled.append(
+                    {
+                        "source_name": getattr(row, "bookSourceName", None) or getattr(row, "sourceName", ""),
+                        "source_url": getattr(row, "bookSourceUrl", None) or getattr(row, "sourceUrl", ""),
+                        "source_type": "book" if isinstance(row, BookSourceModel) else "rss",
+                    }
+                )
+            if disabled:
+                db.commit()
+            return disabled
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
