@@ -1,4 +1,3 @@
-import httpx
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -6,6 +5,7 @@ from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.core.permissions import Permission
 from app.core.response import ok
+from app.application.ports.provider import provider_http_status
 from app.domain.repositories.system_settings_repo import ConcurrentSettingsUpdateError
 from app.infrastructure.persistence.factory import (
     build_provider_platform_service,
@@ -146,16 +146,18 @@ async def discover_provider_models(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in {401, 403}:
+    except Exception as exc:
+        status = provider_http_status(exc)
+        if status in {401, 403}:
             detail = "Provider authentication failed; update the API key"
             status_code = 422
+        elif status is not None:
+            detail = f"Provider model discovery failed (HTTP {status})"
+            status_code = 502
         else:
-            detail = f"Provider model discovery failed (HTTP {exc.response.status_code})"
+            detail = "Provider model discovery is unavailable"
             status_code = 502
         raise HTTPException(status_code=status_code, detail=detail) from exc
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail="Provider model discovery is unavailable") from exc
     return _system_response("provider models listed", data)
 
 

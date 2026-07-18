@@ -6,9 +6,9 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlencode, urljoin, urlsplit, urlunsplit
 
-import httpx
 from bs4 import BeautifulSoup
 
+from app.application.ports.http import AsyncHttpClient
 from app.domain.entities.agent_runtime import ToolResult
 from app.core.url_safety import public_http_url_error
 
@@ -29,13 +29,13 @@ _COOKIE_VALUE = re.compile(r'(?i)\bcookie\b\s*(?:[:=]\s*|\s+)[^<>\r\n]+')
 class SourcePageToolExecutor:
     """Bounded public-page inspection scoped to one submitted source origin."""
 
-    def __init__(self, target_url: str, client: Any | None = None):
+    def __init__(self, target_url: str, client: AsyncHttpClient | None = None):
         target = self._normalise_http_url(target_url)
         if target is None or public_http_url_error(target) is not None:
             raise ValueError('target_url must be an absolute http(s) URL')
         self._target_url = target
         self._target_origin = self._origin(target)
-        self._client = client or httpx.AsyncClient(timeout=15.0, follow_redirects=False)
+        self._client = client or _UnconfiguredHttpClient()
 
     def handlers(self) -> dict[str, Any]:
         return {
@@ -276,3 +276,14 @@ class SourcePageToolExecutor:
     @staticmethod
     def _reject(error_code: str) -> ToolResult:
         return ToolResult(status='rejected', error_code=error_code)
+
+
+class _UnconfiguredHttpClient:
+    async def get(self, _url: str, **_kwargs):
+        raise RuntimeError('source page HTTP client is not configured')
+
+    async def post(self, _url: str, **_kwargs):
+        raise RuntimeError('source page HTTP client is not configured')
+
+    async def aclose(self) -> None:
+        return None

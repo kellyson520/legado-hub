@@ -18,13 +18,13 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
 from aiohttp import CookieJar
 
 from app.core.logging import get_logger
-from app.core.url_safety import is_public_ip, public_http_url_error
+from app.core.url_safety import headers_for_redirect, is_public_ip, public_http_url_error
 
 logger = get_logger("legado_http")
 
@@ -241,14 +241,16 @@ class LegadoHttpClient:
     ) -> HttpResponse:
         """执行单次请求"""
         start = time.time()
-        session = await self._get_session()
-
         req_headers = {}
         if headers:
             req_headers.update(headers)
 
         request_url = url
-        if dns_ip and self._is_ip_address(dns_ip):
+        if dns_ip:
+            if not self._is_ip_address(dns_ip):
+                return HttpResponse(url=url, status=0, error="invalid_dns_ip")
+            if not is_public_ip(dns_ip):
+                return HttpResponse(url=url, status=0, error="unsafe_dns_ip")
             parsed = urlparse(url)
             if parsed.hostname:
                 port = parsed.port
@@ -262,7 +264,10 @@ class LegadoHttpClient:
                         original_host = f"{original_host}:{port}"
                     req_headers["Host"] = original_host
 
+        session = await self._get_session()
+
         kwargs_final = {}
+        allow_redirects = bool(kwargs.pop("allow_redirects", True))
         if params:
             kwargs_final["params"] = params
         if data is not None:
@@ -274,47 +279,84 @@ class LegadoHttpClient:
 
         # 透传其他参数
         for k, v in kwargs.items():
-            if k not in kwargs_final:
+            if k not in kwargs_final and k != "allow_redirects":
                 kwargs_final[k] = v
 
-        async with session.request(method, request_url, **kwargs_final) as resp:
-            content = await resp.read()
-            elapsed = int((time.time() - start) * 1000)
+        current_url = request_url
+        redirect_count = 0
+        while True:
+            request_kwargs = {**kwargs_final, "allow_redirects": False}
+            async with session.request(method, current_url, **request_kwargs) as resp:
+                location = resp.headers.get("Location")
+                if allow_redirects and 300 <= resp.status < 400 and location:
+                    if redirect_count >= 5:
+                        return HttpResponse(
+                            url=url,
+                            status=resp.status,
+                            headers={k: v for k, v in resp.headers.items()},
+                            error="too_many_redirects",
+                        )
+                    next_url = urljoin(str(resp.url), location)
+                    redirect_error = public_http_url_error(next_url)
+                    if redirect_error is not None:
+                        return HttpResponse(
+                            url=next_url,
+                            status=resp.status,
+                            headers={k: v for k, v in resp.headers.items()},
+                            error=f"unsafe_redirect:{redirect_error}",
+                        )
+                    origin_url = url if redirect_count == 0 else current_url
+                    req_headers = {
+                        str(key): str(value)
+                        for key, value in headers_for_redirect(req_headers, origin_url, next_url).items()
+                    }
+                    if req_headers:
+                        kwargs_final["headers"] = req_headers
+                    else:
+                        kwargs_final.pop("headers", None)
+                    current_url = next_url
+                    redirect_count += 1
+                    # Query parameters belong to the original request only.
+                    kwargs_final.pop("params", None)
+                    continue
 
-            # 检测编码
-            text = self._decode_content(content, resp, encoding)
+                content = await resp.read()
+                elapsed = int((time.time() - start) * 1000)
 
-            # 解析 JSON
-            json_data_parsed = None
-            is_json = False
-            content_type = resp.headers.get("Content-Type", "")
-            if "application/json" in content_type or "json" in content_type.lower():
-                try:
-                    json_data_parsed = json.loads(text)
-                    is_json = True
-                except (json.JSONDecodeError, ValueError):
-                    pass
+                # 检测编码
+                text = self._decode_content(content, resp, encoding)
 
-            # 判断是否 HTML
-            is_html = "text/html" in content_type or (
-                text.strip().startswith("<") and text.strip().endswith(">")
-            )
+                # 解析 JSON
+                json_data_parsed = None
+                is_json = False
+                content_type = resp.headers.get("Content-Type", "")
+                if "application/json" in content_type or "json" in content_type.lower():
+                    try:
+                        json_data_parsed = json.loads(text)
+                        is_json = True
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
-            # 响应头
-            resp_headers = {k: v for k, v in resp.headers.items()}
+                # 判断是否 HTML
+                is_html = "text/html" in content_type or (
+                    text.strip().startswith("<") and text.strip().endswith(">")
+                )
 
-            return HttpResponse(
-                url=url if request_url != url else str(resp.url),
-                status=resp.status,
-                headers=resp_headers,
-                text=text,
-                content=content,
-                charset=getattr(resp, "charset", None),
-                json_data=json_data_parsed,
-                is_json=is_json,
-                is_html=is_html,
-                elapsed_ms=elapsed,
-            )
+                # 响应头
+                resp_headers = {k: v for k, v in resp.headers.items()}
+
+                return HttpResponse(
+                    url=url if request_url != url else str(resp.url),
+                    status=resp.status,
+                    headers=resp_headers,
+                    text=text,
+                    content=content,
+                    charset=getattr(resp, "charset", None),
+                    json_data=json_data_parsed,
+                    is_json=is_json,
+                    is_html=is_html,
+                    elapsed_ms=elapsed,
+                )
 
     @staticmethod
     def _decode_content(content: bytes, resp: aiohttp.ClientResponse, encoding: str = None) -> str:

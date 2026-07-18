@@ -1,6 +1,6 @@
 import re
 
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import NotFoundException, ValidationException
 
 
 class SourceReadService:
@@ -198,12 +198,13 @@ class SourceReadService:
         ids: list[int] | None = None,
         urls: list[str] | None = None,
     ) -> list[dict]:
-        if tenant_id and hasattr(self._repo, "list_ephemeral_book_sources"):
-            return await self._repo.list_ephemeral_book_sources(
-                tenant_id,
-                ids=ids,
-                urls=urls,
-            )
+        if tenant_id:
+            list_ephemeral = getattr(self._repo, "list_ephemeral_book_sources", None)
+            if not callable(list_ephemeral):
+                raise ValidationException(
+                    "tenant-scoped source repository is required for scoped reads"
+                )
+            return await list_ephemeral(tenant_id, ids=ids, urls=urls)
         return await self._repo.list_book_sources_full(
             enabled_only=enabled_only,
             ids=ids,

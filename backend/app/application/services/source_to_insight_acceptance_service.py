@@ -5,6 +5,7 @@ import inspect
 from typing import Any
 
 from app.application.services.source_url_policy import SourceUrlPolicy
+from app.core.redaction import sanitize_error
 
 REAL_SITE_URLS = [
     "https://www.biquga.com/list/0/1.html",
@@ -41,6 +42,21 @@ class SourceToInsightAcceptanceService:
         self._source_runtime_repository = source_runtime_repository
 
     async def run(self, scenario: dict[str, Any]) -> dict[str, Any]:
+        tenant_id = str(scenario.get("tenant_id") or "source-insight-smoke")
+        cleanup_state: dict[str, Any] = {"source_ids": []}
+        try:
+            return await self._run(scenario, cleanup_state=cleanup_state)
+        finally:
+            await self._cleanup_ephemeral_sources(tenant_id, cleanup_state["source_ids"])
+            await self._cleanup_expired_ephemeral_sources(tenant_id)
+            await self._close_reading_service()
+
+    async def _run(
+        self,
+        scenario: dict[str, Any],
+        *,
+        cleanup_state: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         started = time.time()
         source_urls = list(scenario.get("source_urls") or REAL_SITE_URLS)
         for source_url in source_urls:
@@ -86,6 +102,7 @@ class SourceToInsightAcceptanceService:
             generated_source_ids = await self._materialize_generated_sources(
                 usable_builds,
                 actor_id=tenant_id,
+                cleanup_ids=(cleanup_state["source_ids"] if cleanup_state is not None else None),
             )
             materialize_errors = [
                 item["materialization"]["error"]
@@ -96,7 +113,7 @@ class SourceToInsightAcceptanceService:
             materialize_failed = False
         except Exception as exc:
             generated_source_ids = []
-            materialize_errors = [str(exc) or exc.__class__.__name__]
+            materialize_errors = [sanitize_error(exc)]
             materialize_failed = True
             for item in usable_builds:
                 item["materialization"] = {
@@ -161,7 +178,7 @@ class SourceToInsightAcceptanceService:
                     elif outcome["error"]:
                         reading_errors.append(outcome["error"])
                 except Exception as exc:
-                    error = str(exc) or exc.__class__.__name__
+                    error = sanitize_error(exc)
                     reading_errors.append(error)
                     build["reading"] = {
                         "status": "failed",
@@ -219,7 +236,7 @@ class SourceToInsightAcceptanceService:
                 else:
                     complement = {"status": "skipped", "error": "no usable chapter content"}
             except Exception as exc:
-                complement_error = str(exc) or exc.__class__.__name__
+                complement_error = sanitize_error(exc)
                 complement = {"status": "failed", "error": complement_error}
             finally:
                 close = getattr(self._complement_service, "aclose", None)
@@ -227,7 +244,7 @@ class SourceToInsightAcceptanceService:
                     try:
                         await close()
                     except Exception as exc:
-                        complement_error = complement_error or str(exc) or exc.__class__.__name__
+                        complement_error = complement_error or sanitize_error(exc)
                         complement = {"status": "failed", "error": complement_error}
         steps.append({
             "name": "complement",
@@ -266,7 +283,7 @@ class SourceToInsightAcceptanceService:
                 insights["characters"] = character_result.get("items", [])
                 ai_status = "completed"
             except Exception as exc:
-                insight_error = str(exc) or exc.__class__.__name__
+                insight_error = sanitize_error(exc)
                 ai_status = "failed"
         steps.append({
             "name": "insights",
@@ -318,8 +335,6 @@ class SourceToInsightAcceptanceService:
                 "status": status,
                 "steps": [step["name"] for step in steps],
             }
-        await self._cleanup_ephemeral_sources(tenant_id, generated_source_ids)
-        await self._close_reading_service()
         return report
 
     def _run_source_build(self, *, url: str, tenant_id: str, keyword: str) -> dict[str, Any]:
@@ -367,7 +382,7 @@ class SourceToInsightAcceptanceService:
                 "url": url,
                 "status": "failed",
                 "elapsed_ms": _elapsed_ms(started),
-                "error": str(exc) or exc.__class__.__name__,
+                "error": sanitize_error(exc),
             }
 
     def _load_persisted_source_payload(self, source_version_id: str) -> dict[str, Any]:
@@ -483,6 +498,7 @@ class SourceToInsightAcceptanceService:
         source_builds: list[dict[str, Any]],
         *,
         actor_id: str,
+        cleanup_ids: list[int] | None = None,
     ) -> list[int]:
         if self._source_repository is None:
             return []
@@ -503,11 +519,13 @@ class SourceToInsightAcceptanceService:
                 ephemeral_ids = await create_ephemeral([rule], str(actor_id))
                 if not ephemeral_ids:
                     raise RuntimeError("generated source was not materialized")
+                if cleanup_ids is not None:
+                    cleanup_ids.extend(int(source_id) for source_id in ephemeral_ids)
                 sources = await list_ephemeral(str(actor_id), ids=[int(ephemeral_ids[0])])
             except Exception as exc:
                 build["materialization"] = {
                     "status": "failed",
-                    "error": str(exc) or exc.__class__.__name__,
+                    "error": sanitize_error(exc),
                 }
                 continue
             source_id = next(
@@ -549,6 +567,15 @@ class SourceToInsightAcceptanceService:
             return
         try:
             await delete(str(tenant_id), [int(source_id) for source_id in source_ids])
+        except Exception:
+            return
+
+    async def _cleanup_expired_ephemeral_sources(self, tenant_id: str) -> None:
+        cleanup = getattr(self._source_repository, "delete_expired_ephemeral_book_sources", None)
+        if not callable(cleanup):
+            return
+        try:
+            await cleanup(tenant_id=str(tenant_id))
         except Exception:
             return
 

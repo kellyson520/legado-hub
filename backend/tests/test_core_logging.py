@@ -211,6 +211,19 @@ class TestJSONFormatter:
         assert "redis-secret" not in serialized
         assert "***REDACTED***" in serialized
 
+    def test_sanitize_error_redacts_url_query_credentials_and_bounds_message(self):
+        from app.core.redaction import sanitize_error
+
+        message = sanitize_error(
+            "request failed at https://example.test/callback?access_token=secret-value&step=1 "
+            + "x" * 700,
+            limit=120,
+        )
+
+        assert "secret-value" not in message
+        assert "access_token=%5Bredacted%5D" in message
+        assert len(message) == 120
+
 
 class TestSetupLogging:
     """setup_logging 初始化测试"""

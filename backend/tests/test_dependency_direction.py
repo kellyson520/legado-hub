@@ -13,6 +13,25 @@ def test_domain_and_application_layers_do_not_import_infrastructure():
     assert violations == []
 
 
+def test_core_layer_does_not_import_application_or_infrastructure():
+    root = Path(__file__).resolve().parents[1] / "app" / "core"
+    violations = []
+    forbidden = (
+        "from app.application",
+        "import app.application",
+        "from app.infrastructure",
+        "import app.infrastructure",
+        "from ..application",
+        "from ..infrastructure",
+    )
+    for path in root.rglob("*.py"):
+        for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if line.strip().startswith(forbidden):
+                violations.append(f"{path}:{line_no}: {line.strip()}")
+
+    assert violations == []
+
+
 def test_infrastructure_persistence_does_not_import_legacy_database_module():
     root = Path(__file__).resolve().parents[1] / "app" / "infrastructure"
     violations = []
@@ -82,3 +101,44 @@ def test_non_core_modules_use_the_structured_logger_facade():
                 violations.append(f"{path}:{line_no}: {line.strip()}")
 
     assert violations == []
+
+
+def test_domain_and_application_layers_do_not_import_concrete_transport_or_orms():
+    root = Path(__file__).resolve().parents[1] / "app"
+    violations = []
+    forbidden_prefixes = (
+        "import httpx",
+        "from httpx",
+        "import aiohttp",
+        "from aiohttp",
+        "import requests",
+        "from requests",
+        "import sqlalchemy",
+        "from sqlalchemy",
+        "import playwright",
+        "from playwright",
+    )
+    for layer in ("domain", "application"):
+        for path in (root / layer).rglob("*.py"):
+            for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                stripped = line.strip()
+                if stripped.startswith(forbidden_prefixes):
+                    violations.append(f"{path}:{line_no}: {stripped}")
+
+    assert violations == []
+
+
+def test_scheduler_uses_canonical_sqlite_session_path():
+    scheduler = (Path(__file__).resolve().parents[1] / "app" / "tasks" / "scheduler.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "from ..database import" not in scheduler
+    assert "from app.database import" not in scheduler
+
+
+def test_unmounted_legacy_sqlite_repositories_are_retired():
+    sqlite_root = Path(__file__).resolve().parents[1] / "app" / "infrastructure" / "persistence" / "sqlite"
+
+    assert not (sqlite_root / "user_repo_impl.py").exists()
+    assert not (sqlite_root / "translation_repo_impl.py").exists()

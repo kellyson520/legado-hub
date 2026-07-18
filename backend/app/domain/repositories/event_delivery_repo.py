@@ -4,6 +4,10 @@ from datetime import datetime
 from app.domain.entities.event_delivery import EventDelivery, EventDeliveryAttempt
 
 
+class EventDeliveryConflictError(RuntimeError):
+    """Repository-level uniqueness conflict exposed without ORM types."""
+
+
 class EventDeliveryRepository(ABC):
     @abstractmethod
     def get(self, event_id: str) -> EventDelivery | None:

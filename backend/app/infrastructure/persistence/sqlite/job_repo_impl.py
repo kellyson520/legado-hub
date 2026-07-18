@@ -3,10 +3,12 @@ from datetime import timedelta, timezone
 from uuid import uuid4
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.job import Job, JobEvent
+from app.domain.repositories.job_repo import JobConflictError
 
 from .schema import JobEventModel, JobModel
 
@@ -47,7 +49,11 @@ class SQLiteJobRepository:
             model = JobModel(id=job.id, kind=job.kind, tenant_id=job.tenant_id, payload=json.dumps(job.payload), idempotency_key=job.idempotency_key)
             db.add(model)
             db.add(JobEventModel(job_id=job.id, tenant_id=job.tenant_id, event_type='queued', detail='{}'))
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError as exc:
+                db.rollback()
+                raise JobConflictError from exc
             db.refresh(model)
             return self._entity(model)
         finally:

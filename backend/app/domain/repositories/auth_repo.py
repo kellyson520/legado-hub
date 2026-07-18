@@ -97,3 +97,8 @@ class AuthRepository(ABC):
     @abstractmethod
     async def list_audit_events(self, limit: int = 100) -> list[AuditEvent]:
         raise NotImplementedError
+
+    @abstractmethod
+    async def delete_old_audit_events(self, days: int = 90) -> int:
+        """Delete audit events older than ``days`` and return the count."""
+        raise NotImplementedError

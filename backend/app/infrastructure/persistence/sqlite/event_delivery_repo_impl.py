@@ -2,11 +2,12 @@ import json
 from datetime import timezone
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.event_delivery import EventDelivery, EventDeliveryAttempt
-from app.domain.repositories.event_delivery_repo import EventDeliveryRepository
+from app.domain.repositories.event_delivery_repo import EventDeliveryConflictError, EventDeliveryRepository
 
 from .schema import EventDeliveryAttemptModel, EventDeliveryModel
 
@@ -165,7 +166,11 @@ class SQLiteEventDeliveryRepository(EventDeliveryRepository):
                 delivered_at=delivery.delivered_at,
             )
             db.add(model)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError as exc:
+                db.rollback()
+                raise EventDeliveryConflictError from exc
             db.refresh(model)
             return self._entity(model)
         finally:

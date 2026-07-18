@@ -77,7 +77,7 @@ async def test_job_fetch_subscriptions_success(mock_set_ctx, mock_clear_ctx):
     mock_fetcher.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.tasks.scheduler.get_source_repo") as mock_get_repo,
+        patch("app.tasks.scheduler.build_source_repository") as mock_get_repo,
         patch("app.tasks.scheduler.SourceFetcher", return_value=mock_fetcher),
         patch("app.tasks.scheduler._safe_async_run") as mock_safe_run,
     ):
@@ -102,7 +102,7 @@ async def test_job_fetch_subscriptions_exception_isolation(mock_set_ctx, mock_cl
     from app.tasks.scheduler import job_fetch_subscriptions
 
     with (
-        patch("app.tasks.scheduler.get_source_repo") as mock_get_repo,
+        patch("app.tasks.scheduler.build_source_repository") as mock_get_repo,
         patch("app.tasks.scheduler.SourceFetcher"),
     ):
         mock_repo = AsyncMock()
@@ -149,7 +149,7 @@ async def test_job_check_sources_success(mock_set_ctx, mock_clear_ctx):
     mock_redis.cache_source_check = AsyncMock()
 
     with (
-        patch("app.tasks.scheduler.get_source_repo", return_value=mock_repo),
+        patch("app.tasks.scheduler.build_source_repository", return_value=mock_repo),
         patch("app.tasks.scheduler.SourceChecker", return_value=mock_checker),
         patch("app.core.redis_client.redis_client", mock_redis),
     ):
@@ -184,7 +184,7 @@ async def test_job_check_sources_with_cache_hit(mock_set_ctx, mock_clear_ctx):
     mock_checker.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.tasks.scheduler.get_source_repo", return_value=mock_repo),
+        patch("app.tasks.scheduler.build_source_repository", return_value=mock_repo),
         patch("app.tasks.scheduler.SourceChecker", return_value=mock_checker),
         patch("app.core.redis_client.redis_client", mock_redis),
     ):
@@ -221,7 +221,7 @@ async def test_job_mark_stale_sources_disables_old_error_sources(mock_set_ctx, m
     mock_event.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("app.database.SessionLocal", return_value=mock_db),
+        patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db),
         patch("app.tasks.scheduler.publish_event", new_callable=AsyncMock),
     ):
         job_mark_stale_sources()
@@ -242,7 +242,7 @@ async def test_job_mark_stale_sources_handles_db_error(mock_set_ctx, mock_clear_
     mock_db.rollback = MagicMock()
     mock_db.close = MagicMock()
 
-    with patch("app.database.SessionLocal", return_value=mock_db):
+    with patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db):
         job_mark_stale_sources()
 
     # 异常后回滚
@@ -282,7 +282,7 @@ async def test_job_reset_daily_quota_resets_all_keys(mock_set_ctx, mock_clear_ct
     mock_redis.reset_quota = AsyncMock()
 
     with (
-        patch("app.database.SessionLocal", return_value=mock_db),
+        patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db),
         patch("app.core.redis_client.redis_client", mock_redis),
     ):
         job_reset_daily_quota()
@@ -327,7 +327,7 @@ async def test_job_sync_quota_to_db_syncs_active_keys(mock_set_ctx, mock_clear_c
     mock_redis.get_quota = AsyncMock(side_effect=[10, 200, 3.5])  # fetch_count=10, ai_chars=200, storage_mb=3.5
 
     with (
-        patch("app.database.SessionLocal", return_value=mock_db),
+        patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db),
         patch("app.core.redis_client.redis_client", mock_redis),
     ):
         job_sync_quota_to_db()
@@ -351,7 +351,7 @@ async def test_job_sync_quota_to_db_handles_exception(mock_set_ctx, mock_clear_c
     mock_db.close = MagicMock()
 
     with (
-        patch("app.database.SessionLocal", return_value=mock_db),
+        patch("app.infrastructure.persistence.sqlite.session.SessionLocal", return_value=mock_db),
         patch("app.core.redis_client.redis_client", new_callable=AsyncMock),
     ):
         job_sync_quota_to_db()
@@ -371,12 +371,12 @@ async def test_job_archive_audit_logs_deletes_old_logs(mock_set_ctx, mock_clear_
     from app.tasks.scheduler import job_archive_audit_logs
 
     mock_repo = AsyncMock()
-    mock_repo.archive_old_logs = AsyncMock(return_value=42)
+    mock_repo.delete_old_audit_events = AsyncMock(return_value=42)
 
-    with patch("app.tasks.scheduler.get_user_repo", return_value=mock_repo):
+    with patch("app.tasks.scheduler.build_auth_repository", return_value=mock_repo):
         job_archive_audit_logs()
 
-    mock_repo.archive_old_logs.assert_called_once_with(days=90)
+    mock_repo.delete_old_audit_events.assert_called_once_with(days=90)
     mock_set_ctx.assert_called_once()
     mock_clear_ctx.assert_called_once()
 
@@ -389,12 +389,12 @@ async def test_job_archive_audit_logs_no_logs_to_delete(mock_set_ctx, mock_clear
     from app.tasks.scheduler import job_archive_audit_logs
 
     mock_repo = AsyncMock()
-    mock_repo.archive_old_logs = AsyncMock(return_value=0)
+    mock_repo.delete_old_audit_events = AsyncMock(return_value=0)
 
-    with patch("app.tasks.scheduler.get_user_repo", return_value=mock_repo):
+    with patch("app.tasks.scheduler.build_auth_repository", return_value=mock_repo):
         job_archive_audit_logs()
 
-    mock_repo.archive_old_logs.assert_called_once_with(days=90)
+    mock_repo.delete_old_audit_events.assert_called_once_with(days=90)
 
 
 # ==================== JOBS 列表与调度注册测试 ====================
@@ -408,6 +408,7 @@ def test_jobs_list_defined():
         "fetch_subscriptions",
         "check_sources",
         "probe_source_health",
+        "cleanup_ephemeral_sources",
         "mark_stale_sources",
         "reset_daily_quota",
         "sync_quota_to_db",

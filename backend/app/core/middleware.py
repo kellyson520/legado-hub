@@ -18,7 +18,11 @@ import json
 import time
 import uuid
 import asyncio
+import inspect
+from collections.abc import Callable
+from dataclasses import dataclass
 from fastapi import Request
+from starlette.background import BackgroundTask
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response, JSONResponse
 
@@ -27,6 +31,16 @@ from .redis_client import redis_client
 from .config import settings
 
 logger = get_logger("middleware")
+
+
+@dataclass(frozen=True)
+class AuditRecord:
+    """Transport-neutral audit payload handed to the composition root."""
+
+    actor_id: int | None
+    action: str
+    resource: str
+    detail: str
 
 
 class TraceMiddleware(BaseHTTPMiddleware):
@@ -182,11 +196,15 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
     日志覆盖：
     - 审计记录成功 → INFO
     - 审计记录失败 → WARNING（不阻断请求）
-    - 使用仓储接口（DDD 解耦）
+    - 使用组合根注入的记录器（DDD 解耦）
     """
 
     WRITABLE_METHODS = {"POST", "PUT", "DELETE", "PATCH"}
     SKIP_PATHS = {"/static", "/docs", "/openapi.json"}
+
+    def __init__(self, app, audit_recorder: Callable[[AuditRecord], None] | None = None):
+        super().__init__(app)
+        self._audit_recorder = audit_recorder
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -200,9 +218,25 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         duration = time.time() - start_time
 
-        # SQLite 审计仓储是同步 I/O；将持久化放到响应路径之外。
-        task = asyncio.create_task(self._record_audit(request, response, duration))
-        task.add_done_callback(self._report_audit_task_failure)
+        # SQLite 审计仓储是同步 I/O；绑定到响应的后台任务，交给 ASGI
+        # 生命周期调度，避免裸 create_task 在服务关闭时遗留悬挂任务。
+        existing_background = response.background
+
+        async def run_background() -> None:
+            if existing_background is not None:
+                result = existing_background()
+                if inspect.isawaitable(result):
+                    await result
+            try:
+                await self._record_audit(request, response, duration)
+            except Exception as exc:
+                logger.warning(
+                    f"[Audit] 审计记录异常: {type(exc).__name__}: {exc}",
+                    extra={"action": "audit_error", "error": str(exc)},
+                    exc_info=True,
+                )
+
+        response.background = BackgroundTask(run_background)
 
         return response
 
@@ -223,8 +257,6 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
 
     async def _record_audit(self, request: Request, response: Response, duration: float):
         """Persist a compact audit event through the active auth repository contract."""
-        from ..domain.entities.auth import AuditEvent
-
         client_ip = request.client.host if request.client else "unknown"
         raw_user_id = getattr(request.state, "user_id", None)
         try:
@@ -232,7 +264,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         except (TypeError, ValueError):
             actor_id = None
         api_key_id = getattr(request.state, "api_key_id", None)
-        audit = AuditEvent(
+        audit = AuditRecord(
             actor_id=actor_id,
             action=f"{request.method} {request.url.path}",
             resource="api",
@@ -247,7 +279,8 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
             }, ensure_ascii=False, separators=(",", ":")),
         )
 
-        await asyncio.to_thread(self._persist_audit, audit)
+        recorder = self._audit_recorder or self._persist_audit
+        await asyncio.to_thread(recorder, audit)
         logger.info(
             f"[Audit] 审计记录: {request.method} {request.url.path} → {response.status_code} ({duration * 1000:.0f}ms)",
             extra={
@@ -262,7 +295,6 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         )
 
     @staticmethod
-    def _persist_audit(event) -> None:
-        from ..infrastructure.persistence.factory import build_auth_repository
-
-        asyncio.run(build_auth_repository().record_audit(event))
+    def _persist_audit(event: AuditRecord) -> None:
+        """Compatibility no-op; the composition root injects the real recorder."""
+        return None

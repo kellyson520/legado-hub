@@ -133,4 +133,4 @@ def test_app_lifespan_starts_and_stops_scheduler_outside_test_environment(monkey
     with TestClient(app) as client:
         assert client.get('/api/status').status_code == 200
 
-    assert calls == [('start', {'probe_source_health'}), 'stop']
+    assert calls == [('start', {'probe_source_health', 'cleanup_ephemeral_sources'}), 'stop']

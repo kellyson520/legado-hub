@@ -3,7 +3,7 @@ from uuid import uuid4
 
 from app.core.pagination import paginated_result
 from app.domain.entities.job import Job
-from sqlalchemy.exc import IntegrityError
+from app.domain.repositories.job_repo import JobConflictError
 
 
 class JobService:
@@ -19,7 +19,7 @@ class JobService:
                 return existing
         try:
             return self._repo.save(Job(id=uuid4().hex, kind=kind, tenant_id=tenant_id, payload=payload, idempotency_key=idempotency_key))
-        except IntegrityError:
+        except JobConflictError:
             existing = self._repo.get_by_idempotency_key(tenant_id, idempotency_key)
             if existing is not None:
                 return existing

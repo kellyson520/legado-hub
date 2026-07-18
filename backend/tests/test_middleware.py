@@ -178,9 +178,11 @@ async def test_audit_middleware_returns_before_background_audit_finishes():
     response = await middleware.dispatch(_make_mock_request("/api/sources", method="POST"), mock_call_next)
 
     assert response.status_code == 201
+    assert response.background is not None
+    background_task = asyncio.create_task(response.background())
     await asyncio.wait_for(started.wait(), timeout=0.1)
     release.set()
-    await asyncio.sleep(0)
+    await background_task
 
 
 @pytest.mark.asyncio

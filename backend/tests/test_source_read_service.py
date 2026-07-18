@@ -98,6 +98,20 @@ async def test_source_read_service_uses_only_tenant_ephemeral_sources_when_scope
 
 
 @pytest.mark.asyncio
+async def test_scoped_source_read_rejects_repositories_without_ephemeral_support():
+    from app.application.services.source_read_service import SourceReadService
+    from app.core.exceptions import ValidationException
+
+    class IncompleteRepo:
+        async def list_book_sources_full(self, **kwargs):
+            return [{"id": 1, "bookSourceName": "global", "bookSourceUrl": "https://global.example"}]
+
+    service = SourceReadService(repo=IncompleteRepo(), fetcher=FakeFetcher())
+    with pytest.raises(ValidationException, match="tenant-scoped source repository"):
+        await service.search_books(keyword="斗罗大陆", tenant_id="tenant-a")
+
+
+@pytest.mark.asyncio
 async def test_source_read_service_prefers_author_hint_when_results_share_title():
     from app.application.services.source_read_service import SourceReadService
 

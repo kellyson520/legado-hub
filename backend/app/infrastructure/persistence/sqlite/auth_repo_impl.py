@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import or_
 
@@ -457,6 +457,22 @@ class SQLiteAuthRepository(AuthRepository):
                 )
                 for row in rows
             ]
+        finally:
+            db.close()
+
+    async def delete_old_audit_events(self, days: int = 90) -> int:
+        if days < 0:
+            raise ValueError("days must be non-negative")
+        db = SessionLocal()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            deleted = (
+                db.query(AuditLogModel)
+                .filter(AuditLogModel.created_at < cutoff)
+                .delete(synchronize_session=False)
+            )
+            db.commit()
+            return int(deleted or 0)
         finally:
             db.close()
 

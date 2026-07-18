@@ -252,6 +252,25 @@ class SQLiteSourceRepository(SourceRepository):
         finally:
             db.close()
 
+    async def delete_expired_ephemeral_book_sources(
+        self,
+        *,
+        now: datetime | None = None,
+        tenant_id: str | None = None,
+    ) -> int:
+        db = SessionLocal()
+        try:
+            query = db.query(EphemeralBookSourceModel).filter(
+                EphemeralBookSourceModel.expires_at <= (now or datetime.utcnow()),
+            )
+            if tenant_id is not None:
+                query = query.filter(EphemeralBookSourceModel.tenant_id == str(tenant_id))
+            deleted = query.delete(synchronize_session=False)
+            db.commit()
+            return int(deleted or 0)
+        finally:
+            db.close()
+
     async def list_book_sources_full(
         self,
         enabled_only: bool = False,

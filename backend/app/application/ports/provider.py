@@ -28,3 +28,14 @@ class ProviderRegistry(Protocol):
 
     def snapshot(self) -> Mapping[str, list[ProviderSelection]]:
         ...
+
+
+def provider_http_status(exc: BaseException) -> int | None:
+    """Read an optional HTTP status without depending on an HTTP library."""
+
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    try:
+        return int(status) if status is not None else None
+    except (TypeError, ValueError):
+        return None

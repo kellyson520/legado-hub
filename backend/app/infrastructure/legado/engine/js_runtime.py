@@ -14,8 +14,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-import httpx
+import httpx  # compatibility surface for integrations that patch the legacy client
 
+from app.core.url_safety import public_http_url_error
+from app.infrastructure.http.outbound import SafeSyncHttpClient
 from app.infrastructure.legado.engine.jsonpath_ext import JsonPathExt
 from app.infrastructure.legado.engine.js_session_models import (
     JsCompatDiff,
@@ -97,11 +99,17 @@ class JsRuntime:
         )
         body = request_spec.get("body")
         follow_redirects = bool(request_spec.get("follow_redirects", False))
+        url_error = public_http_url_error(url)
+        if url_error is not None:
+            return {
+                "status": 400,
+                "text": f"unsafe url for js bridge request: {url_error}",
+                "headers": {},
+            }
         try:
-            with httpx.Client(
+            with SafeSyncHttpClient(
                 follow_redirects=follow_redirects,
                 timeout=15.0,
-                verify=False,
             ) as client:
                 if method == "POST":
                     if isinstance(body, (dict, list)):

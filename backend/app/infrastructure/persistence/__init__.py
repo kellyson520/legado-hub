@@ -1,13 +1,8 @@
-from typing import TYPE_CHECKING
+"""Persistence implementations are assembled explicitly by ``factory``.
 
-if TYPE_CHECKING:
-    from .factory import RepositoryFactory, get_source_repo, get_user_repo, get_translation_repo
+The package intentionally exposes no compatibility repository aliases; callers
+must depend on an application/domain contract and use a named factory at the
+composition boundary.
+"""
 
-__all__ = ["RepositoryFactory", "get_source_repo", "get_user_repo", "get_translation_repo"]
-
-
-def __getattr__(name):
-    if name in ("RepositoryFactory", "get_source_repo", "get_user_repo", "get_translation_repo"):
-        from .factory import RepositoryFactory, get_source_repo, get_user_repo, get_translation_repo
-        return locals()[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+__all__: list[str] = []

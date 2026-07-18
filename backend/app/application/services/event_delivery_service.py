@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-import httpx
+from app.application.ports.http import OutboundHttpResponse, WebhookSender
 from app.core.pagination import paginated_result
 from app.core.config import settings
+from app.core.redaction import sanitize_error
 from app.domain.entities.event_delivery import EventDelivery, EventDeliveryAttempt, PreparedEventDelivery
 from app.domain.repositories.event_delivery_repo import EventDeliveryRepository
-from sqlalchemy.exc import IntegrityError
+from app.domain.repositories.event_delivery_repo import EventDeliveryConflictError
 
 
 @dataclass(frozen=True)
@@ -66,11 +67,13 @@ class EventDeliveryService:
         signing_secret: str | None = None,
         retry_base_seconds: int = 30,
         stream_broker: EventDeliveryStreamBroker | None = None,
+        sender: WebhookSender | None = None,
     ):
         self._repo = repo
         self._signing_secret = signing_secret or settings.SECRET_KEY or 'dev-secret-key-32-bytes-minimum'
         self._retry_base_seconds = retry_base_seconds
         self._stream_broker = stream_broker or event_delivery_stream_broker
+        self._sender = sender
 
     def prepare(self, *, event_type: str, tenant_id: str, payload: dict) -> PreparedEventDelivery:
         event_id = uuid4().hex
@@ -129,7 +132,7 @@ class EventDeliveryService:
         )
         try:
             saved = self._repo.save(delivery)
-        except IntegrityError:
+        except EventDeliveryConflictError:
             if not dedupe_key:
                 raise
             existing = self._repo.get_by_dedupe_key(tenant_id, dedupe_key)
@@ -227,13 +230,15 @@ class EventDeliveryService:
         now: datetime | None = None,
         limit: int = 20,
         max_attempts: int = 3,
-        sender: Callable[[EventDelivery], tuple[int | None, str | None] | httpx.Response] | None = None,
+        sender: Callable[[EventDelivery], tuple[int | None, str | None] | OutboundHttpResponse] | None = None,
     ) -> list[EventDelivery]:
         if self._repo is None:
             raise RuntimeError('event delivery repository is not configured')
         current_time = self._ensure_utc(now or datetime.now(timezone.utc))
         due_deliveries = self._repo.list_due(now=current_time, limit=limit)
-        send = sender or self._send_webhook
+        send = sender or self._sender
+        if send is None:
+            raise RuntimeError('event webhook sender is not configured')
         results: list[EventDelivery] = []
         for delivery in due_deliveries:
             status_code: int | None = None
@@ -247,7 +252,7 @@ class EventDeliveryService:
                     if not 200 <= response.status_code < 300:
                         error_message = response.text or f'HTTP {response.status_code}'
             except Exception as exc:
-                error_message = str(exc)
+                error_message = sanitize_error(exc)
             delivered = status_code is not None and 200 <= status_code < 300 and not error_message
             results.append(
                 self.record_attempt(
@@ -263,15 +268,6 @@ class EventDeliveryService:
 
     def _retry_delay_seconds(self, attempt_no: int) -> int:
         return self._retry_base_seconds * (2 ** max(0, attempt_no - 1))
-
-    @staticmethod
-    def _send_webhook(delivery: EventDelivery) -> httpx.Response:
-        with httpx.Client(timeout=10.0) as client:
-            return client.post(
-                delivery.target_url,
-                content=delivery.body.encode('utf-8'),
-                headers=delivery.headers,
-            )
 
     def _publish_stream_event(self, delivery: EventDelivery, *, phase: str) -> None:
         self._stream_broker.publish(

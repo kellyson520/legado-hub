@@ -234,9 +234,9 @@ class SourceFetcher:
         异常覆盖：网络失败 / JSON 解析失败 / DB 保存失败 / 过滤异常
         """
         from app.domain.entities.source import BookSource, RssSource
-        from app.infrastructure.persistence.factory import get_source_repo
+        from app.infrastructure.persistence.factory import build_source_repository
 
-        repo = get_source_repo()
+        repo = build_source_repository()
 
         try:
             # 1. 获取订阅信息

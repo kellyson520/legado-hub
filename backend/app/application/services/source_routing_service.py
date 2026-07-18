@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.exceptions import ValidationException
+
 
 class SourceRoutingService:
     def __init__(self, health_repo=None):
@@ -62,8 +64,13 @@ class SourceRoutingService:
         routing_mode: str = "auto",
         tenant_id: str | None = None,
     ) -> list[dict]:
-        if tenant_id and hasattr(repo, "list_ephemeral_book_sources"):
-            sources = await repo.list_ephemeral_book_sources(tenant_id)
+        if tenant_id:
+            list_ephemeral = getattr(repo, "list_ephemeral_book_sources", None)
+            if not callable(list_ephemeral):
+                raise ValidationException(
+                    "tenant-scoped source repository is required for scoped routing"
+                )
+            sources = await list_ephemeral(tenant_id)
         else:
             sources = await repo.list_book_sources_full(enabled_only=True)
         ranked = self.rank_search_sources(

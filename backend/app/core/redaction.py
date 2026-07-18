@@ -27,6 +27,7 @@ _CREDENTIAL_PATTERN = re.compile(
     r"(?i)(\b(?:authorization|cookie|bearer|api[-_]?key|token|password|secret|credential)\b)"
     r"\s*(?:[:=]|\s+)\s*(?:(?:bearer|basic)\s+)?([^\s,;]+)"
 )
+_URL_PATTERN = re.compile(r"(?i)https?://[^\s<>\"']+")
 
 
 def sanitize_for_boundary(value):
@@ -44,6 +45,18 @@ def sanitize_for_boundary(value):
     if isinstance(value, str):
         return _redact_string(value)
     return value
+
+
+def sanitize_error(value: object, *, limit: int = 500) -> str:
+    """Return a bounded exception message safe for APIs, agents and storage."""
+
+    raw_message = str(value)
+    message = _URL_PATTERN.sub(
+        lambda match: str(sanitize_for_boundary(match.group(0))),
+        raw_message,
+    )
+    message = sanitize_for_boundary(message)
+    return str(message)[:limit] or value.__class__.__name__
 
 
 def _redact_string(value: str) -> str:

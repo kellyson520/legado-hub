@@ -7,8 +7,9 @@ from app.core.config import settings
 from app.core.response import ok
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
-from app.core.middleware import AuditLogMiddleware, RateLimitMiddleware, TraceMiddleware
+from app.core.middleware import AuditLogMiddleware, AuditRecord, RateLimitMiddleware, TraceMiddleware
 from app.infrastructure.persistence.factory import (
+    build_source_repository,
     build_source_runtime_service,
     close_interactive_browser_supervisor,
 )
@@ -23,6 +24,23 @@ from app.tasks.scheduler import (
 
 
 logger = get_logger("lifespan")
+
+
+def _persist_audit_record(record: AuditRecord) -> None:
+    """Adapt the core middleware payload to the active domain repository."""
+    from app.domain.entities.auth import AuditEvent
+    from app.infrastructure.persistence.factory import build_auth_repository
+
+    asyncio.run(
+        build_auth_repository().record_audit(
+            AuditEvent(
+                actor_id=record.actor_id,
+                action=record.action,
+                resource=record.resource,
+                detail=record.detail,
+            )
+        )
+    )
 
 
 async def _event_delivery_worker(stop_event: asyncio.Event) -> None:
@@ -58,21 +76,25 @@ async def lifespan(app: FastAPI):
     source_build_stop_event = None
     scheduler_started = False
     app.state.runtime_process = RuntimeProcessManager()
-    if settings.ENV != "test":
-        app.state.runtime_process.health()
-    await build_source_runtime_service().register_published_book_sources()
-    if settings.ENV != 'test' and settings.SOURCE_HEALTH_PROBE_WORKER_ENABLED:
-        start_scheduler(job_ids={'probe_source_health'})
-        scheduler_started = True
-    if settings.ENV != 'test' and settings.EVENT_DELIVERY_WORKER_ENABLED:
-        stop_event = asyncio.Event()
-        worker_task = asyncio.create_task(_event_delivery_worker(stop_event))
-        app.state.event_delivery_worker_task = worker_task
-    if settings.ENV != 'test' and settings.SOURCE_BUILD_WORKER_ENABLED:
-        source_build_stop_event = asyncio.Event()
-        source_build_worker_task = asyncio.create_task(_source_build_worker(source_build_stop_event))
-        app.state.source_build_worker_task = source_build_worker_task
     try:
+        if settings.ENV != "test":
+            app.state.runtime_process.health()
+        await build_source_repository().delete_expired_ephemeral_book_sources()
+        await build_source_runtime_service().register_published_book_sources()
+        if settings.ENV != 'test':
+            scheduler_job_ids = {'cleanup_ephemeral_sources'}
+            if settings.SOURCE_HEALTH_PROBE_WORKER_ENABLED:
+                scheduler_job_ids.add('probe_source_health')
+            start_scheduler(job_ids=scheduler_job_ids)
+            scheduler_started = True
+        if settings.ENV != 'test' and settings.EVENT_DELIVERY_WORKER_ENABLED:
+            stop_event = asyncio.Event()
+            worker_task = asyncio.create_task(_event_delivery_worker(stop_event))
+            app.state.event_delivery_worker_task = worker_task
+        if settings.ENV != 'test' and settings.SOURCE_BUILD_WORKER_ENABLED:
+            source_build_stop_event = asyncio.Event()
+            source_build_worker_task = asyncio.create_task(_source_build_worker(source_build_stop_event))
+            app.state.source_build_worker_task = source_build_worker_task
         yield
     finally:
         if scheduler_started:
@@ -97,7 +119,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 setup_logging(level=settings.LOG_LEVEL, enable_json=settings.LOG_JSON)
-app.add_middleware(AuditLogMiddleware)
+app.add_middleware(AuditLogMiddleware, audit_recorder=_persist_audit_record)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(TraceMiddleware)
 register_exception_handlers(app)

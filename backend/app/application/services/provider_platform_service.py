@@ -2,9 +2,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-import httpx
-
-from app.application.ports.provider import ProviderAdapter, ProviderRegistry
+from app.application.ports.provider import ProviderAdapter, ProviderRegistry, provider_http_status
+from app.core.redaction import sanitize_error
 
 
 PROVIDER_ROUTE_GROUPS = (
@@ -351,27 +350,21 @@ class ProviderPlatformService:
 
     @staticmethod
     def _is_non_retryable_request_error(exc: Exception) -> bool:
-        return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in {400, 422}
+        return provider_http_status(exc) in {400, 422}
 
     @staticmethod
     def _is_model_not_found_error(exc: Exception) -> bool:
-        return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
+        return provider_http_status(exc) == 404
 
     @staticmethod
     def _sanitize_provider_failure(provider_name: str, exc: Exception) -> str:
-        message = str(exc)
+        message = sanitize_error(exc, limit=240)
         message = re.sub(
-            r"(?i)(authorization\s*:\s*bearer)\s+[^\s,;]+",
-            r"\1 [redacted]",
+            r"(?i)authorization=\[redacted\]",
+            "Authorization: Bearer [redacted]",
             message,
         )
-        message = re.sub(r"(?i)(bearer)\s+[^\s,;]+", r"\1 [redacted]", message)
-        message = re.sub(
-            r"(?i)(api[_ -]?key)\s*[:=]\s*[^\s,;]+",
-            r"\1 [redacted]",
-            message,
-        )
-        return f"{provider_name}: {message[:240]}"
+        return f"{provider_name}: {message}"
 
     @staticmethod
     def _normalize_result(

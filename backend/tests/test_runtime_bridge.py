@@ -47,6 +47,16 @@ def test_bridge_rejects_empty_url():
     assert response["error_code"] == "EMPTY_URL"
 
 
+def test_bridge_rejects_private_dns_ip_override_before_http_client():
+    http = FakeHttp()
+    response = RuntimeBridge(http_client=http).handle(
+        {"method": "GET", "url": "https://example.test", "dns_ip": "127.0.0.1"}
+    )
+
+    assert response["error_code"] == "UNSAFE_DNS_IP"
+    assert http.calls == []
+
+
 def test_cache_bridge_is_scoped_and_supports_delete():
     bridge = RuntimeBridge(http_client=FakeHttp(), cache={})
 
@@ -69,7 +79,7 @@ def test_bridge_forwards_charset_proxy_and_origin_metadata():
             "charset": "gb18030",
             "proxy": "http://proxy.test:8080",
             "origin": "https://origin.test",
-            "dns_ip": "192.0.2.10",
+            "dns_ip": "93.184.216.34",
         }
     )
 

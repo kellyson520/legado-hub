@@ -7,6 +7,7 @@ adapters can apply the same checks without importing one another.
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Mapping
 from urllib.parse import urlparse
 
 
@@ -61,3 +62,34 @@ def is_public_ip(value: object) -> bool:
         or address.is_reserved
         or address.is_unspecified
     )
+
+
+def http_origin(value: object) -> tuple[str, str, int] | None:
+    """Return a normalized HTTP origin for redirect policy comparisons."""
+    if not isinstance(value, str):
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is None:
+        port = 443 if parsed.scheme.lower() == "https" else 80
+    return parsed.scheme.lower(), parsed.hostname.lower(), port
+
+
+def headers_for_redirect(
+    headers: Mapping[str, object],
+    current_url: str,
+    next_url: str,
+) -> dict[str, object]:
+    """Drop credentials when a redirect changes origin."""
+    if http_origin(current_url) == http_origin(next_url):
+        return dict(headers)
+    return {
+        key: value
+        for key, value in headers.items()
+        if str(key).lower() not in {"authorization", "proxy-authorization", "cookie", "host"}
+    }

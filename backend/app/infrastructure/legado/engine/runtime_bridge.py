@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import ipaddress
 import threading
 from typing import Any
+
+from app.core.url_safety import is_public_ip, public_http_url_error
 
 
 class RuntimeBridge:
@@ -20,6 +23,14 @@ class RuntimeBridge:
         url = str(request.get("url", "") or "")
         if not url:
             return {"status": 400, "text": "empty url", "headers": {}, "error_code": "EMPTY_URL"}
+        url_error = public_http_url_error(url)
+        if url_error is not None:
+            return {
+                "status": 400,
+                "text": f"unsafe url: {url_error}",
+                "headers": {},
+                "error_code": "UNSAFE_URL",
+            }
 
         method = str(request.get("method", "GET") or "GET").upper()
         headers = {str(k): str(v) for k, v in (request.get("headers") or {}).items()}
@@ -33,6 +44,13 @@ class RuntimeBridge:
         content_type = str(request.get("content_type", "") or "") or None
         proxy = str(request.get("proxy", "") or "") or None
         dns_ip = str(request.get("dns_ip", "") or "") or None
+        if dns_ip:
+            try:
+                parsed_dns_ip = ipaddress.ip_address(dns_ip)
+            except ValueError:
+                return {"status": 400, "text": "invalid dns ip", "headers": {}, "error_code": "INVALID_DNS_IP"}
+            if not is_public_ip(parsed_dns_ip):
+                return {"status": 400, "text": "unsafe dns ip", "headers": {}, "error_code": "UNSAFE_DNS_IP"}
         server_id = request.get("server_id")
         accept_bytes = bool(request.get("accept_bytes", False))
         result: list[dict[str, Any]] = []

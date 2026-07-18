@@ -48,6 +48,7 @@ from app.application.services.novel_analysis_tool_executor import NovelAnalysisT
 from app.core.config import settings
 from app.infrastructure.browser.playwright_driver import PlaywrightBrowserDriver
 from app.infrastructure.browser.interactive_probe import run_browser_probe
+from app.infrastructure.http.outbound import SafeAsyncHttpClient, SafeWebhookSender
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
 from app.infrastructure.crawler.source_fetcher import SourceFetcher
 from app.infrastructure.legado.engine.evaluator import evaluate_source_rules
@@ -295,6 +296,7 @@ def build_source_build_runtime_service(*, use_ai_repair: bool = True) -> SourceB
         probe_factory=build_source_probe_service,
         ai_repair_service=(build_source_build_ai_repair_service() if use_ai_repair else None),
         system_settings_service=build_system_settings_service(),
+        page_tool_factory=lambda url: SourcePageToolExecutor(url, SafeAsyncHttpClient()),
         review_service=build_source_review_service(),
     )
 
@@ -368,7 +370,7 @@ def build_dashboard_service() -> DashboardService:
 
 def build_event_delivery_service() -> EventDeliveryService:
     ensure_sqlite_bootstrap()
-    return EventDeliveryService(SQLiteEventDeliveryRepository())
+    return EventDeliveryService(SQLiteEventDeliveryRepository(), sender=SafeWebhookSender())
 
 
 def build_engine_service() -> EngineService:
@@ -570,12 +572,3 @@ def build_novel_agent_service() -> NovelAgentService:
         platform=build_provider_platform_service(),
         repo=build_novel_runtime_repository(),
     )
-
-
-# Compatibility aliases for legacy scheduler/tests that still import these names.
-def get_source_repo() -> SQLiteSourceRepository:
-    return build_source_repository()
-
-
-def get_user_repo() -> SQLiteAuthRepository:
-    return build_auth_repository()

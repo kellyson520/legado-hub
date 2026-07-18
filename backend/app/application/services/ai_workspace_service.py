@@ -5,7 +5,7 @@ from app.core.pagination import paginated_result
 from pydantic import BaseModel, ConfigDict
 
 from app.application.services.ai_service import AIService
-from app.core.redaction import sanitize_for_boundary
+from app.core.redaction import sanitize_error, sanitize_for_boundary
 from app.core.exceptions import NotFoundException, ValidationException
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 from app.domain.entities.auth import AuditEvent
@@ -310,7 +310,11 @@ class AIWorkspaceService:
             else:
                 raise ValidationException("Unsupported AI tool")
             sanitized = _sanitize(result)
-            calls.append({"name": request.name, "arguments": request.arguments, "result": sanitized})
+            calls.append({
+                "name": request.name,
+                "arguments": _sanitize(request.arguments),
+                "result": sanitized,
+            })
             await self._audit_event(actor_id, "ai.tool.invoke", request.name)
         return calls
 
@@ -334,7 +338,7 @@ class AIWorkspaceService:
             return {
                 "name": name or "unknown_tool",
                 "arguments": {},
-                "result": {"error": str(exc) or "Tool request rejected"},
+                "result": {"error": sanitize_error(exc) or "Tool request rejected"},
             }
 
     @staticmethod

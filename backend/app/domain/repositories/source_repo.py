@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 
 class SourceRepository(ABC):
@@ -55,6 +56,15 @@ class SourceRepository(ABC):
 
     @abstractmethod
     async def delete_ephemeral_book_sources(self, tenant_id: str, ids: list[int]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_expired_ephemeral_book_sources(
+        self,
+        *,
+        now: datetime | None = None,
+        tenant_id: str | None = None,
+    ) -> int:
         raise NotImplementedError
 
     async def list_book_sources_full(

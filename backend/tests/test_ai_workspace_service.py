@@ -220,6 +220,49 @@ async def test_workspace_message_persists_reply_and_sanitizes_tool_result(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_workspace_sanitizes_tool_arguments_before_persistence(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-tool-arguments.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.domain.entities.agent_runtime import ToolResult
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class JointTestExecutor:
+        async def ainvoke(self, arguments):
+            return ToolResult(status="accepted", data={"status": "passed"})
+
+    bootstrap_sqlite()
+    service = AIWorkspaceService(
+        RecordingPlatform(),
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        source_joint_test_executor=JointTestExecutor(),
+    )
+    conversation = await service.create_conversation("7", "参数脱敏")
+    reply = await service.send_message(
+        conversation["id"],
+        "7",
+        "chat",
+        "验证书源",
+        [{
+            "name": "source.joint_test",
+            "arguments": {
+                "source_urls": ["https://source.example/?access_token=raw-secret"],
+                "book_name": "剑来",
+            },
+        }],
+        allowed_tool_names={"source.joint_test"},
+    )
+
+    serialized = str(reply)
+    assert "raw-secret" not in serialized
+    assert "access_token=%5Bredacted%5D" in serialized
+
+
+@pytest.mark.asyncio
 async def test_workspace_creates_an_owned_candidate_rule_draft_when_explicitly_granted(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-draft.sqlite3"))
 

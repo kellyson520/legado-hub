@@ -19,13 +19,13 @@ from ..core.config import settings
 from ..core.logging import get_logger, set_log_context, clear_log_context
 from ..core.events import publish_event, SourceFetchedEvent, SystemNoticeEvent
 from ..infrastructure.persistence.factory import (
+    build_auth_repository,
     build_event_delivery_service,
     build_novel_analysis_pipeline_service,
     build_novel_analysis_task_service,
+    build_source_repository,
     build_source_health_admin_service,
     build_system_settings_service,
-    get_source_repo,
-    get_user_repo,
 )
 from ..infrastructure.crawler.source_fetcher import SourceFetcher, SourceChecker
 
@@ -54,7 +54,7 @@ def job_fetch_subscriptions():
     logger.info(f"[定时任务] 开始拉取订阅", extra={"action": "job_start", "job": job_name})
 
     async def _do():
-        subs = (await get_source_repo().list_subscriptions(enabled_only=True))
+        subs = (await build_source_repository().list_subscriptions(enabled_only=True))
         logger.info(f"[定时任务] 共 {len(subs)} 个活跃订阅", extra={"action": job_name, "count": len(subs)})
 
         success_count = 0
@@ -101,7 +101,7 @@ def job_check_sources():
     async def _do():
         from ..core.redis_client import redis_client
 
-        repo = get_source_repo()
+        repo = build_source_repository()
         checker = SourceChecker()
 
         checked = 0
@@ -190,6 +190,25 @@ def job_probe_source_health():
         clear_log_context()
 
 
+def job_cleanup_ephemeral_sources():
+    """Remove expired tenant-scoped source sandboxes."""
+    job_name = "cleanup_ephemeral_sources"
+    set_log_context(trace_id=f"job_{datetime.utcnow().timestamp():.0f}")
+    try:
+        deleted = _safe_async_run(run_ephemeral_source_cleanup_job())
+        logger.info(
+            "[定时任务] 临时书源清理完成",
+            extra={"action": "job_end", "job": job_name, "deleted": deleted},
+        )
+    except Exception as exc:
+        logger.exception(
+            "[定时任务] 临时书源清理异常",
+            extra={"action": "job_error", "job": job_name},
+        )
+    finally:
+        clear_log_context()
+
+
 def job_mark_stale_sources():
     """标记长期失效的源"""
     job_name = "mark_stale_sources"
@@ -201,7 +220,7 @@ def job_mark_stale_sources():
         stale_threshold = datetime.utcnow() - timedelta(days=7)
 
         # 使用底层 DB 直接更新（避免领域层逻辑干扰清理任务）
-        from ..database import SessionLocal
+        from ..infrastructure.persistence.sqlite.session import SessionLocal
         from ..infrastructure.persistence.sqlite.schema import BookSourceModel, RssSourceModel
         db = SessionLocal()
         try:
@@ -256,7 +275,7 @@ def job_reset_daily_quota():
 
     async def _do():
         from ..core.redis_client import redis_client
-        from ..database import SessionLocal
+        from ..infrastructure.persistence.sqlite.session import SessionLocal
         from ..infrastructure.persistence.sqlite.schema import ApiKeyModel
         db = SessionLocal()
         try:
@@ -286,7 +305,7 @@ def job_sync_quota_to_db():
 
     async def _do():
         from ..core.redis_client import redis_client
-        from ..database import SessionLocal
+        from ..infrastructure.persistence.sqlite.session import SessionLocal
         from ..infrastructure.persistence.sqlite.schema import ApiKeyModel, QuotaUsageModel
         db = SessionLocal()
         try:
@@ -339,8 +358,8 @@ def job_archive_audit_logs():
     set_log_context(trace_id=f"job_{datetime.utcnow().timestamp():.0f}")
 
     async def _do():
-        repo = get_user_repo()
-        deleted = await repo.archive_old_logs(days=90)
+        repo = build_auth_repository()
+        deleted = await repo.delete_old_audit_events(days=90)
         if deleted > 0:
             logger.info(f"[定时任务] 归档审计日志: 删除 {deleted} 条", extra={"action": job_name, "deleted": deleted})
         else:
@@ -430,6 +449,7 @@ JOBS = [
     ("fetch_subscriptions", "0 */2 * * *", job_fetch_subscriptions, "每2小时拉取订阅"),
     ("check_sources", "0 */4 * * *", job_check_sources, "每4小时检查可用性"),
     ("probe_source_health", "*/30 * * * *", job_probe_source_health, "每30分钟智能探测书源"),
+    ("cleanup_ephemeral_sources", "*/15 * * * *", job_cleanup_ephemeral_sources, "每15分钟清理临时书源"),
     ("mark_stale_sources", "0 3 * * *", job_mark_stale_sources, "每天3点清理失效源"),
     ("reset_daily_quota", "0 0 * * *", job_reset_daily_quota, "每天0点重置配额"),
     ("sync_quota_to_db", "*/30 * * * *", job_sync_quota_to_db, "每30分钟同步配额"),
@@ -462,6 +482,14 @@ async def run_source_runtime_health_job() -> list[dict]:
 
     service = build_source_health_service()
     return await service.verify_published_versions()
+
+
+async def run_ephemeral_source_cleanup_job() -> int:
+    repo = build_source_repository()
+    cleanup = getattr(repo, "delete_expired_ephemeral_book_sources", None)
+    if not callable(cleanup):
+        return 0
+    return int(await cleanup() or 0)
 
 
 async def run_source_health_probe_job(
