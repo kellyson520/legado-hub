@@ -35,6 +35,27 @@ async def test_probe_service_collects_three_stage_evidence_and_content_failure()
 
 
 @pytest.mark.asyncio
+async def test_probe_service_includes_runtime_diagnostics_in_stage_detail():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class DiagnosticFetcher(FakeFetcher):
+        def runtime_diagnostics(self):
+            return {
+                "mode": "native_kotlin",
+                "diffs": [{"code": "NATIVE_SEMANTICS_MISMATCH", "stage": "search"}],
+            }
+
+    probe = await SourceProbeService(DiagnosticFetcher()).probe_source(
+        source={"id": 3, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["剑来"],
+        probe_mode="search_only",
+    )
+
+    assert probe.search.detail["runtime"]["mode"] == "native_kotlin"
+    assert probe.search.detail["runtime"]["diffs"][0]["code"] == "NATIVE_SEMANTICS_MISMATCH"
+
+
+@pytest.mark.asyncio
 async def test_probe_service_falls_back_to_second_keyword_and_records_attempts():
     from app.application.services.source_probe_service import SourceProbeService
 

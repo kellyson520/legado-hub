@@ -631,6 +631,15 @@ class LegadoBookSourceFetcher:
 
         return value
 
+    def runtime_diagnostics(self) -> dict[str, Any]:
+        facade = self._runtime_facade
+        client = getattr(facade, "native_client", None)
+        return {
+            "mode": getattr(facade, "mode", ""),
+            "diffs": list(getattr(facade, "diffs", [])),
+            "restart_count": int(getattr(client, "restart_count", 0)),
+        }
+
     async def close(self):
         try:
             http_close = self._http.close()

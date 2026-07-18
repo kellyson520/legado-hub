@@ -1011,6 +1011,11 @@ class SourceBuildRuntimeService:
         content_length = 0
         if isinstance(probe.content.detail, dict):
             content_length = int(probe.content.detail.get('content_length') or 0)
+        runtime_detail = {}
+        for stage in (probe.search, probe.toc, probe.content):
+            if isinstance(stage.detail, dict) and isinstance(stage.detail.get('runtime'), dict):
+                runtime_detail = dict(stage.detail['runtime'])
+                break
         sample_title = SourceBuildRuntimeService._first_non_empty(
             probe.content.sample_title,
             probe.toc.sample_title,
@@ -1030,6 +1035,7 @@ class SourceBuildRuntimeService:
             'top_hit': top_hit,
             'first_chapter': first_chapter,
             'failure_reason': failure_reason,
+            'runtime': runtime_detail,
             'compatibility': {
                 'matched_site': compatibility_site,
                 'score': compatibility_score.get('score'),

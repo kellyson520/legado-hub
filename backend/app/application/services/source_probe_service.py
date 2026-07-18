@@ -198,6 +198,9 @@ class SourceProbeService:
         try:
             found = await self._fetcher.search(source, keyword, page=1)
             detail = dict(preflight.get("detail") or {})
+            runtime_detail = self._runtime_diagnostics()
+            if runtime_detail:
+                detail["runtime"] = runtime_detail
             if not found:
                 detail.update(await self._collect_transport_evidence(source, preflight))
             if found:
@@ -296,6 +299,16 @@ class SourceProbeService:
             toc=toc,
             content=content,
         )
+
+    def _runtime_diagnostics(self) -> dict:
+        getter = getattr(self._fetcher, "runtime_diagnostics", None)
+        if not callable(getter):
+            return {}
+        try:
+            value = getter()
+        except Exception:
+            return {}
+        return value if isinstance(value, dict) else {}
 
     def _build_search_preflight(self, source: dict, keyword: str) -> dict:
         search_url = str(source.get("searchUrl", "") or "").strip()
