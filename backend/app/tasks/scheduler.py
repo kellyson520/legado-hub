@@ -438,14 +438,18 @@ JOBS = [
 ]
 
 
-def start_scheduler():
-    """启动调度器"""
+def start_scheduler(job_ids: set[str] | None = None):
+    """启动调度器；可按任务 ID 限定应用内需要的任务。"""
+    registered_count = 0
     for job_id, cron, func, desc in JOBS:
+        if job_ids is not None and job_id not in job_ids:
+            continue
         scheduler.add_job(func, CronTrigger.from_crontab(cron), id=job_id, replace_existing=True)
         logger.info(f"[调度器] 注册任务: {job_id} ({cron}) - {desc}")
+        registered_count += 1
 
     scheduler.start()
-    logger.info(f"[调度器] 启动完成, 共 {len(JOBS)} 个任务")
+    logger.info(f"[调度器] 启动完成, 共 {registered_count} 个任务")
 
 
 def stop_scheduler():

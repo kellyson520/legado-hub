@@ -428,3 +428,36 @@ def test_jobs_list_valid_cron():
         assert len(parts) == 5, f"任务 {job_id} 的 cron 表达式格式错误: {cron}"
         assert desc, f"任务 {job_id} 缺少描述"
         assert callable(func), f"任务 {job_id} 的执行函数不是可调用对象"
+
+
+def test_start_scheduler_reports_filtered_job_count(monkeypatch):
+    from app.tasks import scheduler
+
+    class FakeScheduler:
+        def __init__(self):
+            self.added = []
+            self.started = False
+
+        def add_job(self, func, trigger, id, replace_existing):
+            self.added.append(id)
+
+        def start(self):
+            self.started = True
+
+    class FakeLogger:
+        def __init__(self):
+            self.messages = []
+
+        def info(self, message, *args, **kwargs):
+            self.messages.append(message)
+
+    fake_scheduler = FakeScheduler()
+    fake_logger = FakeLogger()
+    monkeypatch.setattr(scheduler, 'scheduler', fake_scheduler)
+    monkeypatch.setattr(scheduler, 'logger', fake_logger)
+
+    scheduler.start_scheduler(job_ids={'probe_source_health'})
+
+    assert fake_scheduler.added == ['probe_source_health']
+    assert fake_scheduler.started is True
+    assert any('共 1 个任务' in message for message in fake_logger.messages)

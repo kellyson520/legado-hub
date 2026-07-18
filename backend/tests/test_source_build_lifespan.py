@@ -122,10 +122,15 @@ def test_app_lifespan_starts_and_stops_scheduler_outside_test_environment(monkey
     monkeypatch.setattr(app_main.settings, 'EVENT_DELIVERY_WORKER_ENABLED', False)
     monkeypatch.setattr(app_main.settings, 'SOURCE_BUILD_WORKER_ENABLED', False)
     monkeypatch.setattr(app_main, 'build_source_runtime_service', lambda: RuntimeService())
-    monkeypatch.setattr(app_main, 'start_scheduler', lambda: calls.append('start'), raising=False)
+    monkeypatch.setattr(
+        app_main,
+        'start_scheduler',
+        lambda job_ids=None: calls.append(('start', job_ids)),
+        raising=False,
+    )
     monkeypatch.setattr(app_main, 'stop_scheduler', lambda: calls.append('stop'), raising=False)
 
     with TestClient(app) as client:
         assert client.get('/api/status').status_code == 200
 
-    assert calls == ['start', 'stop']
+    assert calls == [('start', {'probe_source_health'}), 'stop']

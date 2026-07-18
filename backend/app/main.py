@@ -57,8 +57,8 @@ async def lifespan(app: FastAPI):
     source_build_stop_event = None
     scheduler_started = False
     await build_source_runtime_service().register_published_book_sources()
-    if settings.ENV != 'test':
-        start_scheduler()
+    if settings.ENV != 'test' and settings.SOURCE_HEALTH_PROBE_WORKER_ENABLED:
+        start_scheduler(job_ids={'probe_source_health'})
         scheduler_started = True
     if settings.ENV != 'test' and settings.EVENT_DELIVERY_WORKER_ENABLED:
         stop_event = asyncio.Event()
