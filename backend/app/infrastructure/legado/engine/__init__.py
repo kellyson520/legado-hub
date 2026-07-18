@@ -29,7 +29,11 @@ from app.infrastructure.legado.engine.rule_selector import (
     SelectorResult,
     select_values,
 )
-from app.infrastructure.legado.engine.runtime_facade import LegadoRuntimeFacade, PythonRuntimeFallback
+from app.infrastructure.legado.engine.runtime_facade import (
+    LegadoRuntimeFacade,
+    PythonRuntimeFallback,
+    migration_gate_passed,
+)
 from app.infrastructure.legado.engine.runtime_diff import compare_runtime_results, load_fixture_cases
 from app.infrastructure.legado.engine.text_pipeline import ReplaceRule, TextPipeline
 from app.infrastructure.legado.engine.url_utils import UrlUtils
@@ -71,6 +75,7 @@ __all__ = [
     "RuntimeProcessManager",
     "LegadoRuntimeFacade",
     "PythonRuntimeFallback",
+    "migration_gate_passed",
     "compare_runtime_results",
     "load_fixture_cases",
 ]

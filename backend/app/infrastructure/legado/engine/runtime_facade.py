@@ -10,6 +10,28 @@ from .runtime_diff import compare_runtime_results
 
 logger = logging.getLogger("legado_runtime_facade")
 
+MIGRATION_GATE = {
+    "unexplained_diffs": 0,
+    "golden_cases": 100,
+    "real_source_runs": 20,
+    "fallback_rate": 0.0,
+}
+
+
+def migration_gate_passed(
+    *,
+    unexplained_diffs: int,
+    golden_cases: int,
+    real_source_runs: int,
+    fallback_rate: float,
+) -> bool:
+    return (
+        unexplained_diffs <= MIGRATION_GATE["unexplained_diffs"]
+        and golden_cases >= MIGRATION_GATE["golden_cases"]
+        and real_source_runs >= MIGRATION_GATE["real_source_runs"]
+        and fallback_rate <= MIGRATION_GATE["fallback_rate"]
+    )
+
 
 class PythonRuntimeFallback:
     def extract(
@@ -87,8 +109,22 @@ class LegadoRuntimeFacade:
         self.timeout = timeout
         self._session: dict[str, Any] = {}
         self.diffs: list[dict[str, Any]] = []
+        self.module_modes: dict[str, str] = {}
         if self.mode not in {"native_kotlin", "python_shadow", "python_primary"}:
             raise ValueError(f"unsupported LEGADO_RUNTIME_MODE: {self.mode}")
+
+    def set_module_mode(self, module: str, mode: str, evidence: dict[str, Any] | None = None) -> None:
+        if mode not in {"native_kotlin", "python_shadow", "python_primary"}:
+            raise ValueError(f"unsupported module runtime mode: {mode}")
+        evidence = evidence or {}
+        if mode == "python_primary" and not migration_gate_passed(
+            unexplained_diffs=int(evidence.get("unexplained_diffs", 0)),
+            golden_cases=int(evidence.get("golden_cases", 0)),
+            real_source_runs=int(evidence.get("real_source_runs", 0)),
+            fallback_rate=float(evidence.get("fallback_rate", 1.0)),
+        ):
+            raise ValueError(f"migration gate not passed for module: {module}")
+        self.module_modes[module] = mode
 
     def begin_session(self, **context: Any) -> dict[str, Any]:
         self._session = dict(context)
