@@ -12,6 +12,7 @@ class RuntimeResult:
     trace: dict[str, Any] = field(default_factory=dict)
     error_code: str | None = None
     error: str | None = None
+    context: dict[str, Any] | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "RuntimeResult":
@@ -27,6 +28,7 @@ class RuntimeResult:
             value=payload.get("value"),
             value_type=payload.get("value_type"),
             trace=payload.get("trace") if isinstance(payload.get("trace"), dict) else {},
+            context=payload.get("context") if isinstance(payload.get("context"), dict) else None,
             error_code=error_code,
             error=error_message,
         )

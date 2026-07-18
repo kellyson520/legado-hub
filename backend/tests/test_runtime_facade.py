@@ -55,3 +55,19 @@ def test_shadow_mode_records_structured_diff():
     assert len(facade.diffs) == 1
     assert facade.diffs[0]["code"] == "NATIVE_SEMANTICS_MISMATCH"
     assert facade.diffs[0]["stage"] == "content"
+
+
+def test_facade_merges_native_context_updates_for_following_rules():
+    client = FakeClient(RuntimeResult(
+        success=True,
+        value="updated",
+        value_type="string",
+        context={"variables": {"token": "updated"}},
+    ))
+    context = {"source": {"bookSourceUrl": "https://example.test"}, "variables": {"token": "old"}}
+    facade = LegadoRuntimeFacade(native_client=client, mode="native_kotlin")
+
+    facade.extract("<div />", "@js:return java.get('token')", context=context)
+
+    assert context["variables"]["token"] == "updated"
+    assert client.calls[0][1]["context"]["variables"]["token"] == "old"

@@ -19,6 +19,7 @@ import io.legado.app.help.CacheManager
 import io.legado.app.help.JsExtensions
 import io.legado.app.help.http.BackstageWebView
 import io.legado.app.help.http.CookieStore
+import io.legado.app.help.http.StrResponse
 import io.legado.app.help.source.getShareScope
 import io.legado.app.model.Debug
 import io.legado.app.model.webBook.WebBook
@@ -840,6 +841,11 @@ class AnalyzeRule(
             bindings["nextChapterUrl"] = nextChapterUrl
             bindings["rssArticle"] = rssArticle
             bindings["fromBookInfo"] = isFromBookInfo
+            bindings["bookName"] = book?.name
+            source?.values()?.forEach { (key, value) -> bindings[key] = value }
+            ruleData?.variableMap?.forEach { (key, value) -> bindings[key] = value }
+            book?.variableMap?.forEach { (key, value) -> bindings[key] = value }
+            chapter?.variableMap?.forEach { (key, value) -> bindings[key] = value }
         }
         val topScope = source?.getShareScope(coroutineContext) ?: topScopeRef?.get()
         val scope = if (topScope == null) {
@@ -887,10 +893,13 @@ class AnalyzeRule(
         }
         val analyzeUrl = AnalyzeUrl(
             urlStr,
+            baseUrl = baseUrl.orEmpty(),
             source = source,
             ruleData = book,
+            chapter = chapter,
             callTimeout = callTimeout,
-            coroutineContext = coroutineContext
+            coroutineContext = coroutineContext,
+            headerMapF = sourceHeaderMap(),
         )
         return kotlin.runCatching {
             analyzeUrl.getStrResponse().body
@@ -901,6 +910,71 @@ class AnalyzeRule(
         }.getOrElse {
             it.stackTraceStr
         }
+    }
+
+    /** JS request helpers used by source rules (java.get/post/head). */
+    @JvmOverloads
+    fun get(urlStr: String, headers: Any? = null, timeout: Int? = null): StrResponse =
+        AnalyzeUrl(
+            urlStr,
+            baseUrl = baseUrl.orEmpty(),
+            source = source,
+            ruleData = book,
+            chapter = chapter,
+            callTimeout = timeout?.toLong(),
+            coroutineContext = coroutineContext,
+            headerMapF = sourceHeaderMap(),
+        ).get(urlStr, headers, timeout)
+
+    @JvmOverloads
+    fun post(urlStr: String, body: Any?, headers: Any? = null, timeout: Int? = null): StrResponse {
+        return AnalyzeUrl(
+            urlStr,
+            baseUrl = baseUrl.orEmpty(),
+            source = source,
+            ruleData = book,
+            chapter = chapter,
+            callTimeout = timeout?.toLong(),
+            coroutineContext = coroutineContext,
+            headerMapF = sourceHeaderMap(),
+        ).post(urlStr, body, headers, timeout)
+    }
+
+    @JvmOverloads
+    fun head(urlStr: String, headers: Any? = null, timeout: Int? = null): StrResponse =
+        AnalyzeUrl(
+            urlStr,
+            baseUrl = baseUrl.orEmpty(),
+            source = source,
+            ruleData = book,
+            chapter = chapter,
+            callTimeout = timeout?.toLong(),
+            coroutineContext = coroutineContext,
+            headerMapF = sourceHeaderMap(),
+        ).head(urlStr, headers, timeout)
+
+    @JvmOverloads
+    fun connect(urlStr: String, headers: Any? = null, timeout: Int? = null): StrResponse =
+        get(urlStr, headers, timeout)
+
+    @JvmOverloads
+    fun getCookie(tag: String = source?.getKey().orEmpty(), key: String? = null): String =
+        if (key.isNullOrBlank()) CookieStore.getCookie(tag) else CookieStore.getKey(tag, key)
+
+    private fun sourceHeaderMap(): Map<String, String> {
+        val sourceHeaders = source?.getHeaderMap(true).orEmpty().toMutableMap()
+        val raw = source?.get("header")?.trim().orEmpty()
+        val js = when {
+            raw.startsWith("@js:", true) -> raw.substring(4)
+            raw.startsWith("<js>", true) -> raw.lastIndexOf("<").takeIf { it > 5 }?.let { raw.substring(5, it) }
+            else -> null
+        }
+        if (!js.isNullOrBlank()) {
+            runCatching { GSON.fromJsonObject<Map<String, String>>(evalJS(js).toString()).getOrNull() }
+                .getOrNull()
+                ?.let(sourceHeaders::putAll)
+        }
+        return sourceHeaders
     }
 
     /**

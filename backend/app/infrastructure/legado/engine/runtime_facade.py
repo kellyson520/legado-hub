@@ -145,6 +145,8 @@ class LegadoRuntimeFacade:
         context: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> RuntimeResult:
+        effective_context = context if context is not None else self._session
+        native_context = self._native_context(effective_context)
         payload = {
             "stage": stage,
             "rule": rule,
@@ -152,7 +154,7 @@ class LegadoRuntimeFacade:
             "content_type": "html" if isinstance(content, str) else "json",
             "base_url": base_url,
             "redirect_url": redirect_url,
-            "context": context or self._session,
+            "context": native_context,
         }
         if self.mode == "python_primary":
             return self.fallback.extract(
@@ -161,11 +163,12 @@ class LegadoRuntimeFacade:
                 operation=operation,
                 base_url=base_url,
                 is_html=isinstance(content, str),
-                context=context or self._session,
+                context=effective_context,
                 stage=stage,
             )
 
         native_result = self.native_client.call(operation, payload, timeout or self.timeout)
+        self._merge_native_context(effective_context, native_result.context)
         if self.mode == "python_shadow":
             fallback_result = self.fallback.extract(
                 content,
@@ -173,7 +176,7 @@ class LegadoRuntimeFacade:
                 operation=operation,
                 base_url=base_url,
                 is_html=isinstance(content, str),
-                context=context or self._session,
+                context=effective_context,
                 stage=stage,
             )
             diff = compare_runtime_results(native_result, fallback_result)
@@ -205,12 +208,59 @@ class LegadoRuntimeFacade:
                 operation=operation,
                 base_url=base_url,
                 is_html=isinstance(content, str),
-                context=context or self._session,
+                context=effective_context,
                 stage=stage,
             )
             fallback_result.trace.setdefault("fallback_reason", native_result.error_code)
             return fallback_result
         return native_result
+
+    @staticmethod
+    def _native_context(context: dict[str, Any] | None) -> dict[str, Any]:
+        """Keep transport payloads limited to JSON-compatible Legado scope data."""
+        if not isinstance(context, dict):
+            return {}
+        allowed = {"source", "book", "chapter", "variables", "baseUrl", "base_url", "page", "key", "title", "bookName"}
+        result: dict[str, Any] = {}
+        for key, value in context.items():
+            if key not in allowed:
+                continue
+            if isinstance(value, dict):
+                result[key] = LegadoRuntimeFacade._json_context_value(value)
+            elif isinstance(value, (str, int, float, bool)) or value is None:
+                result[key] = value
+        return result
+
+    @staticmethod
+    def _json_context_value(value: Any, depth: int = 0) -> Any:
+        if depth > 4:
+            return str(value)
+        if isinstance(value, dict):
+            return {
+                str(key): LegadoRuntimeFacade._json_context_value(item, depth + 1)
+                for key, item in value.items()
+                if isinstance(key, (str, int, float, bool))
+            }
+        if isinstance(value, list):
+            return [LegadoRuntimeFacade._json_context_value(item, depth + 1) for item in value[:200]]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    @staticmethod
+    def _merge_native_context(target: dict[str, Any] | None, updated: dict[str, Any] | None) -> None:
+        if not isinstance(target, dict) or not isinstance(updated, dict):
+            return
+        for key in ("source", "book", "chapter", "variables"):
+            value = updated.get(key)
+            if isinstance(value, dict):
+                existing = target.setdefault(key, {})
+                if isinstance(existing, dict):
+                    existing.update(value)
+                else:
+                    target[key] = dict(value)
+            elif value is not None:
+                target[key] = value
 
     def resolve_url(
         self,

@@ -158,6 +158,17 @@ class LegadoHttpClient:
             **kwargs,
         )
 
+    async def head(
+        self,
+        url: str,
+        params: Dict[str, Any] = None,
+        headers: Dict[str, str] = None,
+        encoding: str = None,
+        **kwargs,
+    ) -> HttpResponse:
+        """Send a HEAD request while retaining the normal response metadata."""
+        return await self._request("HEAD", url, params=params, headers=headers, encoding=encoding, **kwargs)
+
     async def _request(
         self,
         method: str,

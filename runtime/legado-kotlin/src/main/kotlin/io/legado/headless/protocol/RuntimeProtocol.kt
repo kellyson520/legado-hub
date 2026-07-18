@@ -30,5 +30,6 @@ data class RuntimeResponse(
     @SerializedName("value_type")
     val valueType: String? = null,
     val trace: RuntimeTrace = RuntimeTrace(),
+    val context: Any? = null,
     val error: RuntimeError? = null,
 )

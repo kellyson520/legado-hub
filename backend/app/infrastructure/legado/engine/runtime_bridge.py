@@ -22,12 +22,13 @@ class RuntimeBridge:
         headers = {str(k): str(v) for k, v in (request.get("headers") or {}).items()}
         body = request.get("body")
         timeout = float(request.get("timeout_ms", self.timeout * 1000) or self.timeout * 1000) / 1000
+        follow_redirects = bool(request.get("follow_redirects", True))
         result: list[dict[str, Any]] = []
         failure: list[BaseException] = []
 
         def runner() -> None:
             try:
-                result.append(asyncio.run(asyncio.wait_for(self._request(method, url, headers, body), timeout=timeout)))
+                result.append(asyncio.run(asyncio.wait_for(self._request(method, url, headers, body, timeout, follow_redirects), timeout=timeout)))
             except BaseException as exc:  # noqa: BLE001 - converted to a stable bridge error below
                 failure.append(exc)
 
@@ -42,17 +43,28 @@ class RuntimeBridge:
             return {"status": 599, "text": str(failure[0]), "headers": {}, "error_code": "BRIDGE_ERROR"}
         return result[0] if result else {"status": 599, "text": "bridge returned no response", "headers": {}, "error_code": "BRIDGE_ERROR"}
 
-    async def _request(self, method: str, url: str, headers: dict[str, str], body: Any) -> dict[str, Any]:
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: Any,
+        timeout: float,
+        follow_redirects: bool,
+    ) -> dict[str, Any]:
         if method == "POST":
             if isinstance(body, (dict, list)):
-                response = await self.http_client.post(url, json_data=body, headers=headers)
+                response = await self._call_http("post", url, json_data=body, headers=headers, timeout=timeout, allow_redirects=follow_redirects)
             else:
-                response = await self.http_client.post(url, data=body, headers=headers)
+                response = await self._call_http("post", url, data=body, headers=headers, timeout=timeout, allow_redirects=follow_redirects)
+        elif method == "HEAD":
+            response = await self._call_http("head", url, headers=headers, timeout=timeout, allow_redirects=follow_redirects)
         else:
-            response = await self.http_client.get(url, headers=headers)
+            response = await self._call_http("get", url, headers=headers, timeout=timeout, allow_redirects=follow_redirects)
         return {
             "status": response.status,
             "text": response.text,
+            "body": response.text,
             "headers": dict(response.headers),
             "final_url": response.url,
             "elapsed_ms": response.elapsed_ms,
@@ -60,3 +72,19 @@ class RuntimeBridge:
             "is_html": response.is_html,
             "error_code": "HTTP_ERROR" if not response.success else None,
         }
+
+    async def _call_http(self, operation: str, url: str, **kwargs: Any):
+        method = getattr(self.http_client, operation, None)
+        if method is None and operation == "head":
+            method = getattr(self.http_client, "get")
+        try:
+            return await method(url, **kwargs)
+        except TypeError as exc:
+            # Lightweight test clients and older adapters may not expose the
+            # per-request timeout keyword; the outer wait_for still enforces it.
+            if "timeout" not in str(exc):
+                if "allow_redirects" not in str(exc):
+                    raise
+            kwargs.pop("timeout", None)
+            kwargs.pop("allow_redirects", None)
+            return await method(url, **kwargs)

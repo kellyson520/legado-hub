@@ -50,6 +50,7 @@ class LegadoBookSourceFetcher:
         self._runtime_facade = runtime_facade or LegadoRuntimeFacade(
             bridge_handler=RuntimeBridge(http_client=self._http).handle,
         )
+        self._native_context: Dict[str, Any] = {}
 
     def set_execution_deadline(self, deadline: float | None) -> None:
         setter = getattr(self._js_runtime, 'set_execution_deadline', None)
@@ -57,12 +58,16 @@ class LegadoBookSourceFetcher:
             setter(deadline)
 
     def _selector_context(self, **kwargs) -> Dict[str, Any]:
-        return {
+        self._native_context.update({key: value for key, value in kwargs.items() if value is not None})
+        self._native_context.update({
             "js_runtime": self._js_runtime,
             "runtime_facade": self._runtime_facade,
             "cache": getattr(self._js_runtime, "_cache", {}),
-            **kwargs,
-        }
+        })
+        return self._native_context
+
+    def _begin_native_context(self, source: Dict[str, Any]) -> None:
+        self._native_context = {"source": source, "variables": {}}
 
     async def search(
         self,
@@ -70,6 +75,7 @@ class LegadoBookSourceFetcher:
         keyword: str,
         page: int = 1,
     ) -> List[Dict[str, Any]]:
+        self._begin_native_context(source)
         search_url_tmpl = source.get("searchUrl", "")
         if not search_url_tmpl:
             return []
@@ -209,6 +215,7 @@ class LegadoBookSourceFetcher:
             book_list_rule,
             response_is_html,
             extraction_base_url,
+            source=source,
             stage="search",
         )
         if not book_list:
@@ -243,6 +250,7 @@ class LegadoBookSourceFetcher:
                     extraction_base_url,
                     response_is_html,
                     field,
+                    source=source,
                     stage="search",
                 )
                 book_info[field] = value
@@ -300,6 +308,7 @@ class LegadoBookSourceFetcher:
         source: Dict[str, Any],
         book_url: str,
     ) -> List[Dict[str, Any]]:
+        self._begin_native_context(source)
         rule_toc = self._parse_rule(source.get("ruleToc", {}))
         if not rule_toc:
             return []
@@ -397,6 +406,7 @@ class LegadoBookSourceFetcher:
             chapter_list_rule,
             resp.is_html,
             final_base_url,
+            source=source,
             stage="toc",
         )
         if not chapter_list:
@@ -407,8 +417,8 @@ class LegadoBookSourceFetcher:
 
         chapters: list[dict[str, Any]] = []
         for idx, item in enumerate(chapter_list):
-            title = self._extract_field(item, name_rule, final_base_url, resp.is_html, "name", stage="toc")
-            url = self._extract_field(item, url_rule, final_base_url, resp.is_html, "url", stage="toc")
+            title = self._extract_field(item, name_rule, final_base_url, resp.is_html, "name", source=source, stage="toc")
+            url = self._extract_field(item, url_rule, final_base_url, resp.is_html, "url", source=source, stage="toc")
             if url and not url.startswith("http"):
                 url = UrlUtils.resolve_relative(url, final_base_url)
             if title and url:
@@ -428,6 +438,7 @@ class LegadoBookSourceFetcher:
         source: Dict[str, Any],
         chapter_url: str,
     ) -> Dict[str, Any]:
+        self._begin_native_context(source)
         rule_content = self._parse_rule(source.get("ruleContent", {}))
         if not rule_content:
             return {"content": "", "title": "", "nextUrl": ""}
@@ -452,9 +463,9 @@ class LegadoBookSourceFetcher:
         title_rule = rule_content.get("title", "")
         next_url_rule = rule_content.get("nextContentUrl", "") or rule_content.get("nextUrl", "")
 
-        content = self._extract_field(resp_data, content_rule, response_base_url, resp.is_html, "content", stage="content")
-        title = self._extract_field(resp_data, title_rule, response_base_url, resp.is_html, "name", stage="content")
-        next_url = self._extract_field(resp_data, next_url_rule, response_base_url, resp.is_html, "url", stage="content")
+        content = self._extract_field(resp_data, content_rule, response_base_url, resp.is_html, "content", source=source, stage="content")
+        title = self._extract_field(resp_data, title_rule, response_base_url, resp.is_html, "name", source=source, stage="content")
+        next_url = self._extract_field(resp_data, next_url_rule, response_base_url, resp.is_html, "url", source=source, stage="content")
 
         if next_url and not next_url.startswith("http"):
             next_url = UrlUtils.resolve_relative(next_url, response_base_url)
@@ -478,6 +489,7 @@ class LegadoBookSourceFetcher:
         source: Dict[str, Any],
         book_url: str,
     ) -> Dict[str, Any]:
+        self._begin_native_context(source)
         rule_book_info = self._parse_rule(source.get("ruleBookInfo", {}))
         if not rule_book_info:
             return {}
@@ -506,6 +518,7 @@ class LegadoBookSourceFetcher:
                     response_base_url,
                     resp.is_html,
                     field,
+                    source=source,
                     stage="book_info",
                 )
         return info
@@ -560,6 +573,7 @@ class LegadoBookSourceFetcher:
         rule: str,
         is_html: bool,
         base_url: str,
+        source: Dict[str, Any] | None = None,
         stage: str = "unknown",
     ) -> List[Any]:
         if not rule:
@@ -570,7 +584,7 @@ class LegadoBookSourceFetcher:
             operation="extract_list",
             stage=stage,
             base_url=base_url,
-            context=self._selector_context(stage=stage),
+            context=self._selector_context(source=source, stage=stage),
         )
         if not result.success or result.value is None:
             return []
@@ -583,6 +597,7 @@ class LegadoBookSourceFetcher:
         base_url: str,
         is_html: bool,
         field_type: str = "",
+        source: Dict[str, Any] | None = None,
         stage: str = "unknown",
     ) -> str:
         if not rule:
@@ -605,7 +620,7 @@ class LegadoBookSourceFetcher:
                 operation="extract_string",
                 stage=stage,
                 base_url=base_url,
-                context=self._selector_context(),
+                context=self._selector_context(source=source),
             )
             if not result.success or result.value is None:
                 return ""

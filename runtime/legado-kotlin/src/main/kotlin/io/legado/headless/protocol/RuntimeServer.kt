@@ -48,7 +48,16 @@ class RuntimeServer(
                 )
                 else -> {
                     val (value, valueType) = analyzer.execute(request)
-                    response(RuntimeResponse(id = id, success = true, value = value, valueType = valueType, trace = trace(started)))
+                    response(
+                        RuntimeResponse(
+                            id = id,
+                            success = true,
+                            value = value,
+                            valueType = valueType,
+                            trace = trace(started),
+                            context = request["context"]?.takeUnless { it.isJsonNull },
+                        )
+                    )
                 }
             }
         } catch (error: RuntimeFailure) {

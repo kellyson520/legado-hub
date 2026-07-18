@@ -27,6 +27,7 @@ class StdioHttpBridge(
                         "body" to spec.body,
                         "timeout_ms" to spec.timeoutMs,
                         "cookie_scope" to spec.cookieScope,
+                        "follow_redirects" to spec.followRedirects,
                     ),
                 )
             )

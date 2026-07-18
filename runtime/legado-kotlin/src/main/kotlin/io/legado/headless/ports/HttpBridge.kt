@@ -7,6 +7,7 @@ data class HttpRequestSpec(
     val body: String? = null,
     val timeoutMs: Long = 15_000,
     val cookieScope: String? = null,
+    val followRedirects: Boolean = true,
 )
 
 data class HttpResponse(
