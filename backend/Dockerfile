@@ -35,6 +35,7 @@ ENV DB_PATH=/data/legado_hub.db
 ENV NOVEL_DB_PATH=/data/novel.db
 ENV PYTHONUNBUFFERED=1
 ENV LEGADO_RUNTIME_COMMAND=/app/runtime/bin/legado-kotlin-runtime
+ENV LEGADO_RUNTIME_MODE=native_kotlin
 ENV JAVA_TOOL_OPTIONS="-Xms32m -Xmx256m"
 
 EXPOSE 8000

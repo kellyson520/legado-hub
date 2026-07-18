@@ -86,8 +86,9 @@ class NativeRuntimeClient:
                     remaining = deadline - time.monotonic()
                     raw = self._readline(process, remaining)
                     if raw is None:
+                        process_was_dead = process.poll() is not None
                         self._restart_after_failure()
-                        if _retry_after_eof and process.poll() is not None:
+                        if _retry_after_eof and process_was_dead:
                             return self.call(operation, payload, timeout, _retry_after_eof=False)
                         return self._failed("EXECUTION_TIMEOUT", "native runtime response timed out")
                     if len(raw) > self.max_response_bytes:
