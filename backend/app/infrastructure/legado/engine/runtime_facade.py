@@ -6,6 +6,7 @@ from typing import Any
 
 from .native_models import RuntimeResult
 from .native_runtime_client import NativeRuntimeClient
+from .runtime_diff import compare_runtime_results
 
 logger = logging.getLogger("legado_runtime_facade")
 
@@ -85,6 +86,7 @@ class LegadoRuntimeFacade:
         self.mode = mode or os.getenv("LEGADO_RUNTIME_MODE", "python_primary")
         self.timeout = timeout
         self._session: dict[str, Any] = {}
+        self.diffs: list[dict[str, Any]] = []
         if self.mode not in {"native_kotlin", "python_shadow", "python_primary"}:
             raise ValueError(f"unsupported LEGADO_RUNTIME_MODE: {self.mode}")
 
@@ -138,7 +140,17 @@ class LegadoRuntimeFacade:
                 context=context or self._session,
                 stage=stage,
             )
-            if native_result.success and fallback_result.success and native_result.value != fallback_result.value:
+            diff = compare_runtime_results(native_result, fallback_result)
+            if diff["code"] != "OK":
+                self.diffs.append(
+                    {
+                        "stage": stage,
+                        "rule_preview": rule[:120],
+                        "native_value": native_result.value,
+                        "python_value": fallback_result.value,
+                        **diff,
+                    }
+                )
                 logger.warning(
                     "native semantics diff stage=%s rule=%s native=%r fallback=%r",
                     stage,

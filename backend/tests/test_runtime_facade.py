@@ -43,3 +43,15 @@ def test_facade_falls_back_only_when_native_runtime_is_unavailable():
     assert result.success
     assert result.value == ["fallback"]
     assert len(fallback.calls) == 1
+
+
+def test_shadow_mode_records_structured_diff():
+    client = FakeClient(RuntimeResult(success=True, value="native", value_type="string"))
+    fallback = FakeFallback()
+    facade = LegadoRuntimeFacade(native_client=client, fallback=fallback, mode="python_shadow")
+
+    facade.extract("<div></div>", "div@text", operation="extract_string", stage="content")
+
+    assert len(facade.diffs) == 1
+    assert facade.diffs[0]["code"] == "NATIVE_SEMANTICS_MISMATCH"
+    assert facade.diffs[0]["stage"] == "content"
