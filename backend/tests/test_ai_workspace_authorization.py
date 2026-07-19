@@ -14,7 +14,11 @@ class Tasks:
 
 
 class Audit:
+    def __init__(self):
+        self.events = []
+
     async def record_audit(self, _event):
+        self.events.append(_event)
         return _event
 
 
@@ -260,3 +264,45 @@ async def test_deny_decision_never_invokes_source_executor(tmp_path, monkeypatch
 
     assert denied["message"]["status"] == "denied"
     assert executor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_malformed_model_tool_call_fails_without_creating_authorization_request(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-authorization-malformed.sqlite3"))
+
+    from app.application.services.ai_authorization_service import AIConversationAuthorizationService
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_authorization_repo_impl import SQLiteAIAuthorizationRepository
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class MalformedPlatform(Platform):
+        async def invoke_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"output": {"message": {"role": "assistant", "content": "", "tool_calls": [{
+                "id": "bad-call",
+                "type": "function",
+                "function": {"name": "source.search", "arguments": "{not-json"},
+            }]}}}
+
+    bootstrap_sqlite()
+    audit = Audit()
+    authorization = AIConversationAuthorizationService(repo=SQLiteAIAuthorizationRepository(), audit=audit)
+    service = AIWorkspaceService(
+        MalformedPlatform(),
+        SQLiteAIConversationRepository(),
+        Source(),
+        Tasks(),
+        audit,
+        novel_tool_executor=Executor(),
+        authorization_service=authorization,
+    )
+    conversation = await service.create_conversation("7")
+
+    reply = await service.send_message(
+        conversation["id"], "7", "chat", "搜索剑来",
+        allowed_tool_names={"source.search"},
+    )
+
+    assert reply["status"] == "failed"
+    assert authorization.list_pending("7", conversation["id"]) == []
