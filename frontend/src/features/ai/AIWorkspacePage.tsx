@@ -87,8 +87,27 @@ export function AIWorkspacePage() {
 
   const loadConversation = async (conversationId: string) => {
     const response = await getAIConversation(conversationId)
-    setConversation(response.data)
     setActiveConversationId(conversationId)
+    const hydratePendingCards = (pending: AIConversationAuthorizationRequest[]) => {
+      const existingRequestIds = new Set(
+        response.data.messages
+          .map((message) => message.authorization_request?.id)
+          .filter((id): id is string => Boolean(id)),
+      )
+      const synthetic = pending
+        .filter((request) => !existingRequestIds.has(request.id))
+        .map((request) => ({
+          id: `authorization-${request.id}`,
+          role: 'assistant' as const,
+          mode: 'chat' as AIWorkspaceMode,
+          content: '需要你的授权才能读取书源原文。',
+          status: 'authorization_required' as const,
+          tool_calls: [],
+          authorization_request: request,
+          created_at: new Date().toISOString(),
+        }))
+      setConversation({ ...response.data, messages: [...response.data.messages, ...synthetic] })
+    }
     try {
       const [pending, grants] = await Promise.all([
         listAIConversationAuthorizations(conversationId),
@@ -96,8 +115,11 @@ export function AIWorkspacePage() {
       ])
       setPendingAuthorizations(pending.data)
       setAuthorizationGrants(grants.data)
+      hydratePendingCards(pending.data)
     } catch {
-      setPendingAuthorizations(response.data.authorization_requests ?? [])
+      const pending = response.data.authorization_requests ?? []
+      setPendingAuthorizations(pending)
+      hydratePendingCards(pending)
     }
   }
 
@@ -200,15 +222,26 @@ export function AIWorkspacePage() {
     try {
       const response = await decideAIConversationAuthorization(activeConversationId, request.id, { decision })
       const resolved = response.data.authorization
+      const terminal = ['denied', 'consumed', 'failed', 'expired'].includes(resolved.status)
+      const resolvedContent = resolved.status === 'denied'
+        ? t('ai.authorization.deniedMessage')
+        : resolved.status === 'consumed'
+          ? t('ai.authorization.approvedMessage')
+          : resolved.status === 'expired'
+            ? t('ai.authorization.expiredMessage')
+            : t('ai.authorization.failedMessage')
       setPendingAuthorizations((current) => current.filter((item) => item.id !== request.id))
       setConversation((current) => {
         if (!current) return current
         const messages = current.messages.map((message) => {
           if (message.authorization_request?.id !== request.id) return message
+          if (!terminal) {
+            return { ...message, authorization_request: resolved }
+          }
           return {
             ...message,
-            content: decision === 'deny' ? t('ai.authorization.deniedMessage') : t('ai.authorization.approvedMessage'),
-            status: decision === 'deny' ? 'denied' as const : 'succeeded' as const,
+            content: resolvedContent,
+            status: resolved.status === 'denied' ? 'denied' as const : resolved.status === 'consumed' ? 'succeeded' as const : 'failed' as const,
             authorization_request: resolved,
           }
         })
@@ -289,12 +322,19 @@ export function AIWorkspacePage() {
 
           <div className="min-h-[320px] flex-1 space-y-5 bg-[radial-gradient(circle_at_top_right,hsl(var(--accent))_0,transparent_30%)] p-5">
             <StatusMessage tone="error" message={error} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2" />
-            {authorizationGrants.filter((grant) => grant.scope === 'conversation').map((grant) => (
-              <div key={grant.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/35 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
-                <span>{t('ai.authorization.activeConversation')}</span>
-                <Button size="sm" variant="outline" onClick={() => void revokeGrant(grant)} disabled={authorizationBusy === grant.id} aria-label={t('ai.authorization.revoke')}>{t('ai.authorization.revoke')}</Button>
+            {authorizationGrants.length > 0 ? (
+              <div className="space-y-2">
+                {authorizationGrants.map((grant) => (
+                  <div key={grant.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/35 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                    <div>
+                      <p>{grant.scope === 'conversation' ? t('ai.authorization.activeConversation') : t('ai.authorization.remembered')}</p>
+                      <p className="mt-1 text-xs text-amber-50/70">{t('ai.authorization.expires')}: {formatTime(grant.expires_at, locale)}</p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => void revokeGrant(grant)} disabled={authorizationBusy === grant.id} aria-label={t('ai.authorization.revoke')}>{t('ai.authorization.revoke')}</Button>
+                  </div>
+                ))}
               </div>
-            ))}
+            ) : null}
             {!loadingConversations && !conversation ? <div className="grid min-h-[250px] place-items-center text-center text-sm text-muted-foreground">新建一个 AI 对话后，即可开始人物、剧情和世界观解析。</div> : null}
             {conversation?.messages.map((message, index) => (
               <article key={message.id} className={`max-w-3xl ${message.role === 'user' ? 'ml-auto' : ''}`}>
@@ -304,7 +344,7 @@ export function AIWorkspacePage() {
                     <span>{formatTime(message.created_at, locale)}</span>
                   </div>
                   <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
-                  {message.authorization_request && message.status === 'authorization_required' ? (
+                  {message.authorization_request && message.status === 'authorization_required' && message.authorization_request.status === 'pending' ? (
                     <div className="mt-4 overflow-hidden rounded-lg border border-amber-400/35 bg-amber-400/10 p-4 text-amber-50 shadow-inner">
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-300/20 text-sm font-bold text-amber-100">!</div>

@@ -133,10 +133,33 @@ def _ensure_sqlite_ai_conversation_columns() -> None:
             connection.exec_driver_sql("ALTER TABLE ai_conversation_messages ADD COLUMN metadata_payload TEXT NOT NULL DEFAULT '{}'")
         request_rows = connection.exec_driver_sql("PRAGMA table_info(ai_authorization_requests)").fetchall()
         if request_rows:
+            request_columns = {row[1] for row in request_rows}
+            if "claim_token" not in request_columns:
+                connection.exec_driver_sql("ALTER TABLE ai_authorization_requests ADD COLUMN claim_token VARCHAR")
+            if "claim_expires_at" not in request_columns:
+                connection.exec_driver_sql("ALTER TABLE ai_authorization_requests ADD COLUMN claim_expires_at DATETIME")
             connection.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_ai_authorization_requests_actor_conversation "
                 "ON ai_authorization_requests (actor_id, conversation_id)"
             )
+            duplicate_requests = connection.exec_driver_sql(
+                "SELECT actor_id, conversation_id, id FROM ai_authorization_requests "
+                "WHERE status IN ('pending', 'processing') "
+                "ORDER BY actor_id, conversation_id, created_at DESC, id DESC"
+            ).fetchall()
+            seen_request_keys: set[tuple[str, str]] = set()
+            for actor_id, conversation_id, request_id in duplicate_requests:
+                key = (str(actor_id), str(conversation_id))
+                if key in seen_request_keys:
+                    connection.exec_driver_sql(
+                        "UPDATE ai_authorization_requests SET status='expired', "
+                        "resolved_at=CURRENT_TIMESTAMP, resolved_by='system:bootstrap', "
+                        "claim_token=NULL, claim_expires_at=NULL, updated_at=CURRENT_TIMESTAMP "
+                        "WHERE id = ?",
+                        (request_id,),
+                    )
+                else:
+                    seen_request_keys.add(key)
             connection.exec_driver_sql(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_authorization_requests_active "
                 "ON ai_authorization_requests (actor_id, conversation_id) "
@@ -145,8 +168,46 @@ def _ensure_sqlite_ai_conversation_columns() -> None:
         grant_rows = connection.exec_driver_sql("PRAGMA table_info(ai_authorization_grants)").fetchall()
         if grant_rows:
             connection.exec_driver_sql(
+                "UPDATE ai_authorization_grants SET revoked_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
+                "WHERE revoked_at IS NULL AND expires_at <= CURRENT_TIMESTAMP"
+            )
+            connection.exec_driver_sql(
+                "UPDATE ai_authorization_grants SET conversation_id=NULL "
+                "WHERE revoked_at IS NULL AND scope='remembered'"
+            )
+            duplicate_grants = connection.exec_driver_sql(
+                "SELECT actor_id, conversation_id, scope, id FROM ai_authorization_grants "
+                "WHERE revoked_at IS NULL AND scope IN ('conversation', 'remembered') "
+                "ORDER BY actor_id, scope, conversation_id, created_at DESC, id DESC"
+            ).fetchall()
+            seen_grant_keys: set[tuple[str, str, str | None]] = set()
+            for actor_id, conversation_id, scope, grant_id in duplicate_grants:
+                key = (
+                    str(actor_id),
+                    str(scope),
+                    None if scope == "remembered" else (str(conversation_id) if conversation_id is not None else None),
+                )
+                if key in seen_grant_keys:
+                    connection.exec_driver_sql(
+                        "UPDATE ai_authorization_grants SET revoked_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP "
+                        "WHERE id = ?",
+                        (grant_id,),
+                    )
+                else:
+                    seen_grant_keys.add(key)
+            connection.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_ai_authorization_grants_actor_scope "
                 "ON ai_authorization_grants (actor_id, scope)"
+            )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_authorization_grants_conversation_active "
+                "ON ai_authorization_grants (actor_id, conversation_id, scope) "
+                "WHERE revoked_at IS NULL AND scope = 'conversation'"
+            )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_authorization_grants_remembered_active "
+                "ON ai_authorization_grants (actor_id, scope) "
+                "WHERE revoked_at IS NULL AND scope = 'remembered'"
             )
 
 

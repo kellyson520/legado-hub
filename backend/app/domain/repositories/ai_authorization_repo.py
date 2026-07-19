@@ -16,6 +16,10 @@ class AIAuthorizationRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_active_request(self, actor_id: str, conversation_id: str) -> AIConversationAuthorizationRequest | None:
+        raise NotImplementedError
+
+    @abstractmethod
     def list_requests(self, actor_id: str, conversation_id: str, status: str | None = None) -> list[AIConversationAuthorizationRequest]:
         raise NotImplementedError
 
@@ -24,7 +28,27 @@ class AIAuthorizationRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def finalize_request(self, request_id: str, actor_id: str, status: str, *, result_message_id: str | None = None) -> AIConversationAuthorizationRequest | None:
+    def renew_claim(
+        self,
+        request_id: str,
+        actor_id: str,
+        claim_token: str,
+        *,
+        lease_seconds: int = 300,
+    ) -> AIConversationAuthorizationRequest | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def finalize_request(self, request_id: str, actor_id: str, status: str, *, claim_token: str | None = None, result_message_id: str | None = None) -> AIConversationAuthorizationRequest | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_result_message_id(
+        self,
+        request_id: str,
+        actor_id: str,
+        result_message_id: str,
+    ) -> AIConversationAuthorizationRequest | None:
         raise NotImplementedError
 
     @abstractmethod

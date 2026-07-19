@@ -1,5 +1,9 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from uuid import uuid4
+
+from sqlalchemy import and_, or_
+from sqlalchemy.exc import IntegrityError
 
 from app.domain.entities.ai_authorization import (
     AIConversationAuthorizationGrant,
@@ -40,11 +44,28 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
                 resolved_at=request.resolved_at,
                 resolved_by=request.resolved_by,
                 result_message_id=request.result_message_id,
+                claim_token=request.claim_token,
+                claim_expires_at=request.claim_expires_at,
                 created_at=request.created_at,
                 updated_at=request.updated_at,
             )
             db.add(model)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                query = db.query(AIConversationAuthorizationRequestModel).filter(
+                    AIConversationAuthorizationRequestModel.actor_id == str(request.actor_id),
+                    AIConversationAuthorizationRequestModel.conversation_id == str(request.conversation_id),
+                    AIConversationAuthorizationRequestModel.status.in_(("pending", "processing")),
+                )
+                existing = query.order_by(
+                    AIConversationAuthorizationRequestModel.created_at.desc(),
+                    AIConversationAuthorizationRequestModel.id.desc(),
+                ).first()
+                if existing is None:
+                    raise
+                return self._request(existing)
             db.refresh(model)
             return self._request(model)
         finally:
@@ -60,6 +81,49 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
             if conversation_id is not None:
                 query = query.filter(AIConversationAuthorizationRequestModel.conversation_id == conversation_id)
             row = query.first()
+            return self._request(row) if row is not None else None
+        finally:
+            self._close(db)
+
+    def get_active_request(self, actor_id: str, conversation_id: str) -> AIConversationAuthorizationRequest | None:
+        db = self._db()
+        try:
+            now = datetime.utcnow()
+            stale = db.query(AIConversationAuthorizationRequestModel).filter(
+                AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
+                AIConversationAuthorizationRequestModel.conversation_id == str(conversation_id),
+                or_(
+                    and_(
+                        AIConversationAuthorizationRequestModel.status == "pending",
+                        AIConversationAuthorizationRequestModel.expires_at <= now,
+                    ),
+                    and_(
+                        AIConversationAuthorizationRequestModel.status == "processing",
+                        or_(
+                            AIConversationAuthorizationRequestModel.expires_at <= now,
+                            AIConversationAuthorizationRequestModel.claim_expires_at <= now,
+                            AIConversationAuthorizationRequestModel.claim_expires_at.is_(None),
+                        ),
+                    ),
+                ),
+            ).update(self._expired_values(now, str(actor_id)), synchronize_session=False)
+            if stale:
+                db.commit()
+            row = db.query(AIConversationAuthorizationRequestModel).filter(
+                AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
+                AIConversationAuthorizationRequestModel.conversation_id == str(conversation_id),
+                or_(
+                    and_(
+                        AIConversationAuthorizationRequestModel.status == "pending",
+                        AIConversationAuthorizationRequestModel.expires_at > now,
+                    ),
+                    and_(
+                        AIConversationAuthorizationRequestModel.status == "processing",
+                        AIConversationAuthorizationRequestModel.expires_at > now,
+                        AIConversationAuthorizationRequestModel.claim_expires_at > now,
+                    ),
+                ),
+            ).order_by(AIConversationAuthorizationRequestModel.created_at.desc()).first()
             return self._request(row) if row is not None else None
         finally:
             self._close(db)
@@ -82,6 +146,34 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
         db = self._db()
         try:
             now = datetime.utcnow()
+            stale = (
+                db.query(AIConversationAuthorizationRequestModel)
+                .filter(
+                    AIConversationAuthorizationRequestModel.id == request_id,
+                    AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
+                    AIConversationAuthorizationRequestModel.conversation_id == conversation_id,
+                    or_(
+                        and_(
+                            AIConversationAuthorizationRequestModel.status == "pending",
+                            AIConversationAuthorizationRequestModel.expires_at <= now,
+                        ),
+                        and_(
+                            AIConversationAuthorizationRequestModel.status == "processing",
+                            or_(
+                                AIConversationAuthorizationRequestModel.expires_at <= now,
+                                AIConversationAuthorizationRequestModel.claim_expires_at <= now,
+                                AIConversationAuthorizationRequestModel.claim_expires_at.is_(None),
+                            ),
+                        ),
+                    ),
+                )
+                .update(self._expired_values(now, str(actor_id)), synchronize_session=False)
+            )
+            if stale:
+                db.commit()
+                return None
+            claim_token = uuid4().hex
+            claim_expires_at = datetime.utcnow().replace(microsecond=0) + timedelta(minutes=5)
             updated = (
                 db.query(AIConversationAuthorizationRequestModel)
                 .filter(
@@ -91,7 +183,7 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
                     AIConversationAuthorizationRequestModel.status == "pending",
                     AIConversationAuthorizationRequestModel.expires_at > now,
                 )
-                .update({"status": "processing", "decision": decision, "updated_at": now}, synchronize_session=False)
+                .update({"status": "processing", "decision": decision, "claim_token": claim_token, "claim_expires_at": claim_expires_at, "updated_at": now}, synchronize_session=False)
             )
             if updated != 1:
                 db.rollback()
@@ -104,7 +196,14 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
         finally:
             self._close(db)
 
-    def finalize_request(self, request_id: str, actor_id: str, status: str, *, result_message_id: str | None = None) -> AIConversationAuthorizationRequest | None:
+    def renew_claim(
+        self,
+        request_id: str,
+        actor_id: str,
+        claim_token: str,
+        *,
+        lease_seconds: int = 300,
+    ) -> AIConversationAuthorizationRequest | None:
         db = self._db()
         try:
             now = datetime.utcnow()
@@ -114,8 +213,11 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
                     AIConversationAuthorizationRequestModel.id == request_id,
                     AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
                     AIConversationAuthorizationRequestModel.status == "processing",
+                    AIConversationAuthorizationRequestModel.claim_token == claim_token,
+                    AIConversationAuthorizationRequestModel.expires_at > now,
+                    AIConversationAuthorizationRequestModel.claim_expires_at > now,
                 )
-                .update({"status": status, "resolved_at": now, "resolved_by": str(actor_id), "result_message_id": result_message_id, "updated_at": now}, synchronize_session=False)
+                .update({"claim_expires_at": now + timedelta(seconds=max(30, int(lease_seconds))), "updated_at": now}, synchronize_session=False)
             )
             if updated != 1:
                 db.rollback()
@@ -123,6 +225,62 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
             db.commit()
             row = db.query(AIConversationAuthorizationRequestModel).filter(
                 AIConversationAuthorizationRequestModel.id == request_id,
+                AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
+            ).first()
+            return self._request(row) if row is not None else None
+        finally:
+            self._close(db)
+
+    def finalize_request(self, request_id: str, actor_id: str, status: str, *, claim_token: str | None = None, result_message_id: str | None = None) -> AIConversationAuthorizationRequest | None:
+        db = self._db()
+        try:
+            now = datetime.utcnow()
+            query = db.query(AIConversationAuthorizationRequestModel).filter(
+                AIConversationAuthorizationRequestModel.id == request_id,
+                AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
+                AIConversationAuthorizationRequestModel.status == "processing",
+                AIConversationAuthorizationRequestModel.expires_at > now,
+                AIConversationAuthorizationRequestModel.claim_expires_at > now,
+            )
+            if claim_token is not None:
+                query = query.filter(AIConversationAuthorizationRequestModel.claim_token == claim_token)
+            updated = query.update({"status": status, "resolved_at": now, "resolved_by": str(actor_id), "result_message_id": result_message_id, "claim_token": None, "claim_expires_at": None, "updated_at": now}, synchronize_session=False)
+            if updated != 1:
+                db.rollback()
+                return None
+            db.commit()
+            row = db.query(AIConversationAuthorizationRequestModel).filter(
+                AIConversationAuthorizationRequestModel.id == request_id,
+            ).first()
+            return self._request(row) if row is not None else None
+        finally:
+            self._close(db)
+
+    def set_result_message_id(self, request_id: str, actor_id: str, result_message_id: str) -> AIConversationAuthorizationRequest | None:
+        db = self._db()
+        try:
+            now = datetime.utcnow()
+            updated = (
+                db.query(AIConversationAuthorizationRequestModel)
+                .filter(
+                    AIConversationAuthorizationRequestModel.id == request_id,
+                    AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
+                    AIConversationAuthorizationRequestModel.status.in_(("denied", "consumed", "failed", "expired")),
+                    AIConversationAuthorizationRequestModel.result_message_id.is_(None),
+                )
+                .update({"result_message_id": str(result_message_id), "updated_at": now}, synchronize_session=False)
+            )
+            if updated != 1:
+                db.rollback()
+                row = db.query(AIConversationAuthorizationRequestModel).filter(
+                    AIConversationAuthorizationRequestModel.id == request_id,
+                    AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
+                ).first()
+                return self._request(row) if row is not None else None
+            db.commit()
+            row = db.query(AIConversationAuthorizationRequestModel).filter(
+                AIConversationAuthorizationRequestModel.id == request_id,
+                AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
             ).first()
             return self._request(row) if row is not None else None
         finally:
@@ -138,9 +296,9 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
                     AIConversationAuthorizationRequestModel.id == request_id,
                     AIConversationAuthorizationRequestModel.actor_id == str(actor_id),
                     AIConversationAuthorizationRequestModel.conversation_id == conversation_id,
-                    AIConversationAuthorizationRequestModel.status == "pending",
+                    AIConversationAuthorizationRequestModel.status.in_(("pending", "processing")),
                 )
-                .update({"status": "expired", "resolved_at": now, "resolved_by": str(actor_id), "updated_at": now}, synchronize_session=False)
+                .update({"status": "expired", "resolved_at": now, "resolved_by": str(actor_id), "claim_token": None, "claim_expires_at": None, "updated_at": now}, synchronize_session=False)
             )
             if updated != 1:
                 db.rollback()
@@ -154,6 +312,20 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
     def create_grant(self, grant: AIConversationAuthorizationGrant) -> AIConversationAuthorizationGrant:
         db = self._db()
         try:
+            now = datetime.utcnow()
+            existing = self._active_grant_query(db, grant.actor_id, grant.scope, grant.conversation_id).first()
+            if existing is not None:
+                if existing.expires_at > now:
+                    current_tools = set(json.loads(existing.tool_names or "[]"))
+                    requested_tools = set(str(name) for name in grant.tool_names)
+                    if requested_tools - current_tools:
+                        existing.tool_names = json.dumps(sorted(current_tools | requested_tools), ensure_ascii=False)
+                        existing.updated_at = now
+                        db.commit()
+                    return self._grant(existing)
+                existing.revoked_at = now
+                existing.updated_at = now
+                db.flush()
             model = AIConversationAuthorizationGrantModel(
                 id=grant.id,
                 actor_id=grant.actor_id,
@@ -166,7 +338,20 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
                 updated_at=grant.updated_at,
             )
             db.add(model)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                existing = self._active_grant_query(db, grant.actor_id, grant.scope, grant.conversation_id).first()
+                if existing is None or existing.expires_at <= now:
+                    raise
+                current_tools = set(json.loads(existing.tool_names or "[]"))
+                requested_tools = set(str(name) for name in grant.tool_names)
+                if requested_tools - current_tools:
+                    existing.tool_names = json.dumps(sorted(current_tools | requested_tools), ensure_ascii=False)
+                    existing.updated_at = now
+                    db.commit()
+                return self._grant(existing)
             db.refresh(model)
             return self._grant(model)
         finally:
@@ -230,8 +415,37 @@ class SQLiteAIAuthorizationRepository(AIAuthorizationRepository):
             resolved_at=model.resolved_at,
             resolved_by=model.resolved_by,
             result_message_id=model.result_message_id,
+            claim_token=model.claim_token,
+            claim_expires_at=model.claim_expires_at,
             created_at=model.created_at,
             updated_at=model.updated_at,
+        )
+
+    @staticmethod
+    def _expired_values(now: datetime, actor_id: str) -> dict:
+        return {
+            "status": "expired",
+            "resolved_at": now,
+            "resolved_by": actor_id,
+            "claim_token": None,
+            "claim_expires_at": None,
+            "updated_at": now,
+        }
+
+    @staticmethod
+    def _active_grant_query(db, actor_id: str, scope: str, conversation_id: str | None):
+        query = db.query(AIConversationAuthorizationGrantModel).filter(
+            AIConversationAuthorizationGrantModel.actor_id == str(actor_id),
+            AIConversationAuthorizationGrantModel.scope == scope,
+            AIConversationAuthorizationGrantModel.revoked_at.is_(None),
+        )
+        if scope == "conversation":
+            query = query.filter(AIConversationAuthorizationGrantModel.conversation_id == conversation_id)
+        else:
+            query = query.filter(AIConversationAuthorizationGrantModel.conversation_id.is_(None))
+        return query.order_by(
+            AIConversationAuthorizationGrantModel.created_at.desc(),
+            AIConversationAuthorizationGrantModel.id.desc(),
         )
 
     @staticmethod

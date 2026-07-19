@@ -18,6 +18,8 @@ class AIConversationAuthorizationRequest:
     resolved_at: datetime | None = None
     resolved_by: str | None = None
     result_message_id: str | None = None
+    claim_token: str | None = None
+    claim_expires_at: datetime | None = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 

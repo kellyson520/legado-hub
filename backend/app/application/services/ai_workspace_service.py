@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from app.core.pagination import paginated_result
@@ -170,7 +171,10 @@ class AIWorkspaceService:
             raise NotFoundException("AI conversation not found")
         return {
             **self._serialize_conversation(conversation),
-            "messages": [self._serialize_message(item) for item in self._conversations.list_messages(conversation.id)],
+            "messages": [
+                self._serialize_conversation_message(item, str(actor_id), conversation.id)
+                for item in self._conversations.list_messages(conversation.id)
+            ],
             "authorization_requests": (
                 self._authorization_service.list_pending(str(actor_id), conversation.id)
                 if self._authorization_service is not None else []
@@ -230,6 +234,10 @@ class AIWorkspaceService:
                 ),
             })
         if authorization_request is not None:
+            existing = self._find_authorization_message(conversation.id, authorization_request.get("id", ""))
+            if existing is not None:
+                await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
+                return self._serialize_message(existing)
             assistant = self._append_authorization_message(
                 conversation.id,
                 mode,
@@ -251,6 +259,10 @@ class AIWorkspaceService:
             )
             tool_calls.extend(loop_result.tool_calls)
             if loop_result.authorization_request is not None:
+                existing = self._find_authorization_message(conversation.id, loop_result.authorization_request.get("id", ""))
+                if existing is not None:
+                    await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
+                    return self._serialize_message(existing)
                 assistant = self._append_authorization_message(
                     conversation.id,
                     mode,
@@ -292,11 +304,14 @@ class AIWorkspaceService:
         conversation_id: str,
         decision: str,
         rbac_permissions: set[str] | None = None,
+        allowed_tool_names: set[str] | frozenset[str] | None = None,
     ) -> dict:
         if self._authorization_service is None:
             raise ValidationException("AI conversation authorization is unavailable")
-        if rbac_permissions is not None and "book_sources.read" not in rbac_permissions:
+        if not rbac_permissions or "book_sources.read" not in rbac_permissions:
             raise AuthorizationException("Permission denied: book_sources.read")
+        if not allowed_tool_names:
+            raise AuthorizationException("Current AI tool grant is unavailable")
         original_request = self._authorization_service.get_request_record(
             request_id,
             actor_id=str(actor_id),
@@ -310,7 +325,7 @@ class AIWorkspaceService:
             decision=decision,
         )
         if authorization.get("status") == "denied":
-            existing = self._authorization_message_for_request(conversation_id, request_id)
+            existing = self._find_authorization_message(conversation_id, request_id, resolved_only=True)
             if existing is not None:
                 return {"authorization": authorization, "message": self._serialize_message(existing)}
             message = self._append_assistant_message(
@@ -321,6 +336,13 @@ class AIWorkspaceService:
                 status="denied",
                 metadata={"authorization": authorization},
             )
+            attached = self._authorization_service.attach_result_message(
+                request_id,
+                actor_id=str(actor_id),
+                result_message_id=message.id,
+            )
+            if attached is not None:
+                authorization = attached
             return {"authorization": authorization, "message": self._serialize_message(message)}
         if authorization.get("status") != "processing":
             message_id = authorization.get("result_message_id")
@@ -346,14 +368,34 @@ class AIWorkspaceService:
         if not isinstance(pending_calls, list) or not pending_calls:
             pending_calls = [pending_call]
         if not isinstance(messages, list) or not all(isinstance(call, dict) for call in pending_calls):
-            await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed")
+            await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", claim_token=request.claim_token)
             raise ValidationException("AI authorization continuation is invalid")
-        allowed_names = frozenset(continuation.get("allowed_tool_names") or _DEFAULT_TOOL_NAMES)
+        allowed_names = frozenset(set(continuation.get("allowed_tool_names") or set()) & set(allowed_tool_names))
+        if not allowed_names:
+            finalized = await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", claim_token=request.claim_token)
+            message = self._append_assistant_message(conversation_id, str(continuation.get("mode") or "chat"), "当前账户已没有执行此书源工具的权限，授权续跑已停止。", [], status="failed", metadata={"authorization": finalized})
+            return {"authorization": finalized, "message": self._serialize_message(message)}
+        if request.decision in {"conversation", "remember"}:
+            active = self._authorization_service.active_tool_names(str(actor_id), str(conversation_id), set(rbac_permissions))
+            if not (set(request.requested_tools) & active):
+                finalized = await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", claim_token=request.claim_token)
+                message = self._append_assistant_message(conversation_id, str(continuation.get("mode") or "chat"), "授权已撤销或过期，未执行正文读取。", [], status="failed", metadata={"authorization": finalized})
+                return {"authorization": finalized, "message": self._serialize_message(message)}
+
+        async def renew_claim() -> None:
+            nonlocal request
+            request = self._authorization_service.renew_claim_record(
+                request_id,
+                actor_id=str(actor_id),
+                claim_token=request.claim_token,
+            )
+
         authorized_content_tools = set(_CONTENT_RETRIEVAL_TOOL_NAMES)
         executed_calls = list(executed_calls) if isinstance(executed_calls, list) else []
         messages = list(messages)
         last_executed: dict | None = None
         for pending_call in pending_calls:
+            await renew_claim()
             executed = await self._execute_model_tool_call(str(actor_id), pending_call, allowed_names)
             executed_calls.append(executed)
             last_executed = executed
@@ -367,7 +409,7 @@ class AIWorkspaceService:
         if last_executed is not None and self._is_rejected_tool_result(last_executed.get("result")):
             content = "书源读取工具未能取得证据，已停止重复尝试。请先启用并发布健康书源后重试。"
             assistant = self._append_assistant_message(conversation_id, continuation.get("mode", "chat"), content, executed_calls)
-            finalized = await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", result_message_id=assistant.id)
+            finalized = await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", claim_token=request.claim_token, result_message_id=assistant.id)
             return {"authorization": finalized, "message": self._serialize_message(assistant)}
         loop_result = await self._run_model_tool_loop(
             actor_id=str(actor_id),
@@ -379,10 +421,11 @@ class AIWorkspaceService:
             require_content_evidence=bool(continuation.get("require_content_evidence")),
             authorized_content_tools=authorized_content_tools,
             executed_calls=executed_calls,
+            renew_claim=renew_claim,
         )
         if loop_result.authorization_request is not None:
             assistant = self._append_authorization_message(conversation_id, continuation.get("mode", "chat"), loop_result.tool_calls, loop_result.authorization_request)
-            await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", result_message_id=assistant.id)
+            await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", claim_token=request.claim_token, result_message_id=assistant.id)
             return {"authorization": loop_result.authorization_request, "message": self._serialize_message(assistant)}
         assistant = self._append_assistant_message(
             conversation_id,
@@ -394,6 +437,7 @@ class AIWorkspaceService:
             request_id,
             actor_id=str(actor_id),
             status="consumed",
+            claim_token=request.claim_token,
             result_message_id=assistant.id,
         )
         return {"authorization": finalized, "message": self._serialize_message(assistant)}
@@ -425,6 +469,7 @@ class AIWorkspaceService:
         require_content_evidence: bool = False,
         authorized_content_tools: set[str] | frozenset[str] | None = None,
         executed_calls: list[dict] | None = None,
+        renew_claim: Callable[[], Awaitable[None]] | None = None,
     ) -> _ToolLoopResult:
         if require_content_evidence and not (_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names):
             return _ToolLoopResult("未获授权读取书籍原文，不能基于模型记忆生成人物、剧情或世界观结论。", [])
@@ -435,6 +480,8 @@ class AIWorkspaceService:
             if isinstance(call, dict):
                 seen_tool_calls.add(json.dumps({"name": call.get("name"), "arguments": call.get("arguments")}, ensure_ascii=False, sort_keys=True, default=str))
         for _turn in range(_MAX_MODEL_TOOL_TURNS):
+            if renew_claim is not None:
+                await renew_claim()
             has_chapter_evidence = self._has_chapter_evidence(executed_calls)
             model_tool_names = allowed_tool_names
             if require_content_evidence and not has_chapter_evidence:
@@ -484,6 +531,8 @@ class AIWorkspaceService:
                         requested_calls=[{"name": name, "arguments": arguments}],
                     )
                     return _ToolLoopResult("需要你的授权才能读取书源原文。", executed_calls, authorization_request)
+                if renew_claim is not None:
+                    await renew_claim()
                 executed = await self._execute_model_tool_call(actor_id, model_call, allowed_tool_names)
                 executed_calls.append(executed)
                 if self._is_rejected_tool_result(executed.get("result")):
@@ -642,13 +691,50 @@ class AIWorkspaceService:
             )
         )
 
-    def _authorization_message_for_request(self, conversation_id: str, request_id: str) -> AIConversationMessage | None:
+    def _find_authorization_message(self, conversation_id: str, request_id: str, *, resolved_only: bool = False) -> AIConversationMessage | None:
         for message in self._conversations.list_messages(conversation_id):
             metadata = message.metadata if isinstance(message.metadata, dict) else {}
-            request = metadata.get("authorization")
+            request = metadata.get("authorization_request") or metadata.get("authorization")
             if isinstance(request, dict) and request.get("id") == request_id:
+                if resolved_only and "authorization" not in metadata:
+                    continue
                 return message
         return None
+
+    def _serialize_conversation_message(
+        self,
+        item: AIConversationMessage,
+        actor_id: str,
+        conversation_id: str,
+    ) -> dict:
+        payload = self._serialize_message(item)
+        metadata = item.metadata if isinstance(item.metadata, dict) else {}
+        authorization = metadata.get("authorization_request") or metadata.get("authorization")
+        request_id = authorization.get("id") if isinstance(authorization, dict) else None
+        if not request_id or self._authorization_service is None:
+            return payload
+        request = self._authorization_service.get_request_record(
+            str(request_id),
+            actor_id=str(actor_id),
+            conversation_id=str(conversation_id),
+        )
+        if request is None:
+            return payload
+        serialized = self._authorization_service.serialize_request(request)
+        payload["authorization_request"] = serialized
+        safe_metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        if "authorization_request" in safe_metadata:
+            safe_metadata["authorization_request"] = serialized
+        if "authorization" in safe_metadata:
+            safe_metadata["authorization"] = serialized
+        payload["metadata"] = safe_metadata
+        if request.status == "denied":
+            payload["status"] = "denied"
+        elif request.status == "consumed":
+            payload["status"] = "succeeded"
+        elif request.status in {"failed", "expired"}:
+            payload["status"] = "failed"
+        return payload
 
     async def _execute_tools(
         self,
@@ -941,6 +1027,12 @@ class AIWorkspaceService:
 
     @staticmethod
     def _serialize_message(item: AIConversationMessage) -> dict:
+        metadata = item.metadata if isinstance(item.metadata, dict) else {}
+        safe_metadata = {
+            key: _sanitize(metadata[key])
+            for key in ("authorization_request", "authorization")
+            if isinstance(metadata.get(key), dict)
+        }
         payload = {
             "id": item.id,
             "role": item.role,
@@ -948,11 +1040,11 @@ class AIWorkspaceService:
             "content": item.content,
             "status": item.status,
             "tool_calls": item.tool_calls,
-            "metadata": item.metadata,
+            "metadata": safe_metadata,
             "created_at": item.created_at.isoformat(),
         }
-        if isinstance(item.metadata, dict) and item.metadata.get("authorization_request") is not None:
-            payload["authorization_request"] = item.metadata["authorization_request"]
+        if safe_metadata.get("authorization_request") is not None:
+            payload["authorization_request"] = safe_metadata["authorization_request"]
         return payload
 
 

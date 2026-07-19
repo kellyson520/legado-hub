@@ -182,3 +182,113 @@ test('正文读取前显示授权卡片并在本次允许后追加恢复结果',
   })
   expect(await screen.findByText('已基于书源原文继续分析。')).toBeInTheDocument()
 })
+
+test('工作台展示并允许撤销记住的授权', async () => {
+  aiMocks.listAIAuthorizationGrants.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{
+      id: 'grant-remembered',
+      scope: 'remembered',
+      conversation_id: null,
+      tools: ['source.search'],
+      expires_at: '2099-01-01T00:00:00Z',
+      revoked_at: null,
+    }],
+    meta: {},
+    trace_id: null,
+  })
+  aiMocks.revokeAIAuthorizationGrant.mockResolvedValueOnce({ success: true, code: 'OK', message: 'ok', data: {}, meta: {}, trace_id: null })
+
+  render(<AIWorkspacePage />)
+
+  expect(await screen.findByText('已记住正文读取授权')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '撤销授权' }))
+
+  await waitFor(() => {
+    expect(aiMocks.revokeAIAuthorizationGrant).toHaveBeenCalledWith('grant-remembered')
+  })
+})
+
+test('授权决策返回过期状态时不会显示批准文案', async () => {
+  aiMocks.getAIConversation.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      id: 'conversation-1',
+      title: '书源助手',
+      created_at: '2026-07-13T00:00:00Z',
+      messages: [{
+        id: 'authorization-message-expired',
+        role: 'assistant',
+        mode: 'character',
+        content: '需要你的授权才能读取书源原文。',
+        status: 'authorization_required',
+        created_at: '2026-07-13T00:00:01Z',
+        tool_calls: [],
+        authorization_request: {
+          id: 'request-expired',
+          tools: ['source.search'],
+          purpose: '读取正文',
+          status: 'pending',
+          choices: ['once', 'conversation', 'remember', 'deny'],
+        },
+      }],
+    },
+    meta: {},
+    trace_id: null,
+  })
+  aiMocks.decideAIConversationAuthorization.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: { authorization: { id: 'request-expired', status: 'expired' } },
+    meta: {},
+    trace_id: null,
+  })
+
+  render(<AIWorkspacePage />)
+  fireEvent.click(await screen.findByRole('button', { name: '本次允许' }))
+
+  expect(await screen.findByText('正文读取授权已过期，请重新发起读取。')).toBeInTheDocument()
+  expect(screen.queryByText('正文读取授权已批准。')).not.toBeInTheDocument()
+})
+
+test('刷新时会把缺少消息记录的待授权请求补成授权卡片', async () => {
+  aiMocks.getAIConversation.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      id: 'conversation-1',
+      title: '书源助手',
+      created_at: '2026-07-13T00:00:00Z',
+      messages: [],
+      authorization_requests: [],
+    },
+    meta: {},
+    trace_id: null,
+  })
+  aiMocks.listAIConversationAuthorizations.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{
+      id: 'request-hydrated',
+      conversation_id: 'conversation-1',
+      tools: ['chapter.fetch'],
+      purpose: '读取正文后再回答',
+      status: 'pending',
+      choices: ['once', 'conversation', 'remember', 'deny'],
+    }],
+    meta: {},
+    trace_id: null,
+  })
+
+  render(<AIWorkspacePage />)
+
+  expect(await screen.findByText('读取正文后再回答')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '本次允许' })).toBeInTheDocument()
+})

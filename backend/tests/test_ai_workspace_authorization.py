@@ -212,6 +212,8 @@ async def test_once_decision_resumes_saved_call_exactly_once(tmp_path, monkeypat
         actor_id="7",
         conversation_id=conversation["id"],
         decision="once",
+        rbac_permissions={"book_sources.read"},
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
     )
 
     assert resumed["message"]["content"] == "已基于书源搜索结果继续回答。"
@@ -221,6 +223,8 @@ async def test_once_decision_resumes_saved_call_exactly_once(tmp_path, monkeypat
         actor_id="7",
         conversation_id=conversation["id"],
         decision="once",
+        rbac_permissions={"book_sources.read"},
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
     )
     assert repeated["message"]["id"] == resumed["message"]["id"]
     assert len(executor.calls) == 1
@@ -260,10 +264,64 @@ async def test_deny_decision_never_invokes_source_executor(tmp_path, monkeypatch
         actor_id="7",
         conversation_id=conversation["id"],
         decision="deny",
+        rbac_permissions={"book_sources.read"},
+        allowed_tool_names={"source.search"},
     )
 
     assert denied["message"]["status"] == "denied"
+    assert denied["authorization"]["result_message_id"] == denied["message"]["id"]
     assert executor.calls == []
+
+
+@pytest.mark.asyncio
+async def test_reloading_conversation_hydrates_resolved_authorization_card(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-authorization-card.sqlite3"))
+
+    from app.application.services.ai_authorization_service import AIConversationAuthorizationService
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_authorization_repo_impl import SQLiteAIAuthorizationRepository
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    audit = Audit()
+    authorization = AIConversationAuthorizationService(
+        repo=SQLiteAIAuthorizationRepository(),
+        audit=audit,
+    )
+    service = AIWorkspaceService(
+        Platform(),
+        SQLiteAIConversationRepository(),
+        Source(),
+        Tasks(),
+        audit,
+        novel_tool_executor=Executor(),
+        authorization_service=authorization,
+    )
+    conversation = await service.create_conversation("7", "授权卡")
+    pending = await service.send_message(
+        conversation["id"],
+        "7",
+        "character",
+        "分析主角",
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
+    )
+    request_id = pending["authorization_request"]["id"]
+
+    await service.decide_authorization(
+        request_id,
+        actor_id="7",
+        conversation_id=conversation["id"],
+        decision="deny",
+        rbac_permissions={"book_sources.read"},
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
+    )
+
+    reloaded = service.get_conversation(conversation["id"], "7")
+    original_card = next(message for message in reloaded["messages"] if message["id"] == pending["id"])
+
+    assert original_card["status"] != "authorization_required"
+    assert original_card["authorization_request"]["status"] == "denied"
 
 
 @pytest.mark.asyncio

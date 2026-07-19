@@ -1,4 +1,5 @@
 import json
+import inspect
 from datetime import datetime, timedelta
 from uuid import uuid4
 
@@ -8,7 +9,7 @@ from app.domain.entities.ai_authorization import (
     AIConversationAuthorizationRequest,
 )
 from app.domain.entities.auth import AuditEvent
-from app.core.exceptions import NotFoundException, ValidationException
+from app.core.exceptions import ConflictException, NotFoundException, ValidationException
 
 
 CONTENT_TOOLS = frozenset({"source.search", "toc.get", "chapter.fetch"})
@@ -45,6 +46,9 @@ class AIConversationAuthorizationService:
         tools = list(dict.fromkeys(str(name) for name in requested_tools))
         if not tools or any(name not in CONTENT_TOOLS for name in tools):
             raise ValueError("Only content retrieval tools can require authorization")
+        active = self._repo.get_active_request(str(actor_id), str(conversation_id)) if hasattr(self._repo, "get_active_request") else None
+        if active is not None:
+            return self.serialize_request(active, claimed=False)
         safe_calls = sanitize_for_boundary(requested_calls)
         safe_continuation = sanitize_for_boundary(continuation)
         encoded = json.dumps(safe_continuation, ensure_ascii=False, separators=(",", ":"))
@@ -65,7 +69,8 @@ class AIConversationAuthorizationService:
             updated_at=now,
         )
         saved = self._repo.create_request(request)
-        await self._audit_event(actor_id, "ai.authorization.requested", saved.id)
+        if saved.id == request.id:
+            await self._audit_event(actor_id, "ai.authorization.requested", saved.id)
         return self.serialize_request(saved)
 
     async def decide(self, request_id: str, *, actor_id: str, conversation_id: str, decision: str) -> dict:
@@ -74,7 +79,17 @@ class AIConversationAuthorizationService:
         request = self._repo.get_request(request_id, str(actor_id), str(conversation_id))
         if request is None:
             raise NotFoundException("AI authorization request not found")
-        if request.status == "pending" and request.expires_at and request.expires_at <= datetime.utcnow():
+        now = datetime.utcnow()
+        if request.status == "processing" and (
+            request.expires_at is not None and request.expires_at <= now
+            or request.claim_expires_at is None
+            or request.claim_expires_at <= now
+        ):
+            expired = self._repo.expire_request(request_id, str(actor_id), str(conversation_id))
+            if expired is not None:
+                await self._audit_event(actor_id, "ai.authorization.expired", request_id)
+            request = expired or request
+        if request.status == "pending" and request.expires_at and request.expires_at <= now:
             expired = self._repo.expire_request(request_id, str(actor_id), str(conversation_id))
             if expired is not None:
                 await self._audit_event(actor_id, "ai.authorization.expired", request_id)
@@ -87,7 +102,12 @@ class AIConversationAuthorizationService:
             current = self._repo.get_request(request_id, str(actor_id), str(conversation_id))
             return self.serialize_request(current, claimed=False) if current is not None else {"id": request_id, "status": "expired", "claimed": False}
         if decision == "deny":
-            denied = self._repo.finalize_request(request_id, str(actor_id), "denied") or claimed
+            denied = self._finalize_request(
+                request_id,
+                str(actor_id),
+                "denied",
+                claim_token=claimed.claim_token,
+            ) or claimed
             await self._audit_event(actor_id, "ai.authorization.denied", request_id)
             return self.serialize_request(denied, claimed=True)
 
@@ -120,23 +140,79 @@ class AIConversationAuthorizationService:
         return self.serialize_request(claimed, claimed=True)
 
     def get_request_record(self, request_id: str, *, actor_id: str, conversation_id: str) -> AIConversationAuthorizationRequest | None:
-        return self._repo.get_request(request_id, str(actor_id), str(conversation_id))
+        request = self._repo.get_request(request_id, str(actor_id), str(conversation_id))
+        if request is None:
+            return None
+        now = datetime.utcnow()
+        lease_expired = request.status == "processing" and (
+            request.expires_at is not None and request.expires_at <= now
+            or
+            request.claim_expires_at is None or request.claim_expires_at <= now
+        )
+        request_expired = request.status == "pending" and request.expires_at is not None and request.expires_at <= now
+        if lease_expired or request_expired:
+            return self._repo.expire_request(request.id, str(actor_id), str(conversation_id)) or request
+        return request
 
-    async def finalize(self, request_id: str, *, actor_id: str, status: str, result_message_id: str | None = None) -> dict:
+    def renew_claim_record(
+        self,
+        request_id: str,
+        *,
+        actor_id: str,
+        claim_token: str | None,
+    ) -> AIConversationAuthorizationRequest:
+        if not claim_token:
+            raise ConflictException("AI authorization claim token is missing")
+        renew = getattr(self._repo, "renew_claim", None)
+        if not callable(renew):
+            raise ConflictException("AI authorization lease renewal is unavailable")
+        request = renew(request_id, str(actor_id), claim_token)
+        if request is None or request.status != "processing":
+            raise ConflictException("AI authorization claim is no longer owned by this request")
+        return request
+
+    def attach_result_message(self, request_id: str, *, actor_id: str, result_message_id: str) -> dict | None:
+        setter = getattr(self._repo, "set_result_message_id", None)
+        if not callable(setter):
+            return None
+        request = setter(request_id, str(actor_id), str(result_message_id))
+        return self.serialize_request(request) if request is not None else None
+
+    async def finalize(self, request_id: str, *, actor_id: str, status: str, claim_token: str | None = None, result_message_id: str | None = None) -> dict:
         if status not in {"consumed", "failed"}:
             raise ValidationException("Invalid authorization final status")
-        request = self._repo.finalize_request(
+        if not claim_token:
+            raise ConflictException("AI authorization claim token is missing")
+        request = self._finalize_request(
             request_id,
             str(actor_id),
             status,
+            claim_token=claim_token,
             result_message_id=result_message_id,
         )
         if request is None:
-            request = self._repo.get_request(request_id, str(actor_id))
-        if request is None:
-            raise NotFoundException("AI authorization request not found")
+            raise ConflictException("AI authorization claim is no longer owned by this request")
         await self._audit_event(actor_id, f"ai.authorization.{status}", request_id)
         return self.serialize_request(request)
+
+    def _finalize_request(
+        self,
+        request_id: str,
+        actor_id: str,
+        status: str,
+        *,
+        claim_token: str | None = None,
+        result_message_id: str | None = None,
+    ) -> AIConversationAuthorizationRequest | None:
+        method = self._repo.finalize_request
+        kwargs = {"result_message_id": result_message_id}
+        try:
+            parameters = inspect.signature(method).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        if "claim_token" in parameters:
+            kwargs["claim_token"] = claim_token
+        return method(request_id, actor_id, status, **kwargs)
 
     def list_pending(self, actor_id: str, conversation_id: str) -> list[dict]:
         now = datetime.utcnow()

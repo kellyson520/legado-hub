@@ -530,6 +530,8 @@ class AIConversationAuthorizationRequestModel(Base):
     resolved_at = Column(DateTime, nullable=True)
     resolved_by = Column(String, nullable=True)
     result_message_id = Column(String, nullable=True)
+    claim_token = Column(String, nullable=True, index=True)
+    claim_expires_at = Column(DateTime, nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 

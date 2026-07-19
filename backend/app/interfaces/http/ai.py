@@ -1,3 +1,4 @@
+import inspect
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -137,12 +138,22 @@ async def decide_authorization(
     payload: AuthorizationDecisionRequest,
     identity=Depends(require_permission(Permission.AI_RUN)),
 ):
-    data = await build_ai_workspace_service().decide_authorization(
+    workspace = build_ai_workspace_service()
+    decision_kwargs = {
+        "actor_id": str(identity.user_id),
+        "conversation_id": conversation_id,
+        "decision": payload.decision,
+        "rbac_permissions": set(identity.permissions),
+    }
+    try:
+        supports_tool_names = "allowed_tool_names" in inspect.signature(workspace.decide_authorization).parameters
+    except (TypeError, ValueError):
+        supports_tool_names = True
+    if supports_tool_names:
+        decision_kwargs["allowed_tool_names"] = _workspace_tool_names(identity)
+    data = await workspace.decide_authorization(
         request_id,
-        actor_id=str(identity.user_id),
-        conversation_id=conversation_id,
-        decision=payload.decision,
-        rbac_permissions=set(identity.permissions),
+        **decision_kwargs,
     )
     return ok(data=data, message="ai authorization decision completed", meta={})
 
