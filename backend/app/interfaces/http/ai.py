@@ -142,6 +142,7 @@ async def decide_authorization(
         actor_id=str(identity.user_id),
         conversation_id=conversation_id,
         decision=payload.decision,
+        rbac_permissions=set(identity.permissions),
     )
     return ok(data=data, message="ai authorization decision completed", meta={})
 

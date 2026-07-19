@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from app.core.pagination import paginated_result
 from app.core.redaction import sanitize_error, sanitize_for_boundary
-from app.core.exceptions import NotFoundException, ValidationException
+from app.core.exceptions import AuthorizationException, NotFoundException, ValidationException
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 from app.domain.entities.auth import AuditEvent
 
@@ -284,9 +284,19 @@ class AIWorkspaceService:
         await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
         return self._serialize_message(assistant)
 
-    async def decide_authorization(self, request_id: str, *, actor_id: str, conversation_id: str, decision: str) -> dict:
+    async def decide_authorization(
+        self,
+        request_id: str,
+        *,
+        actor_id: str,
+        conversation_id: str,
+        decision: str,
+        rbac_permissions: set[str] | None = None,
+    ) -> dict:
         if self._authorization_service is None:
             raise ValidationException("AI conversation authorization is unavailable")
+        if rbac_permissions is not None and "book_sources.read" not in rbac_permissions:
+            raise AuthorizationException("Permission denied: book_sources.read")
         original_request = self._authorization_service.get_request_record(
             request_id,
             actor_id=str(actor_id),
@@ -329,22 +339,30 @@ class AIWorkspaceService:
         continuation = request.continuation
         messages = continuation.get("messages") if isinstance(continuation, dict) else []
         pending_call = continuation.get("pending_call") if isinstance(continuation, dict) else None
+        pending_calls = continuation.get("pending_calls") if isinstance(continuation, dict) else None
         executed_calls = continuation.get("executed_calls") if isinstance(continuation, dict) else []
-        if not isinstance(messages, list) or not isinstance(pending_call, dict):
+        if not isinstance(pending_calls, list) or not pending_calls:
+            pending_calls = [pending_call]
+        if not isinstance(messages, list) or not all(isinstance(call, dict) for call in pending_calls):
             await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed")
             raise ValidationException("AI authorization continuation is invalid")
         allowed_names = frozenset(continuation.get("allowed_tool_names") or _DEFAULT_TOOL_NAMES)
         authorized_content_tools = set(_CONTENT_RETRIEVAL_TOOL_NAMES)
-        executed = await self._execute_model_tool_call(str(actor_id), pending_call, allowed_names)
         executed_calls = list(executed_calls) if isinstance(executed_calls, list) else []
-        executed_calls.append(executed)
         messages = list(messages)
-        messages.append({
-            "role": "tool",
-            "tool_call_id": str(pending_call.get("id") or ""),
-            "content": json.dumps(executed["result"], ensure_ascii=False, separators=(",", ":")),
-        })
-        if self._is_rejected_tool_result(executed.get("result")):
+        last_executed: dict | None = None
+        for pending_call in pending_calls:
+            executed = await self._execute_model_tool_call(str(actor_id), pending_call, allowed_names)
+            executed_calls.append(executed)
+            last_executed = executed
+            messages.append({
+                "role": "tool",
+                "tool_call_id": str(pending_call.get("id") or ""),
+                "content": json.dumps(executed["result"], ensure_ascii=False, separators=(",", ":")),
+            })
+            if self._is_rejected_tool_result(executed.get("result")):
+                break
+        if last_executed is not None and self._is_rejected_tool_result(last_executed.get("result")):
             content = "书源读取工具未能取得证据，已停止重复尝试。请先启用并发布健康书源后重试。"
             assistant = self._append_assistant_message(conversation_id, continuation.get("mode", "chat"), content, executed_calls)
             finalized = await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", result_message_id=assistant.id)
@@ -460,8 +478,8 @@ class AIWorkspaceService:
                         pending_call=model_call,
                         allowed_tool_names=allowed_tool_names,
                         require_content_evidence=require_content_evidence,
-                        requested_tool=name,
-                        requested_arguments=arguments,
+                        requested_tools=[name],
+                        requested_calls=[{"name": name, "arguments": arguments}],
                     )
                     return _ToolLoopResult("需要你的授权才能读取书源原文。", executed_calls, authorization_request)
                 executed = await self._execute_model_tool_call(actor_id, model_call, allowed_tool_names)
@@ -499,7 +517,7 @@ class AIWorkspaceService:
         if not tool_requests:
             return [], None
         safe_requests: list[dict] = []
-        pending: _ToolRequest | None = None
+        pending: list[_ToolRequest] = []
         for raw_request in tool_requests:
             request = _ToolRequest.parse(raw_request)
             if request.name not in _ALL_TOOL_NAMES:
@@ -507,25 +525,27 @@ class AIWorkspaceService:
             if request.name not in allowed_tool_names:
                 raise ValidationException("AI tool is not granted for this request")
             if (
-                pending is None
-                and self._authorization_service is not None
+                self._authorization_service is not None
                 and request.name in _CONTENT_RETRIEVAL_TOOL_NAMES
                 and request.name not in authorized_content_tools
             ):
-                pending = request
+                pending.append(request)
             else:
                 safe_requests.append(raw_request)
         executed = await self._execute_tools(actor_id, safe_requests, allowed_tool_names)
-        if pending is None:
+        if not pending:
             return executed, None
-        call = {
-            "id": uuid4().hex,
-            "type": "function",
-            "function": {
-                "name": pending.name,
-                "arguments": json.dumps(pending.arguments, ensure_ascii=False),
-            },
-        }
+        pending_calls = [
+            {
+                "id": uuid4().hex,
+                "type": "function",
+                "function": {
+                    "name": item.name,
+                    "arguments": json.dumps(item.arguments, ensure_ascii=False),
+                },
+            }
+            for item in pending
+        ]
         continuation_messages = list(messages)
         if executed:
             continuation_messages.append({
@@ -539,11 +559,12 @@ class AIWorkspaceService:
             mode=mode,
             messages=continuation_messages,
             executed_calls=executed,
-            pending_call=call,
+            pending_call=pending_calls[0],
+            pending_calls=pending_calls,
             allowed_tool_names=allowed_tool_names,
             require_content_evidence=require_content_evidence,
-            requested_tool=pending.name,
-            requested_arguments=pending.arguments,
+            requested_tools=[item.name for item in pending],
+            requested_calls=[{"name": item.name, "arguments": item.arguments} for item in pending],
         )
         return executed, authorization
 
@@ -557,15 +578,17 @@ class AIWorkspaceService:
         messages: list[dict],
         executed_calls: list[dict],
         pending_call: dict,
+        pending_calls: list[dict] | None = None,
         allowed_tool_names: frozenset[str],
         require_content_evidence: bool,
-        requested_tool: str,
-        requested_arguments: dict,
+        requested_tools: list[str] | None = None,
+        requested_calls: list[dict] | None = None,
     ) -> dict:
         continuation = {
             "messages": messages,
             "executed_calls": executed_calls,
             "pending_call": pending_call,
+            "pending_calls": pending_calls or [pending_call],
             "mode": mode,
             "allowed_tool_names": sorted(allowed_tool_names),
             "require_content_evidence": require_content_evidence,
@@ -575,8 +598,8 @@ class AIWorkspaceService:
             conversation_id=conversation_id,
             message_id=message_id,
             mode=mode,
-            requested_tools=[requested_tool],
-            requested_calls=[{"name": requested_tool, "arguments": requested_arguments}],
+            requested_tools=requested_tools or [str(pending_call.get("function", {}).get("name") or "")],
+            requested_calls=requested_calls or [{"name": str(pending_call.get("function", {}).get("name") or ""), "arguments": {}}],
             continuation=continuation,
         )
 

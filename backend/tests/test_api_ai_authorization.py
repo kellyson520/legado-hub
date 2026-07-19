@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 
 class Workspace:
-    async def decide_authorization(self, request_id, *, actor_id, conversation_id, decision):
+    async def decide_authorization(self, request_id, *, actor_id, conversation_id, decision, rbac_permissions=None):
         return {
             "authorization": {
                 "id": request_id,
