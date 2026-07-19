@@ -15,7 +15,10 @@ import {
   type QuotaPolicyRow,
   type SourceBuildAgentSettings,
 } from '@/api/modules/system'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { FormActions } from '@/components/form/FormActions'
+import { FormField } from '@/components/form/FormField'
 import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Button } from '@/components/ui/button'
@@ -39,6 +42,7 @@ function isSourceBuildAgentProviderConfigured(settings: SourceBuildAgentSettings
 }
 
 export function ProviderSettingsContent() {
+  const { t } = useLanguage()
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [quotas, setQuotas] = useState<QuotaPolicyRow[]>([])
   const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null)
@@ -212,21 +216,15 @@ export function ProviderSettingsContent() {
             translation / novel 分组。
           </p>
           <form className="mt-5 space-y-4" onSubmit={handleSaveLLM}>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground" htmlFor="llm-provider-name">
-                Provider name
-              </label>
+            <FormField label={t('Provider name')} htmlFor="llm-provider-name">
               <Input
                 id="llm-provider-name"
                 value={providerName}
                 onChange={(event) => setProviderName(event.target.value)}
                 required
               />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground" htmlFor="llm-base-url">
-                Base URL
-              </label>
+            </FormField>
+            <FormField label={t('Base URL')} htmlFor="llm-base-url">
               <Input
                 id="llm-base-url"
                 placeholder="https://api.openai.com/v1"
@@ -234,11 +232,8 @@ export function ProviderSettingsContent() {
                 onChange={(event) => setBaseUrl(event.target.value)}
                 required
               />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground" htmlFor="llm-api-key">
-                API Key
-              </label>
+            </FormField>
+            <FormField label={t('API Key')} htmlFor="llm-api-key" help="API keys are write-only and remain masked after saving.">
               <Input
                 id="llm-api-key"
                 type="password"
@@ -246,19 +241,16 @@ export function ProviderSettingsContent() {
                 value={apiKey}
                 onChange={(event) => setApiKey(event.target.value)}
               />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground" htmlFor="llm-model">
-                Model
-              </label>
+            </FormField>
+            <FormField label={t('Model')} htmlFor="llm-model">
               <Input
                 id="llm-model"
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
                 required
               />
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
+            </FormField>
+            <FormActions className="justify-start">
               <Button type="submit" disabled={saving}>
                 Save LLM settings
               </Button>
@@ -268,7 +260,7 @@ export function ProviderSettingsContent() {
               {message ? (
                 <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{message}</span>
               ) : null}
-            </div>
+            </FormActions>
           </form>
 
           <div className="mt-5 border-t border-border pt-5">
@@ -361,10 +353,7 @@ export function ProviderSettingsContent() {
                   {interactiveBrowserSettings?.automaticEnabled ? 'Enabled' : 'Disabled'}
                 </Button>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground" htmlFor="interactive-browser-max-sessions">
-                  Maximum sessions
-                </label>
+              <FormField label={t('Maximum sessions')} htmlFor="interactive-browser-max-sessions">
                 <Input
                   id="interactive-browser-max-sessions"
                   type="number"
@@ -379,11 +368,8 @@ export function ProviderSettingsContent() {
                     )
                   }
                 />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground" htmlFor="interactive-browser-session-timeout">
-                  Session timeout (seconds)
-                </label>
+              </FormField>
+              <FormField label={t('Session timeout (seconds)')} htmlFor="interactive-browser-session-timeout">
                 <Input
                   id="interactive-browser-session-timeout"
                   type="number"
@@ -398,10 +384,10 @@ export function ProviderSettingsContent() {
                     )
                   }
                 />
-              </div>
+              </FormField>
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center gap-3">
+            <FormActions className="mt-4 justify-start">
               <Button
                 type="button"
                 disabled={savingInteractiveBrowser || !interactiveBrowserSettingsEditable}
@@ -423,7 +409,7 @@ export function ProviderSettingsContent() {
                   Retry interactive browser settings
                 </Button>
               ) : null}
-            </div>
+            </FormActions>
           </div>
         </section>
 

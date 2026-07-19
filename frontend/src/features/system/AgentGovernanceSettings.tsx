@@ -1,5 +1,8 @@
 import { Button } from '@/components/ui/button'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { FormActions } from '@/components/form/FormActions'
+import { FormField } from '@/components/form/FormField'
 import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Input } from '@/components/ui/input'
 import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
@@ -22,6 +25,7 @@ const DEFAULTS: GovernanceSettings = {
 }
 
 export function AgentGovernanceSettings() {
+  const { t } = useLanguage()
   const section = useAgentSettingsSection('governance', DEFAULTS)
 
   return (
@@ -35,27 +39,24 @@ export function AgentGovernanceSettings() {
         </p>
       </div>
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        <label className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-4 text-sm text-foreground">
-          <input type="checkbox" checked={section.value.automatic_publish_explicit} onChange={(event) => section.patch({ automatic_publish_explicit: event.target.checked })} />
-          <span><strong className="block">Publish explicit facts automatically</strong><span className="mt-1 block text-muted-foreground">Only after source evidence verifies the claim.</span></span>
-        </label>
-        <label className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-4 text-sm text-foreground">
-          <input type="checkbox" checked={section.value.automatic_publish_inferred} onChange={(event) => section.patch({ automatic_publish_inferred: event.target.checked })} />
-          <span><strong className="block">Publish inferred facts automatically</strong><span className="mt-1 block text-muted-foreground">Keep this off for a review-first workflow.</span></span>
-        </label>
-        <label className="space-y-2 rounded-md border border-border bg-muted/30 p-4 text-sm font-medium text-foreground" htmlFor="agent-minimum-evidence">
-          <span>Minimum evidence spans for inferred facts</span>
+        <FormField label={t('Publish explicit facts automatically')} htmlFor="agent-publish-explicit" help={t('Only after source evidence verifies the claim.')} className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-4 text-sm text-foreground">
+          <input id="agent-publish-explicit" type="checkbox" checked={section.value.automatic_publish_explicit} onChange={(event) => section.patch({ automatic_publish_explicit: event.target.checked })} />
+        </FormField>
+        <FormField label={t('Publish inferred facts automatically')} htmlFor="agent-publish-inferred" help={t('Keep this off for a review-first workflow.')} className="flex items-start gap-3 rounded-md border border-border bg-muted/30 p-4 text-sm text-foreground">
+          <input id="agent-publish-inferred" type="checkbox" checked={section.value.automatic_publish_inferred} onChange={(event) => section.patch({ automatic_publish_inferred: event.target.checked })} />
+        </FormField>
+        <FormField label={t('Minimum evidence spans for inferred facts')} htmlFor="agent-minimum-evidence" className="rounded-md border border-border bg-muted/30 p-4">
           <Input id="agent-minimum-evidence" type="number" min={2} max={8} value={section.value.minimum_inferred_evidence} onChange={(event) => section.patch({ minimum_inferred_evidence: Number(event.target.value) })} />
-        </label>
+        </FormField>
         <div className="space-y-3 rounded-md border border-border bg-muted/30 p-4 text-sm text-foreground">
-          <label className="flex gap-3"><input type="checkbox" checked={section.value.require_human_review_for_identity} onChange={(event) => section.patch({ require_human_review_for_identity: event.target.checked })} /><span>Require review for identity resolution</span></label>
-          <label className="flex gap-3"><input type="checkbox" checked={section.value.require_human_review_for_conflicts} onChange={(event) => section.patch({ require_human_review_for_conflicts: event.target.checked })} /><span>Require review when sources conflict</span></label>
+          <FormField label={t('Require review for identity resolution')} htmlFor="agent-review-identity"><input id="agent-review-identity" type="checkbox" checked={section.value.require_human_review_for_identity} onChange={(event) => section.patch({ require_human_review_for_identity: event.target.checked })} /></FormField>
+          <FormField label={t('Require review when sources conflict')} htmlFor="agent-review-conflicts"><input id="agent-review-conflicts" type="checkbox" checked={section.value.require_human_review_for_conflicts} onChange={(event) => section.patch({ require_human_review_for_conflicts: event.target.checked })} /></FormField>
         </div>
       </div>
-      <div className="mt-5 flex flex-wrap items-center gap-3">
+      <FormActions className="mt-5 justify-start">
         <Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save governance settings'}</Button>
         <SettingsEffectiveStatus updatedAt={section.updatedAt} />
-      </div>
+      </FormActions>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
     </LocalizedContent>

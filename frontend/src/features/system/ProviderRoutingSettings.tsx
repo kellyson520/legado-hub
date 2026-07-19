@@ -13,7 +13,10 @@ import {
   type ProviderRouteEntry,
   type ProviderRow,
 } from '@/api/modules/system'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { FormActions } from '@/components/form/FormActions'
+import { FormField } from '@/components/form/FormField'
 import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -94,6 +97,7 @@ function getRequestErrorMessage(error: unknown, fallback: string) {
 }
 
 export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: () => Promise<void> | void }) {
+  const { t } = useLanguage()
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [routes, setRoutes] = useState<Record<string, ProviderRouteEntry[]>>({})
   const [routeAvailability, setRouteAvailability] = useState<Record<string, boolean>>({})
@@ -269,34 +273,27 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
 
         <form className="mt-5 grid gap-4" onSubmit={handleSaveProvider}>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="grid gap-2 text-sm font-medium text-foreground" htmlFor="provider-channel-name">
-              Channel name
+            <FormField label={t('Channel name')} htmlFor="provider-channel-name">
               <Input id="provider-channel-name" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} required />
-            </label>
-            <label className="grid gap-2 text-sm font-medium text-foreground" htmlFor="provider-channel-model">
-              Channel default model
+            </FormField>
+            <FormField label={t('Channel default model')} htmlFor="provider-channel-model" help={t('Save, then use Models to discover')}>
               <Input id="provider-channel-model" list="provider-model-options" placeholder="Save, then use Models to discover" value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))} />
-            </label>
+            </FormField>
           </div>
-          <label className="grid gap-2 text-sm font-medium text-foreground" htmlFor="provider-channel-base-url">
-            Channel Base URL
+          <FormField label={t('Channel Base URL')} htmlFor="provider-channel-base-url">
             <Input id="provider-channel-base-url" value={form.baseUrl} onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))} required />
-          </label>
-          <label className="grid gap-2 text-sm font-medium text-foreground" htmlFor="provider-channel-api-key">
-            Channel API Key
+          </FormField>
+          <FormField label={t('Channel API Key')} htmlFor="provider-channel-api-key" help={t('已配置，留空则不变')}>
             <Input id="provider-channel-api-key" type="password" placeholder={form.apiKeyMasked ? '已配置，留空则不变' : 'sk-...'} value={form.apiKey} onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))} />
-          </label>
-          <label className="flex items-center gap-2 text-sm font-medium text-foreground" htmlFor="provider-channel-enabled">
-            <input id="provider-channel-enabled" type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} />
-            Channel enabled
-          </label>
+          </FormField>
+          <FormField label={t('Channel enabled')} htmlFor="provider-channel-enabled"><input id="provider-channel-enabled" type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} /></FormField>
           <datalist id="provider-model-options">
             {selectedModels.map((model) => <option key={model} value={model}>{model}</option>)}
           </datalist>
-          <div className="flex flex-wrap items-center gap-3">
+          <FormActions className="justify-start">
             <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save channel'}</Button>
             <StatusMessage tone="success" message={message} as="span" className="font-medium" />
-          </div>
+          </FormActions>
         </form>
 
         <div className="mt-6 border-t border-border pt-4">

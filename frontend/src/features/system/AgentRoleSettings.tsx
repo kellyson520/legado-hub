@@ -1,6 +1,9 @@
 import { Button } from '@/components/ui/button'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { FormActions } from '@/components/form/FormActions'
+import { FormField } from '@/components/form/FormField'
 import { useAgentSettingsSection } from './useAgentSettingsSection'
 import { LocalizedContent } from '@/components/layout/LocalizedContent'
 
@@ -28,6 +31,7 @@ const ROLE_FIELDS: Array<{ key: keyof RoleSettings; label: string; description: 
 const ROUTES = ['novel_extract', 'novel_verify', 'novel_adjudicate', 'novel_audit']
 
 export function AgentRoleSettings() {
+  const { t } = useLanguage()
   const section = useAgentSettingsSection('roles', DEFAULTS)
 
   return (
@@ -38,16 +42,14 @@ export function AgentRoleSettings() {
       <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Route groups select already-configured provider fallbacks. Credentials stay in the provider section and never appear here.</p>
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         {ROLE_FIELDS.map((field) => (
-          <label key={field.key} className="space-y-2 rounded-md border border-border bg-muted/30 p-4">
-            <span className="block text-sm font-semibold text-foreground">{field.label}</span>
-            <span className="block text-sm text-muted-foreground">{field.description}</span>
-            <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={section.value[field.key]} onChange={(event) => section.patch({ [field.key]: event.target.value } as Partial<RoleSettings>)}>
+          <FormField key={field.key} label={t(field.label)} htmlFor={`role-${field.key}`} help={t(field.description)} className="rounded-md border border-border bg-muted/30 p-4">
+            <select id={`role-${field.key}`} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground" value={section.value[field.key]} onChange={(event) => section.patch({ [field.key]: event.target.value } as Partial<RoleSettings>)}>
               {ROUTES.map((route) => <option key={route} value={route}>{route}</option>)}
             </select>
-          </label>
+          </FormField>
         ))}
       </div>
-      <div className="mt-5 flex flex-wrap items-center gap-3"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save role settings'}</Button><SettingsEffectiveStatus updatedAt={section.updatedAt} /></div>
+      <FormActions className="mt-5 justify-start"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save role settings'}</Button><SettingsEffectiveStatus updatedAt={section.updatedAt} /></FormActions>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
     </LocalizedContent>

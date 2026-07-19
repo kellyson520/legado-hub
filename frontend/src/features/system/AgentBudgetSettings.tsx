@@ -1,5 +1,8 @@
 import { Button } from '@/components/ui/button'
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { FormActions } from '@/components/form/FormActions'
+import { FormField } from '@/components/form/FormField'
 import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Input } from '@/components/ui/input'
 import { SettingsEffectiveStatus } from './SettingsEffectiveStatus'
@@ -16,6 +19,7 @@ const FIELDS: Array<{ key: keyof BudgetSettings; label: string; min: number; max
 ]
 
 export function AgentBudgetSettings() {
+  const { t } = useLanguage()
   const section = useAgentSettingsSection('budgets', DEFAULTS)
   return (
     <LocalizedContent>
@@ -23,8 +27,8 @@ export function AgentBudgetSettings() {
       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Bounded execution</p>
       <h2 className="mt-2 text-xl font-semibold text-foreground">Keep long-running analysis predictable</h2>
       <p className="mt-2 text-sm text-muted-foreground">The server applies the final safety bounds, then returns the effective values shown here.</p>
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">{FIELDS.map((field) => <label key={field.key} className="space-y-2 rounded-md border border-border bg-muted/30 p-4 text-sm font-medium text-foreground" htmlFor={`budget-${field.key}`}><span>{field.label}</span><Input id={`budget-${field.key}`} type="number" min={field.min} max={field.max} value={section.value[field.key]} onChange={(event) => section.patch({ [field.key]: Number(event.target.value) } as Partial<BudgetSettings>)} /></label>)}</div>
-      <div className="mt-5 flex flex-wrap items-center gap-3"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save budget settings'}</Button><SettingsEffectiveStatus updatedAt={section.updatedAt} /></div>
+      <div className="mt-6 grid gap-4 sm:grid-cols-2">{FIELDS.map((field) => <FormField key={field.key} label={t(field.label)} htmlFor={`budget-${field.key}`} className="rounded-md border border-border bg-muted/30 p-4"><Input id={`budget-${field.key}`} type="number" min={field.min} max={field.max} value={section.value[field.key]} onChange={(event) => section.patch({ [field.key]: Number(event.target.value) } as Partial<BudgetSettings>)} /></FormField>)}</div>
+      <FormActions className="mt-5 justify-start"><Button type="button" disabled={section.loading || section.saving} onClick={() => void section.save()}>{section.saving ? 'Saving…' : 'Save budget settings'}</Button><SettingsEffectiveStatus updatedAt={section.updatedAt} /></FormActions>
       <StatusMessage tone="error" message={section.error} className="mt-3" />
     </section>
     </LocalizedContent>
