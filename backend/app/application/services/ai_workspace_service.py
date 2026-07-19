@@ -378,6 +378,21 @@ class AIWorkspaceService:
         )
         return {"authorization": finalized, "message": self._serialize_message(assistant)}
 
+    def list_pending_authorizations(self, actor_id: str, conversation_id: str) -> list[dict]:
+        if self._authorization_service is None:
+            return []
+        return self._authorization_service.list_pending(str(actor_id), str(conversation_id))
+
+    def list_authorization_grants(self, actor_id: str, conversation_id: str | None = None) -> list[dict]:
+        if self._authorization_service is None:
+            return []
+        return self._authorization_service.list_grants(str(actor_id), conversation_id)
+
+    async def revoke_authorization_grant(self, grant_id: str, *, actor_id: str) -> dict:
+        if self._authorization_service is None:
+            raise ValidationException("AI conversation authorization is unavailable")
+        return await self._authorization_service.revoke_grant(grant_id, actor_id=str(actor_id))
+
     async def _run_model_tool_loop(
         self,
         *,

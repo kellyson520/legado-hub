@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
@@ -25,6 +27,10 @@ class ConversationMessageRequest(BaseModel):
     mode: str = Field(default="chat", pattern="^(chat|character|storyline|world)$")
     tool_requests: list[dict] = Field(default_factory=list)
     source_version_id: str | None = Field(default=None, max_length=100)
+
+
+class AuthorizationDecisionRequest(BaseModel):
+    decision: Literal["once", "conversation", "remember", "deny"]
 
 
 def _workspace_tool_names(identity) -> set[str]:
@@ -122,3 +128,52 @@ async def send_conversation_message(
         allowed_tool_names=_workspace_tool_names(identity),
     )
     return ok(data=data, message="ai conversation message completed", meta={})
+
+
+@router.post("/conversations/{conversation_id}/authorization-requests/{request_id}/decision")
+async def decide_authorization(
+    conversation_id: str,
+    request_id: str,
+    payload: AuthorizationDecisionRequest,
+    identity=Depends(require_permission(Permission.AI_RUN)),
+):
+    data = await build_ai_workspace_service().decide_authorization(
+        request_id,
+        actor_id=str(identity.user_id),
+        conversation_id=conversation_id,
+        decision=payload.decision,
+    )
+    return ok(data=data, message="ai authorization decision completed", meta={})
+
+
+@router.get("/conversations/{conversation_id}/authorization-requests")
+async def list_authorization_requests(
+    conversation_id: str,
+    status: str | None = Query(default="pending", max_length=32),
+    identity=Depends(require_permission(Permission.AI_RUN)),
+):
+    data = [] if status not in (None, "pending") else build_ai_workspace_service().list_pending_authorizations(
+        str(identity.user_id), conversation_id,
+    )
+    return ok(data=data, message="ai authorization requests listed", meta={})
+
+
+@router.get("/authorization-grants")
+async def list_authorization_grants(
+    conversation_id: str | None = Query(default=None, max_length=100),
+    identity=Depends(require_permission(Permission.AI_RUN)),
+):
+    data = build_ai_workspace_service().list_authorization_grants(str(identity.user_id), conversation_id)
+    return ok(data=data, message="ai authorization grants listed", meta={})
+
+
+@router.post("/authorization-grants/{grant_id}/revoke")
+async def revoke_authorization_grant(
+    grant_id: str,
+    identity=Depends(require_permission(Permission.AI_RUN)),
+):
+    data = await build_ai_workspace_service().revoke_authorization_grant(
+        grant_id,
+        actor_id=str(identity.user_id),
+    )
+    return ok(data=data, message="ai authorization grant revoked", meta={})
