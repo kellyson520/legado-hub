@@ -11,11 +11,14 @@ import {
 import { useAuth } from '@/app/providers/AuthProvider'
 import { useLanguage } from '@/app/providers/LanguageProvider'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusBadge } from '@/components/data/StatusBadge'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { FormActions } from '@/components/form/FormActions'
+import { FormField } from '@/components/form/FormField'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
-import { roleText, statusText } from '@/lib/i18n'
+import { roleText } from '@/lib/i18n'
 
 type UserRole = 'admin' | 'user'
 
@@ -143,7 +146,7 @@ export function AdminUsersPage() {
   }
 
   return (
-    <ConsoleLayout eyebrow="系统管理" title="用户管理" description="集中维护账户、权限角色与登录会话。密码仅能写入，不会在界面或接口响应中回显。">
+    <ConsolePageShell eyebrow="系统管理" title="用户管理" description="集中维护账户、权限角色与登录会话。密码仅能写入，不会在界面或接口响应中回显。">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-sm">
         <p className="text-sm text-muted-foreground">{t('共 {count} 名用户 · 可通过撤销会话即时收回访问权限', { count: meta.total })}</p>
         {canWrite ? <Button onClick={openCreate}>创建用户</Button> : null}
@@ -167,30 +170,27 @@ export function AdminUsersPage() {
             <Button variant="ghost" size="sm" onClick={closeForm}>取消</Button>
           </div>
           <div className="grid gap-4 md:grid-cols-2">
-            <label className="grid gap-1.5 text-sm font-medium">
-              用户名
+            <FormField label={t('用户名')} htmlFor="admin-username" help={t('用户名不可修改；保存后角色权限将在下次请求时生效。')}>
               <input
-                aria-label="用户名"
+                id="admin-username"
                 className="h-10 rounded-md border bg-background px-3 font-mono text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                 value={form.username}
                 disabled={formMode === 'edit' || busy}
                 onChange={(event) => setForm((current) => ({ ...current, username: event.target.value }))}
               />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium">
-              显示名称
+            </FormField>
+            <FormField label={t('显示名称')} htmlFor="admin-display-name">
               <input
-                aria-label="显示名称"
+                id="admin-display-name"
                 className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                 value={form.displayName}
                 disabled={busy}
                 onChange={(event) => setForm((current) => ({ ...current, displayName: event.target.value }))}
               />
-            </label>
-            <label className="grid gap-1.5 text-sm font-medium">
-              角色
+            </FormField>
+            <FormField label={t('角色')} htmlFor="admin-role">
               <select
-                aria-label="角色"
+                id="admin-role"
                 className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
                 value={form.role}
                 disabled={busy}
@@ -199,12 +199,11 @@ export function AdminUsersPage() {
                 <option value="user">普通用户</option>
                 <option value="admin">管理员</option>
               </select>
-            </label>
+            </FormField>
             {formMode === 'create' ? (
-              <label className="grid gap-1.5 text-sm font-medium">
-                初始密码
+              <FormField label={t('初始密码')} htmlFor="admin-initial-password" help={t('初始密码只会提交一次，请安全传递给用户。')}>
                 <input
-                  aria-label="初始密码"
+                  id="admin-initial-password"
                   type="password"
                   autoComplete="new-password"
                   className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
@@ -212,17 +211,17 @@ export function AdminUsersPage() {
                   disabled={busy}
                   onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
                 />
-              </label>
+              </FormField>
             ) : null}
           </div>
-          <div className="mt-5 flex justify-end">
+          <FormActions className="mt-5">
             <Button
               disabled={busy || !form.username.trim() || (formMode === 'create' && form.password.length < 8)}
               onClick={() => void saveUser()}
             >
-              {formMode === 'create' ? '确认创建' : '保存修改'}
+              {formMode === 'create' ? t('确认创建') : t('保存修改')}
             </Button>
-          </div>
+          </FormActions>
         </section>
       ) : null}
 
@@ -231,10 +230,9 @@ export function AdminUsersPage() {
           <h2 className="font-semibold">重置密码：{passwordTarget.username}</h2>
           <p className="mt-1 text-sm text-muted-foreground">重置后将撤销该用户的所有登录会话，密码不会被保存或回显。</p>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-            <label className="grid flex-1 gap-1.5 text-sm font-medium">
-              新密码
+            <FormField label={t('新密码')} htmlFor="admin-new-password" className="flex-1">
               <input
-                aria-label="新密码"
+                id="admin-new-password"
                 type="password"
                 autoComplete="new-password"
                 className="h-10 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus:ring-2 focus:ring-ring"
@@ -242,11 +240,11 @@ export function AdminUsersPage() {
                 disabled={busy}
                 onChange={(event) => setNewPassword(event.target.value)}
               />
-            </label>
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => { setPasswordTarget(null); setNewPassword('') }}>取消</Button>
-              <Button variant="destructive" disabled={busy || newPassword.length < 8} onClick={() => void resetPassword()}>确认重置</Button>
-            </div>
+            </FormField>
+            <FormActions>
+              <Button variant="ghost" onClick={() => { setPasswordTarget(null); setNewPassword('') }}>{t('取消')}</Button>
+              <Button variant="destructive" disabled={busy || newPassword.length < 8} onClick={() => void resetPassword()}>{t('确认重置')}</Button>
+            </FormActions>
           </div>
         </section>
       ) : null}
@@ -258,22 +256,22 @@ export function AdminUsersPage() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-lg font-semibold">{user.display_name || user.username}</h3>
-                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${user.status === 'enabled' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>{statusText(user.status, locale)}</span>
+                <StatusBadge status={user.status} />
               </div>
               {user.display_name && user.display_name !== user.username ? <p className="mt-1 font-mono text-xs text-muted-foreground">{user.username}</p> : null}
               <p className="mt-2 text-sm text-muted-foreground">{roleText(user.role, locale)} · 创建于 {user.created_at ? new Date(user.created_at).toLocaleString(locale) : '—'} · 最近登录 {user.last_login_at ? new Date(user.last_login_at).toLocaleString(locale) : t('从未登录')}</p>
             </div>
             {canWrite ? (
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => openEdit(user)}>编辑</Button>
-                <Button size="sm" variant="outline" onClick={() => void toggle(user)}>{user.status === 'enabled' ? '停用' : '启用'}</Button>
-                <Button size="sm" variant="outline" onClick={() => { setPasswordTarget(user); setNewPassword('') }}>重置密码</Button>
-                <Button size="sm" variant="destructive" onClick={() => void revokeSessions(user)}>撤销会话</Button>
+                <Button size="sm" variant="outline" onClick={() => openEdit(user)}>{t('编辑')}</Button>
+                <Button size="sm" variant="outline" onClick={() => void toggle(user)}>{user.status === 'enabled' ? t('停用') : t('启用')}</Button>
+                <Button size="sm" variant="outline" onClick={() => { setPasswordTarget(user); setNewPassword('') }}>{t('重置密码')}</Button>
+                <Button size="sm" variant="destructive" onClick={() => void revokeSessions(user)}>{t('撤销会话')}</Button>
               </div>
             ) : null}
           </article>
         ))}
       </div>
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

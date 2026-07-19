@@ -16,7 +16,7 @@ import {
   type SourceBuildAgentSettings,
 } from '@/api/modules/system'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { LocalizedContent } from '@/components/layout/LocalizedContent'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -458,12 +458,12 @@ export function ProviderSettingsContent() {
 
 export function SystemSettingsPage() {
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="System"
       title="Provider control room"
       description="统一展示 provider 健康、配额策略和 LLM API 配置，保证写源、AI、translation、novel 任务都有真实模型调用入口。"
     >
       <ProviderSettingsContent />
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

@@ -12,7 +12,7 @@ import {
 } from '@/api/modules/sources'
 import { testEngineRegex, type RegexTestResult } from '@/api/modules/engine'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -163,7 +163,7 @@ export function SourceRuleEditorPage() {
   }
 
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="书源规则"
       title="书源规则编辑器"
       description="编辑候选书源的搜索、目录与正文规则；保存后必须完成验证，正文访问受阻的版本不能发布。"
@@ -257,6 +257,6 @@ export function SourceRuleEditorPage() {
           </Card>
         </div>
       ) : null}
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

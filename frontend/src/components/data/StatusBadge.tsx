@@ -7,8 +7,8 @@ const successStatuses = new Set(['accepted', 'completed', 'delivered', 'enabled'
 const warningStatuses = new Set(['awaiting_manual_verification', 'candidate', 'degraded', 'pending', 'queued', 'running', 'scheduled'])
 const failureStatuses = new Set(['blocked', 'dead', 'error', 'failed', 'rejected'])
 
-function normalizeStatus(status: string) {
-  return status.trim().toLowerCase().replace(/[\s-]+/g, '_')
+function normalizeStatus(status: string | undefined) {
+  return (status ?? 'unknown').trim().toLowerCase().replace(/[\s-]+/g, '_')
 }
 
 function statusTone(status: string): StatusTone {
@@ -18,7 +18,7 @@ function statusTone(status: string): StatusTone {
   return 'secondary'
 }
 
-export function StatusBadge({ status, className }: { status: string; className?: string }) {
+export function StatusBadge({ status, className }: { status?: string; className?: string }) {
   const { t } = useLanguage()
   const normalized = normalizeStatus(status)
   const key = `status.${normalized}`

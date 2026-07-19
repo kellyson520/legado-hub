@@ -139,3 +139,18 @@ test('source builds page announces terminal audit failure reason and timing', as
   expect(screen.getByText('content parse failed')).toBeInTheDocument()
   expect(screen.getByRole('alert')).toHaveTextContent('审计： 已失败 · 5/5 · F')
 })
+
+test('source builds page shows the shared empty state when no candidates exist', async () => {
+  operationsMocks.listSourceBuildCandidates.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [],
+    meta: { total: 0 },
+    trace_id: null,
+  })
+
+  render(<SourceBuildsPage />)
+
+  expect(await screen.findByText('暂无书源构建候选')).toBeInTheDocument()
+})

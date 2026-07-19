@@ -13,7 +13,9 @@ import {
 import { useLanguage } from '@/app/providers/LanguageProvider'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { FormActions } from '@/components/form/FormActions'
+import { FormField } from '@/components/form/FormField'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
@@ -169,7 +171,7 @@ export function AIWorkspacePage() {
   }
 
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="AI 工作台"
       title="小说分析对话"
       description="以受控、只读工具辅助人物介绍、剧情解析与世界观提炼。工具结果会作为引用附在回答中，敏感数据不会进入对话。"
@@ -266,31 +268,33 @@ export function AIWorkspacePage() {
               ))}
             </div>
             {requiresSourceVersion ? (
-              <label className="mb-3 block text-sm font-medium">
-                书源版本 ID
-                <input aria-label="书源版本 ID" value={sourceVersionId} onChange={(event) => setSourceVersionId(event.target.value)} placeholder="例如：source-version-123" className="mt-1 h-10 w-full rounded-md border bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring" />
-              </label>
+              <FormField label={t('书源版本 ID')} htmlFor="ai-source-version-id" help={t('需填写书源版本 ID，仅读取规则概览')} className="mb-3">
+                <input id="ai-source-version-id" aria-label={t('书源版本 ID')} value={sourceVersionId} onChange={(event) => setSourceVersionId(event.target.value)} placeholder={t('例如：source-version-123')} className="h-10 w-full rounded-md border bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring" />
+              </FormField>
             ) : null}
             <div className="flex gap-3">
-              <textarea
-                aria-label="输入消息"
-                value={content}
-                onChange={(event) => setContent(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                    event.preventDefault()
-                    void send()
-                  }
-                }}
-                disabled={!activeConversationId || sending}
-                placeholder={activeConversationId ? t('使用“{mode}”模式提问；Ctrl / ⌘ + Enter 发送', { mode: t(modeLabel[mode]) }) : t('请先新建或选择一个对话')}
-                className="min-h-24 flex-1 resize-y rounded-lg border bg-background px-3 py-2 text-sm leading-6 outline-none ring-offset-background focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted"
-              />
-              <Button className="self-end" disabled={!canSend} onClick={() => void send()}>发送</Button>
+              <FormField label={t('输入消息')} htmlFor="ai-message" help={t('使用“{mode}”模式提问；Ctrl / ⌘ + Enter 发送', { mode: t(modeLabel[mode]) })} className="flex-1">
+                <textarea
+                  id="ai-message"
+                  aria-label={t('输入消息')}
+                  value={content}
+                  onChange={(event) => setContent(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                      event.preventDefault()
+                      void send()
+                    }
+                  }}
+                  disabled={!activeConversationId || sending}
+                  placeholder={activeConversationId ? t('使用“{mode}”模式提问；Ctrl / ⌘ + Enter 发送', { mode: t(modeLabel[mode]) }) : t('请先新建或选择一个对话')}
+                  className="min-h-24 w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm leading-6 outline-none ring-offset-background focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted"
+                />
+              </FormField>
+              <FormActions className="self-end"><Button disabled={!canSend} onClick={() => void send()}>{t('发送')}</Button></FormActions>
             </div>
           </div>
         </section>
       </div>
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

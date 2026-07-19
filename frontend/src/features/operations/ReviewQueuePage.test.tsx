@@ -281,3 +281,18 @@ test('review queue page marks translation review items as reviewed', async () =>
   })
   expect(screen.getByText('已为 translation_review 完成标记为已审核')).toBeInTheDocument()
 })
+
+test('review queue page shows the shared empty state when no candidates exist', async () => {
+  operationsMocks.listReviewQueueCandidates.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [],
+    meta: { total: 0 },
+    trace_id: null,
+  })
+
+  render(<MemoryRouter><ReviewQueuePage /></MemoryRouter>)
+
+  expect(await screen.findByText('暂无审核候选')).toBeInTheDocument()
+})

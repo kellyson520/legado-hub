@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { vi } from 'vitest'
 
-vi.mock('@/api/modules/operations', () => ({
+const operationsMocks = vi.hoisted(() => ({
   listOperationsJobs: vi.fn().mockResolvedValue({
     success: true,
     code: 'OK',
@@ -21,6 +21,8 @@ vi.mock('@/api/modules/operations', () => ({
   }),
 }))
 
+vi.mock('@/api/modules/operations', () => operationsMocks)
+
 import { JobsPage } from './JobsPage'
 
 test('jobs page shows queued job status and kind', async () => {
@@ -29,4 +31,19 @@ test('jobs page shows queued job status and kind', async () => {
   expect(await screen.findByRole('heading', { name: '任务控制台' })).toBeInTheDocument()
   expect(screen.getByText('crawl.refresh')).toBeInTheDocument()
   expect(screen.getByText('排队中')).toBeInTheDocument()
+})
+
+test('jobs page shows the shared empty state when the server returns no jobs', async () => {
+  operationsMocks.listOperationsJobs.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [],
+    meta: { total: 0 },
+    trace_id: null,
+  })
+
+  render(<JobsPage />)
+
+  expect(await screen.findByText('暂无运营任务')).toBeInTheDocument()
 })

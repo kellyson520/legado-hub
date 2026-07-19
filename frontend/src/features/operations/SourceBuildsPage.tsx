@@ -6,8 +6,11 @@ import {
   type OperationSourceBuildAuditSummary,
   type OperationSourceBuildRow,
 } from '@/api/modules/operations'
+import { DataTable, type DataTableColumn } from '@/components/data/DataTable'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { StatusBadge } from '@/components/data/StatusBadge'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
+import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { ManualVerificationPanel } from './ManualVerificationPanel'
 
@@ -92,103 +95,74 @@ export function SourceBuildsPage() {
   })
   const { rows } = pagination
   const [verificationSessionId, setVerificationSessionId] = useState<string | null>(null)
+  const { t } = useLanguage()
+  const columns: DataTableColumn<OperationSourceBuildRow>[] = [
+    {
+      id: 'source',
+      header: t('Source'),
+      cell: (row) => <><div className="font-medium text-foreground">{getSourceId(row)}</div><div className="text-xs text-muted-foreground">{row.id}</div></>,
+    },
+    { id: 'keyword', header: t('Keyword'), cell: (row) => row.payload.keyword || '-' },
+    { id: 'status', header: t('Status'), cell: (row) => <StatusBadge status={row.status} /> },
+    { id: 'grade', header: t('Latest grade'), cell: (row) => getLatestRun(row)?.grade ?? '-' },
+    {
+      id: 'audit',
+      header: t('Audit'),
+      cell: (row) => {
+        const sourceAudit = getSourceAudit(row)
+        const sessionId = sourceAudit?.browser_session_id ?? sourceAudit?.browserSessionId
+        return (
+          <>
+            <SourceAuditSummary audit={sourceAudit} />
+            {getAuditStatus(sourceAudit ?? {}) === 'awaiting_manual_verification' ? (
+              <Button type="button" variant="link" size="sm" className="mt-1 h-auto px-0 text-xs" onClick={() => setVerificationSessionId(sessionId ?? null)} disabled={!sessionId}>
+                {t('Open manual verification')}
+              </Button>
+            ) : null}
+          </>
+        )
+      },
+    },
+    {
+      id: 'automation',
+      header: t('Automation'),
+      cell: (row) => {
+        const autonomousBuild = getAutonomousBuild(row)
+        if (!autonomousBuild) return <span className="text-muted-foreground">-</span>
+        return (
+          <>
+            <div>{autonomousBuild.decision ?? '-'}</div>
+            <div className="text-xs text-muted-foreground">{autonomousBuild.trigger ?? '-'} 路 {autonomousBuild.strategy ?? '-'}</div>
+            {autonomousBuild.validation ? <div className="text-xs text-muted-foreground">{t('validation: ')}{autonomousBuild.validation.grade ?? '-'} ({autonomousBuild.validation.quality_score ?? '-'})</div> : null}
+            {autonomousBuild.probe ? <>
+              <div className="text-xs text-muted-foreground">{t('search/toc/content: ')}{t(autonomousBuild.probe.search_status ?? '-')} / {t(autonomousBuild.probe.toc_status ?? '-')} / {t(autonomousBuild.probe.content_status ?? '-')}</div>
+              <div className="text-xs text-muted-foreground">{autonomousBuild.probe.sample_title ?? autonomousBuild.probe.failure_reason ?? '-'}</div>
+            </> : null}
+          </>
+        )
+      },
+    },
+    { id: 'created-by', header: t('Submitted by'), cell: (row) => <span className="text-muted-foreground">{getCreatedBy(row)}</span> },
+  ]
 
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="Operations"
       title="Source build candidates"
       description="查看候选 source build、最近验证结果与自动修补探针摘要。"
     >
       <PaginatedListControls
         pagination={pagination}
-        empty={!pagination.loading && rows.length === 0}
+        empty={false}
         loadingLabel="正在加载构建候选…"
         errorLabel="Failed to load source build candidates."
         emptyLabel="No source build candidates yet"
         searchLabel="搜索构建候选"
       />
-      <div className="overflow-hidden rounded-2xl border border-border bg-card">
-        <table className="min-w-full divide-y divide-border text-sm">
-          <thead className="bg-muted/40 text-left text-muted-foreground">
-            <tr>
-              <th className="px-4 py-3 font-medium">Source</th>
-              <th className="px-4 py-3 font-medium">Keyword</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Latest grade</th>
-              <th className="px-4 py-3 font-medium">Audit</th>
-              <th className="px-4 py-3 font-medium">Automation</th>
-              <th className="px-4 py-3 font-medium">Submitted by</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {rows.map((row) => {
-              const latestRun = getLatestRun(row)
-              const autonomousBuild = getAutonomousBuild(row)
-              const sourceAudit = getSourceAudit(row)
-              return (
-                <tr key={row.id}>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-foreground">{getSourceId(row)}</div>
-                    <div className="text-xs text-muted-foreground">{row.id}</div>
-                  </td>
-                  <td className="px-4 py-3">{row.payload.keyword || '-'}</td>
-                  <td className="px-4 py-3">{row.status}</td>
-                  <td className="px-4 py-3">{latestRun?.grade ?? '-'}</td>
-                  <td className="px-4 py-3">
-                    <SourceAuditSummary audit={sourceAudit} />
-                    {getAuditStatus(sourceAudit ?? {}) === 'awaiting_manual_verification' ? (
-                      <button
-                        type="button"
-                        className="mt-2 text-xs font-medium text-primary underline"
-                        onClick={() => setVerificationSessionId(sourceAudit?.browser_session_id ?? sourceAudit?.browserSessionId ?? null)}
-                        disabled={!sourceAudit?.browser_session_id && !sourceAudit?.browserSessionId}
-                      >
-                        Open manual verification
-                      </button>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-3">
-                    {autonomousBuild ? (
-                      <>
-                        <div>{autonomousBuild.decision ?? '-'}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {autonomousBuild.trigger ?? '-'} 路 {autonomousBuild.strategy ?? '-'}
-                        </div>
-                        {autonomousBuild.validation ? (
-                          <div className="text-xs text-muted-foreground">
-                            validation: {autonomousBuild.validation.grade ?? '-'} (
-                            {autonomousBuild.validation.quality_score ?? '-'}
-                            )
-                          </div>
-                        ) : null}
-                        {autonomousBuild.probe ? (
-                          <>
-                            <div className="text-xs text-muted-foreground">
-                              search/toc/content: {autonomousBuild.probe.search_status ?? '-'} /{' '}
-                              {autonomousBuild.probe.toc_status ?? '-'} / {autonomousBuild.probe.content_status ?? '-'}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {autonomousBuild.probe.sample_title ??
-                                autonomousBuild.probe.failure_reason ??
-                                '-'}
-                            </div>
-                          </>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">{getCreatedBy(row)}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      <DataTable rows={rows} columns={columns} getRowKey={(row) => row.id} emptyLabel={t('No source build candidates yet')} />
       {verificationSessionId ? (
         <ManualVerificationPanel sessionId={verificationSessionId} onFinished={() => setVerificationSessionId(null)} />
       ) : null}
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

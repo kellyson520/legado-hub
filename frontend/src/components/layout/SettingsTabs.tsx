@@ -1,14 +1,18 @@
+import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
-import type { SettingsDomainDefinition, SettingsTabDefinition } from './settingsRegistry'
-import { SETTINGS_DOMAINS, settingsPath } from './settingsRegistry'
-
-export interface SettingsTabsProps {
-  domain: SettingsDomainDefinition
-  tab: SettingsTabDefinition
+export interface SettingsTabItem {
+  id: string
+  label: ReactNode
 }
 
-export function SettingsTabs({ domain, tab }: SettingsTabsProps) {
+export interface SettingsTabsProps {
+  allTabs: SettingsTabItem[]
+  selectedPath: string
+  settingsPath: (path: string) => string
+}
+
+export function SettingsTabs({ allTabs, selectedPath, settingsPath }: SettingsTabsProps) {
   const navigate = useNavigate()
 
   return (
@@ -18,30 +22,23 @@ export function SettingsTabs({ domain, tab }: SettingsTabsProps) {
         <select
           id="system-settings-tab"
           aria-label="Settings section"
-          value={`${domain.id}/${tab.id}`}
+          value={selectedPath}
           className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground"
-          onChange={(event) => {
-            const [nextDomain, nextTab] = event.target.value.split('/')
-            navigate(settingsPath(nextDomain, nextTab))
-          }}
+          onChange={(event) => navigate(settingsPath(event.target.value))}
         >
-          {SETTINGS_DOMAINS.flatMap((item) => item.tabs.map((itemTab) => (
-            <option key={`${item.id}/${itemTab.id}`} value={`${item.id}/${itemTab.id}`}>
-              {item.label} · {itemTab.label}
-            </option>
-          )))}
+          {allTabs.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </div>
       <div className="hidden overflow-x-auto sm:block">
-        <div role="tablist" aria-label={`${domain.label} sections`} className="flex min-w-max gap-1 border-b border-border">
-          {domain.tabs.map((item) => {
-            const selected = item.id === tab.id
+        <div role="tablist" aria-label="Settings sections" className="flex min-w-max gap-1 border-b border-border">
+          {allTabs.map((item) => {
+            const selected = item.id === selectedPath
             return (
               <Link
                 key={item.id}
                 role="tab"
                 aria-selected={selected}
-                to={settingsPath(domain.id, item.id)}
+                to={settingsPath(item.id)}
                 className={selected
                   ? 'border-b-2 border-primary px-3 py-2 text-sm font-semibold text-foreground'
                   : 'border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground'}

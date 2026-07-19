@@ -8,9 +8,10 @@ import {
   type OperationSourceBuildAuditSummary,
   type OperationReviewQueueRow,
 } from '@/api/modules/operations'
+import { DataTable, type DataTableColumn } from '@/components/data/DataTable'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { useServerPagination } from '@/hooks/useServerPagination'
 import { SourceAuditSummary } from './SourceBuildsPage'
 
@@ -95,6 +96,73 @@ export function ReviewQueuePage() {
     [resolvedIds, rows],
   )
 
+  const columns: DataTableColumn<OperationReviewQueueRow>[] = [
+    {
+      id: 'type',
+      header: t('Type'),
+      cell: (row) => (
+        <>
+          <div className="font-medium text-foreground">{getProposalType(row)}</div>
+          <div className="text-xs text-muted-foreground">{getItemType(row)} · {getSourceChapterId(row)}</div>
+        </>
+      ),
+    },
+    { id: 'work', header: t('Work'), cell: (row) => getWorkId(row) },
+    {
+      id: 'summary',
+      header: t('Summary'),
+      cell: (row) => (
+        <>
+          <div>{getSummary(row)}</div>
+          <div className="text-xs text-muted-foreground">{row.subject || '-'} · {row.relation || '-'} · {getObjectName(row)}</div>
+        </>
+      ),
+    },
+    {
+      id: 'evidence',
+      header: t('Evidence'),
+      cell: (row) => {
+        const itemType = getItemType(row)
+        const sourceAudit = ['source_version', 'source_review'].includes(itemType) ? getSourceAudit(row) : undefined
+        return (
+          <>
+            <div>{row.evidence}</div>
+            {sourceAudit ? <div className="mt-1"><SourceAuditSummary audit={sourceAudit} /></div> : null}
+          </>
+        )
+      },
+    },
+    { id: 'created-by', header: t('Created by'), cell: (row) => <span className="text-muted-foreground">{getCreatedBy(row)}</span> },
+    {
+      id: 'action',
+      header: t('Action'),
+      cell: (row) => {
+        const itemType = getItemType(row)
+        const actionLabel = getActionLabel(row)
+        const resolving = pendingId === row.id
+        if (!canResolve(row)) return <span className="text-xs text-muted-foreground">{t('No action')}</span>
+        return (
+          <div className="flex flex-wrap gap-2">
+            {itemType === 'source_version' ? (
+              <Link to={`/sources/rules/${row.id}`} className="rounded-md border border-primary px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary hover:text-primary-foreground">
+                审核规则
+              </Link>
+            ) : null}
+            <button
+              type="button"
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={() => void handleResolve(row)}
+              disabled={resolving}
+              aria-label={`${t(actionLabel)} ${getProposalType(row)}`}
+            >
+              {resolving ? t('Processing…') : t(actionLabel)}
+            </button>
+          </div>
+        )
+      },
+    },
+  ]
+
   async function handleResolve(row: OperationReviewQueueRow) {
     const itemType = getItemType(row)
     setPendingId(row.id)
@@ -133,7 +201,7 @@ export function ReviewQueuePage() {
   }
 
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="Operations"
       title="Review queue"
       description="聚合低置信度对齐、自动修复阻断与人工审核入口，当前承载 work knowledge、translation review 与 source version publish 候选项。"
@@ -143,88 +211,14 @@ export function ReviewQueuePage() {
         <StatusMessage tone="error" message={error} />
         <PaginatedListControls
           pagination={pagination}
-          empty={!pagination.loading && visibleRows.length === 0}
+          empty={false}
           loadingLabel="正在加载审核队列…"
           errorLabel="Failed to load review queue."
           emptyLabel="No review candidates yet"
           searchLabel="搜索审核项"
         />
-        <div className="overflow-hidden rounded-2xl border border-border bg-card">
-          <table className="min-w-full divide-y divide-border text-sm">
-            <thead className="bg-muted/40 text-left text-muted-foreground">
-              <tr>
-                <th className="px-4 py-3 font-medium">Type</th>
-                <th className="px-4 py-3 font-medium">Work</th>
-                <th className="px-4 py-3 font-medium">Summary</th>
-                <th className="px-4 py-3 font-medium">Evidence</th>
-                <th className="px-4 py-3 font-medium">Created by</th>
-                <th className="px-4 py-3 font-medium">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {visibleRows.map((row) => {
-                const itemType = getItemType(row)
-                const actionLabel = getActionLabel(row)
-                const resolving = pendingId === row.id
-                const sourceAudit = ['source_version', 'source_review'].includes(itemType)
-                  ? getSourceAudit(row)
-                  : undefined
-                return (
-                  <tr key={row.id}>
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-foreground">{getProposalType(row)}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {itemType} · {getSourceChapterId(row)}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">{getWorkId(row)}</td>
-                    <td className="px-4 py-3">
-                      <div>{getSummary(row)}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {row.subject || '-'} · {row.relation || '-'} · {getObjectName(row)}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      <div>{row.evidence}</div>
-                      {sourceAudit ? (
-                        <div className="mt-1">
-                          <SourceAuditSummary audit={sourceAudit} />
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{getCreatedBy(row)}</td>
-                    <td className="px-4 py-3">
-                      {canResolve(row) ? (
-                        <div className="flex flex-wrap gap-2">
-                          {itemType === 'source_version' ? (
-                            <Link
-                              to={`/sources/rules/${row.id}`}
-                              className="rounded-lg border border-primary px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary hover:text-primary-foreground"
-                            >
-                              审核规则
-                            </Link>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => void handleResolve(row)}
-                            disabled={resolving}
-                            aria-label={`${t(actionLabel)} ${getProposalType(row)}`}
-                          >
-                            {resolving ? 'Processing…' : actionLabel}
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">No action</span>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataTable rows={visibleRows} columns={columns} getRowKey={(row) => row.id} emptyLabel={t('No review candidates yet')} />
       </div>
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

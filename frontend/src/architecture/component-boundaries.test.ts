@@ -29,4 +29,31 @@ describe('console component boundaries', () => {
       expect(read(relativePath)).not.toMatch(/\bfetch\s*\(/)
     }
   })
+
+  test('authenticated console pages use the canonical shell', () => {
+    const pageFiles = [
+      'admin/AdminAuditPage.tsx',
+      'admin/AdminUsersPage.tsx',
+      'admin/ApiKeysPage.tsx',
+      'ai/AITasksPage.tsx',
+      'ai/AIWorkspacePage.tsx',
+      'engine/EngineRunsPage.tsx',
+      'novel-analysis/WorkAnalysisPage.tsx',
+      'novel/NovelTasksPage.tsx',
+      'operations/EventDeliveriesPage.tsx',
+      'operations/JobsPage.tsx',
+      'operations/ReviewQueuePage.tsx',
+      'operations/SourceBuildsPage.tsx',
+      'sources/SourceHealthDetailPage.tsx',
+      'sources/SourceHealthPage.tsx',
+      'sources/SourceRuleEditorPage.tsx',
+      'system/SystemSettingsPage.tsx',
+      'translation/TranslationJobsPage.tsx',
+    ]
+    for (const relativePath of pageFiles) {
+      const source = read(relativePath)
+      expect(source).toContain("@/components/layout/ConsolePageShell")
+      expect(source).not.toContain("@/components/layout/ConsoleLayout")
+    }
+  })
 })

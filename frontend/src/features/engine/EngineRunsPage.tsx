@@ -15,7 +15,7 @@ import {
 import { RunTimeline } from '@/components/diagnostics/RunTimeline'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -116,7 +116,7 @@ export function EngineRunsPage() {
   }
 
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="Engine"
       title="Rule engine console"
       description="把规则写源入口、候选规则验证和部署诊断放在同一页，给 console 操作员直接提交 URL、观察 probe 结果并追踪 deployment decision。"
@@ -284,6 +284,6 @@ export function EngineRunsPage() {
         </div>
         <RunTimeline runs={runs} deployments={deployments} />
       </section>
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

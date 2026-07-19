@@ -2,13 +2,18 @@ import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
+import { SettingsTabs } from '@/components/layout/SettingsTabs'
 import { findSettingsDomain, SETTINGS_DOMAINS, settingsPath } from './settingsRegistry'
-import { SettingsTabs } from './SettingsTabs'
 
 export function SystemSettingsLayout({ children }: { children: ReactNode }) {
   const { domain: requestedDomain, tab: requestedTab } = useParams()
   const domain = findSettingsDomain(requestedDomain) ?? SETTINGS_DOMAINS[0]
   const tab = domain.tabs.find((item) => item.id === requestedTab) ?? domain.tabs[0]
+  const selectedPath = `${domain.id}/${tab.id}`
+  const allTabs = SETTINGS_DOMAINS.flatMap((item) => item.tabs.map((itemTab) => ({
+    id: `${item.id}/${itemTab.id}`,
+    label: itemTab.label,
+  })))
 
   return (
     <ConsolePageShell
@@ -42,7 +47,14 @@ export function SystemSettingsLayout({ children }: { children: ReactNode }) {
         </nav>
 
         <section className="min-w-0 space-y-4">
-          <SettingsTabs domain={domain} tab={tab} />
+          <SettingsTabs
+            allTabs={allTabs}
+            selectedPath={selectedPath}
+            settingsPath={(path) => {
+              const [domainId, tabId] = path.split('/')
+              return settingsPath(domainId, tabId)
+            }}
+          />
           <div role="tabpanel" aria-label={tab.label}>{children}</div>
         </section>
       </div>

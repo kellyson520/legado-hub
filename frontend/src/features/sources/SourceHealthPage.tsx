@@ -11,7 +11,7 @@ import {
 } from '@/api/modules/sourceHealth'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useServerPagination } from '@/hooks/useServerPagination'
@@ -122,7 +122,7 @@ export function SourceHealthPage() {
   )
 
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="Source Health"
       title="Source health control plane"
       description="展示 search / toc / content 三层状态、失败原因、分流策略，并提供重探测与恢复入口。"
@@ -213,6 +213,6 @@ export function SourceHealthPage() {
             ))}
         </div>
       </Card>
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }
