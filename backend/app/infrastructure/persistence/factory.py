@@ -2,6 +2,7 @@ from threading import Lock
 from functools import partial
 
 from app.application.services.ai_service import AIService
+from app.application.services.ai_authorization_service import AIConversationAuthorizationService
 from app.application.services.ai_workspace_service import AIWorkspaceService
 from app.application.services.agent_runtime_service import AgentRuntimeService
 from app.application.services.character_calibration_service import CharacterCalibrationService
@@ -554,6 +555,10 @@ def build_ai_service() -> AIService:
 
 def build_ai_workspace_service() -> AIWorkspaceService:
     ensure_sqlite_bootstrap()
+    authorization = AIConversationAuthorizationService(
+        repo=build_ai_authorization_repository(),
+        audit=build_auth_repository(),
+    )
     return AIWorkspaceService(
         platform=build_provider_platform_service(),
         conversations=SQLiteAIConversationRepository(),
@@ -563,6 +568,7 @@ def build_ai_workspace_service() -> AIWorkspaceService:
         source_runtime=build_source_runtime_service(),
         novel_tool_executor=build_novel_analysis_tool_executor(),
         source_joint_test_executor=build_source_joint_test_tool_executor(),
+        authorization_service=authorization,
     )
 
 

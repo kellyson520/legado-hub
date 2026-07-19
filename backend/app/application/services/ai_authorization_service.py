@@ -110,7 +110,7 @@ class AIConversationAuthorizationService:
                         actor_id=str(actor_id),
                         conversation_id=conversation_scope,
                         scope=scope,
-                        tool_names=claimed.requested_tools,
+                        tool_names=sorted(CONTENT_TOOLS),
                         expires_at=now + ttl,
                         created_at=now,
                         updated_at=now,
@@ -118,6 +118,9 @@ class AIConversationAuthorizationService:
                 )
         await self._audit_event(actor_id, f"ai.authorization.approved_{decision}", request_id)
         return self.serialize_request(claimed)
+
+    def get_request_record(self, request_id: str, *, actor_id: str, conversation_id: str) -> AIConversationAuthorizationRequest | None:
+        return self._repo.get_request(request_id, str(actor_id), str(conversation_id))
 
     async def finalize(self, request_id: str, *, actor_id: str, status: str, result_message_id: str | None = None) -> dict:
         if status not in {"consumed", "failed"}:

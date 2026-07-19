@@ -51,6 +51,13 @@ class _ToolRequest:
 
 
 @dataclass(frozen=True)
+class _ToolLoopResult:
+    content: str
+    tool_calls: list[dict]
+    authorization_request: dict | None = None
+
+
+@dataclass(frozen=True)
 class _SourceVersionArguments:
     source_version_id: str
 
@@ -103,6 +110,7 @@ class AIWorkspaceService:
         source_runtime=None,
         novel_tool_executor=None,
         source_joint_test_executor=None,
+        authorization_service=None,
     ):
         self._platform = platform
         self._conversations = conversations
@@ -112,6 +120,7 @@ class AIWorkspaceService:
         self._source_runtime = source_runtime
         self._novel_tool_executor = novel_tool_executor
         self._source_joint_test_executor = source_joint_test_executor
+        self._authorization_service = authorization_service
 
     async def create_conversation(self, actor_id: str, title: str = "") -> dict:
         conversation = self._conversations.create_conversation(
@@ -162,6 +171,10 @@ class AIWorkspaceService:
         return {
             **self._serialize_conversation(conversation),
             "messages": [self._serialize_message(item) for item in self._conversations.list_messages(conversation.id)],
+            "authorization_requests": (
+                self._authorization_service.list_pending(str(actor_id), conversation.id)
+                if self._authorization_service is not None else []
+            ),
         }
 
     async def send_message(
@@ -193,11 +206,22 @@ class AIWorkspaceService:
         )
         tools = _DEFAULT_TOOL_NAMES if allowed_tool_names is None else frozenset(allowed_tool_names)
         require_content_evidence = self._requires_content_evidence(mode, content)
-        tool_calls = await self._execute_tools(actor_id, tool_requests or [], tools)
         messages = [
             {"role": "system", "content": self._system_prompt(mode, tools, require_content_evidence)},
             {"role": "user", "content": user_message.content},
         ]
+        authorized_content_tools = self._authorized_content_tools(actor_id, conversation.id, tools)
+        tool_calls, authorization_request = await self._execute_explicit_tool_requests(
+            actor_id=str(actor_id),
+            conversation_id=conversation.id,
+            message_id=user_message.id,
+            mode=mode,
+            messages=messages,
+            tool_requests=tool_requests or [],
+            allowed_tool_names=tools,
+            authorized_content_tools=authorized_content_tools,
+            require_content_evidence=require_content_evidence,
+        )
         if tool_calls:
             messages.append({
                 "role": "user",
@@ -205,21 +229,43 @@ class AIWorkspaceService:
                     tool_calls, ensure_ascii=False, separators=(",", ":"),
                 ),
             })
+        if authorization_request is not None:
+            assistant = self._append_authorization_message(
+                conversation.id,
+                mode,
+                tool_calls,
+                authorization_request,
+            )
+            await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
+            return self._serialize_message(assistant)
         try:
-            assistant_content, model_tool_calls = await self._run_model_tool_loop(
+            loop_result = await self._run_model_tool_loop(
                 actor_id=str(actor_id),
+                conversation_id=conversation.id,
+                message_id=user_message.id,
+                mode=mode,
                 messages=messages,
                 allowed_tool_names=tools,
                 require_content_evidence=require_content_evidence,
+                authorized_content_tools=authorized_content_tools,
             )
-            tool_calls.extend(model_tool_calls)
+            tool_calls.extend(loop_result.tool_calls)
+            if loop_result.authorization_request is not None:
+                assistant = self._append_authorization_message(
+                    conversation.id,
+                    mode,
+                    tool_calls,
+                    loop_result.authorization_request,
+                )
+                await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
+                return self._serialize_message(assistant)
             assistant = self._conversations.append_message(
                 AIConversationMessage(
                     id=uuid4().hex,
                     conversation_id=conversation.id,
                     role="assistant",
                     mode=mode,
-                    content=assistant_content,
+                    content=loop_result.content,
                     tool_calls=tool_calls,
                 )
             )
@@ -238,18 +284,121 @@ class AIWorkspaceService:
         await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
         return self._serialize_message(assistant)
 
+    async def decide_authorization(self, request_id: str, *, actor_id: str, conversation_id: str, decision: str) -> dict:
+        if self._authorization_service is None:
+            raise ValidationException("AI conversation authorization is unavailable")
+        original_request = self._authorization_service.get_request_record(
+            request_id,
+            actor_id=str(actor_id),
+            conversation_id=str(conversation_id),
+        )
+        original_mode = str(original_request.continuation.get("mode") or "chat") if original_request is not None else "chat"
+        authorization = await self._authorization_service.decide(
+            request_id,
+            actor_id=str(actor_id),
+            conversation_id=str(conversation_id),
+            decision=decision,
+        )
+        if authorization.get("status") == "denied":
+            existing = self._authorization_message_for_request(conversation_id, request_id)
+            if existing is not None:
+                return {"authorization": authorization, "message": self._serialize_message(existing)}
+            message = self._append_assistant_message(
+                conversation_id,
+                original_mode,
+                "你拒绝了正文读取授权，本轮不会基于模型记忆生成原文结论。",
+                [],
+                status="denied",
+                metadata={"authorization": authorization},
+            )
+            return {"authorization": authorization, "message": self._serialize_message(message)}
+        if authorization.get("status") != "processing":
+            message_id = authorization.get("result_message_id")
+            if message_id:
+                for message in self._conversations.list_messages(conversation_id):
+                    if message.id == message_id:
+                        return {"authorization": authorization, "message": self._serialize_message(message)}
+            return {"authorization": authorization}
+        request = self._authorization_service.get_request_record(
+            request_id,
+            actor_id=str(actor_id),
+            conversation_id=str(conversation_id),
+        )
+        if request is None:
+            raise NotFoundException("AI authorization request not found")
+        continuation = request.continuation
+        messages = continuation.get("messages") if isinstance(continuation, dict) else []
+        pending_call = continuation.get("pending_call") if isinstance(continuation, dict) else None
+        executed_calls = continuation.get("executed_calls") if isinstance(continuation, dict) else []
+        if not isinstance(messages, list) or not isinstance(pending_call, dict):
+            await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed")
+            raise ValidationException("AI authorization continuation is invalid")
+        allowed_names = frozenset(continuation.get("allowed_tool_names") or _DEFAULT_TOOL_NAMES)
+        authorized_content_tools = set(_CONTENT_RETRIEVAL_TOOL_NAMES)
+        executed = await self._execute_model_tool_call(str(actor_id), pending_call, allowed_names)
+        executed_calls = list(executed_calls) if isinstance(executed_calls, list) else []
+        executed_calls.append(executed)
+        messages = list(messages)
+        messages.append({
+            "role": "tool",
+            "tool_call_id": str(pending_call.get("id") or ""),
+            "content": json.dumps(executed["result"], ensure_ascii=False, separators=(",", ":")),
+        })
+        if self._is_rejected_tool_result(executed.get("result")):
+            content = "书源读取工具未能取得证据，已停止重复尝试。请先启用并发布健康书源后重试。"
+            assistant = self._append_assistant_message(conversation_id, continuation.get("mode", "chat"), content, executed_calls)
+            finalized = await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", result_message_id=assistant.id)
+            return {"authorization": finalized, "message": self._serialize_message(assistant)}
+        loop_result = await self._run_model_tool_loop(
+            actor_id=str(actor_id),
+            conversation_id=str(conversation_id),
+            message_id=request.message_id,
+            mode=str(continuation.get("mode") or "chat"),
+            messages=messages,
+            allowed_tool_names=allowed_names,
+            require_content_evidence=bool(continuation.get("require_content_evidence")),
+            authorized_content_tools=authorized_content_tools,
+            executed_calls=executed_calls,
+        )
+        if loop_result.authorization_request is not None:
+            assistant = self._append_authorization_message(conversation_id, continuation.get("mode", "chat"), loop_result.tool_calls, loop_result.authorization_request)
+            await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", result_message_id=assistant.id)
+            return {"authorization": loop_result.authorization_request, "message": self._serialize_message(assistant)}
+        assistant = self._append_assistant_message(
+            conversation_id,
+            str(continuation.get("mode") or "chat"),
+            loop_result.content,
+            loop_result.tool_calls,
+        )
+        finalized = await self._authorization_service.finalize(
+            request_id,
+            actor_id=str(actor_id),
+            status="consumed",
+            result_message_id=assistant.id,
+        )
+        return {"authorization": finalized, "message": self._serialize_message(assistant)}
+
     async def _run_model_tool_loop(
         self,
         *,
         actor_id: str,
+        conversation_id: str,
+        message_id: str,
+        mode: str,
         messages: list[dict],
         allowed_tool_names: frozenset[str],
         require_content_evidence: bool = False,
-    ) -> tuple[str, list[dict]]:
+        authorized_content_tools: set[str] | frozenset[str] | None = None,
+        executed_calls: list[dict] | None = None,
+    ) -> _ToolLoopResult:
         if require_content_evidence and not (_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names):
-            return "未获授权读取书籍原文，不能基于模型记忆生成人物、剧情或世界观结论。", []
-        executed_calls: list[dict] = []
+            return _ToolLoopResult("未获授权读取书籍原文，不能基于模型记忆生成人物、剧情或世界观结论。", [])
+        executed_calls = list(executed_calls or [])
+        authorized_content_tools = set(authorized_content_tools or set())
         seen_tool_calls: set[str] = set()
+        for call in executed_calls:
+            if isinstance(call, dict):
+                seen_tool_calls.add(json.dumps({"name": call.get("name"), "arguments": call.get("arguments")}, ensure_ascii=False, sort_keys=True, default=str))
         for _turn in range(_MAX_MODEL_TOOL_TURNS):
             has_chapter_evidence = self._has_chapter_evidence(executed_calls)
             model_tool_names = allowed_tool_names
@@ -273,26 +422,193 @@ class AIWorkspaceService:
             model_calls = self._model_tool_calls(output, assistant_message)
             if not model_calls:
                 if require_content_evidence and not self._has_chapter_evidence(executed_calls):
-                    return "未能取得可验证的书籍正文证据，不能基于模型记忆生成人物、剧情或世界观结论。", executed_calls
-                return str(assistant_message.get("content") or ""), executed_calls
+                    return _ToolLoopResult("未能取得可验证的书籍正文证据，不能基于模型记忆生成人物、剧情或世界观结论。", executed_calls)
+                return _ToolLoopResult(str(assistant_message.get("content") or ""), executed_calls)
 
             messages.append(assistant_message)
             for model_call in model_calls:
                 fingerprint = self._model_tool_call_fingerprint(model_call)
                 if fingerprint in seen_tool_calls:
-                    return "检测到模型重复调用同一书源工具，已停止循环。请提供更具体的书名、章节或检查书源规则。", executed_calls
+                    return _ToolLoopResult("检测到模型重复调用同一书源工具，已停止循环。请提供更具体的书名、章节或检查书源规则。", executed_calls)
                 seen_tool_calls.add(fingerprint)
+                function = model_call.get("function") if isinstance(model_call, dict) else None
+                name = str(function.get("name") or "") if isinstance(function, dict) else ""
+                if self._authorization_service is not None and name in _CONTENT_RETRIEVAL_TOOL_NAMES and name not in authorized_content_tools:
+                    arguments = self._model_tool_arguments(function.get("arguments") if isinstance(function, dict) else None)
+                    authorization_request = await self._create_authorization_request(
+                        actor_id=actor_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        mode=mode,
+                        messages=messages,
+                        executed_calls=executed_calls,
+                        pending_call=model_call,
+                        allowed_tool_names=allowed_tool_names,
+                        require_content_evidence=require_content_evidence,
+                        requested_tool=name,
+                        requested_arguments=arguments,
+                    )
+                    return _ToolLoopResult("需要你的授权才能读取书源原文。", executed_calls, authorization_request)
                 executed = await self._execute_model_tool_call(actor_id, model_call, allowed_tool_names)
                 executed_calls.append(executed)
                 if self._is_rejected_tool_result(executed.get("result")):
-                    return "书源读取工具未能取得证据，已停止重复尝试。请先启用并发布健康书源后重试。", executed_calls
+                    return _ToolLoopResult("书源读取工具未能取得证据，已停止重复尝试。请先启用并发布健康书源后重试。", executed_calls)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": str(model_call.get("id") or ""),
                     "content": json.dumps(executed["result"], ensure_ascii=False, separators=(",", ":")),
                 })
 
-        return "已达到工具调用上限，请基于已获取的信息继续提问。", executed_calls
+        return _ToolLoopResult("已达到工具调用上限，请基于已获取的信息继续提问。", executed_calls)
+
+    def _authorized_content_tools(self, actor_id: str, conversation_id: str, allowed_tool_names: frozenset[str]) -> set[str]:
+        available = set(_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names)
+        if self._authorization_service is None:
+            return available
+        permissions = {"book_sources.read"} if available else set()
+        return set(self._authorization_service.active_tool_names(actor_id, conversation_id, permissions)) & available
+
+    async def _execute_explicit_tool_requests(
+        self,
+        *,
+        actor_id: str,
+        conversation_id: str,
+        message_id: str,
+        mode: str,
+        messages: list[dict],
+        tool_requests: list[dict],
+        allowed_tool_names: frozenset[str],
+        authorized_content_tools: set[str],
+        require_content_evidence: bool,
+    ) -> tuple[list[dict], dict | None]:
+        if not tool_requests:
+            return [], None
+        safe_requests: list[dict] = []
+        pending: _ToolRequest | None = None
+        for raw_request in tool_requests:
+            request = _ToolRequest.parse(raw_request)
+            if request.name not in _ALL_TOOL_NAMES:
+                raise ValidationException("Unsupported AI tool")
+            if request.name not in allowed_tool_names:
+                raise ValidationException("AI tool is not granted for this request")
+            if (
+                pending is None
+                and self._authorization_service is not None
+                and request.name in _CONTENT_RETRIEVAL_TOOL_NAMES
+                and request.name not in authorized_content_tools
+            ):
+                pending = request
+            else:
+                safe_requests.append(raw_request)
+        executed = await self._execute_tools(actor_id, safe_requests, allowed_tool_names)
+        if pending is None:
+            return executed, None
+        call = {
+            "id": uuid4().hex,
+            "type": "function",
+            "function": {
+                "name": pending.name,
+                "arguments": json.dumps(pending.arguments, ensure_ascii=False),
+            },
+        }
+        continuation_messages = list(messages)
+        if executed:
+            continuation_messages.append({
+                "role": "user",
+                "content": "已执行的只读工具结果如下，请据此回答：\n" + json.dumps(executed, ensure_ascii=False, separators=(",", ":")),
+            })
+        authorization = await self._create_authorization_request(
+            actor_id=actor_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            mode=mode,
+            messages=continuation_messages,
+            executed_calls=executed,
+            pending_call=call,
+            allowed_tool_names=allowed_tool_names,
+            require_content_evidence=require_content_evidence,
+            requested_tool=pending.name,
+            requested_arguments=pending.arguments,
+        )
+        return executed, authorization
+
+    async def _create_authorization_request(
+        self,
+        *,
+        actor_id: str,
+        conversation_id: str,
+        message_id: str,
+        mode: str,
+        messages: list[dict],
+        executed_calls: list[dict],
+        pending_call: dict,
+        allowed_tool_names: frozenset[str],
+        require_content_evidence: bool,
+        requested_tool: str,
+        requested_arguments: dict,
+    ) -> dict:
+        continuation = {
+            "messages": messages,
+            "executed_calls": executed_calls,
+            "pending_call": pending_call,
+            "mode": mode,
+            "allowed_tool_names": sorted(allowed_tool_names),
+            "require_content_evidence": require_content_evidence,
+        }
+        return await self._authorization_service.create_request(
+            actor_id=actor_id,
+            conversation_id=conversation_id,
+            message_id=message_id,
+            mode=mode,
+            requested_tools=[requested_tool],
+            requested_calls=[{"name": requested_tool, "arguments": requested_arguments}],
+            continuation=continuation,
+        )
+
+    def _append_authorization_message(self, conversation_id: str, mode: str, tool_calls: list[dict], authorization_request: dict) -> AIConversationMessage:
+        return self._conversations.append_message(
+            AIConversationMessage(
+                id=uuid4().hex,
+                conversation_id=conversation_id,
+                role="assistant",
+                mode=mode,
+                content="需要你的授权才能读取书源原文。",
+                status="authorization_required",
+                tool_calls=tool_calls,
+                metadata={"authorization_request": authorization_request},
+            )
+        )
+
+    def _append_assistant_message(
+        self,
+        conversation_id: str,
+        mode: str,
+        content: str,
+        tool_calls: list[dict],
+        *,
+        status: str = "succeeded",
+        metadata: dict | None = None,
+    ) -> AIConversationMessage:
+        return self._conversations.append_message(
+            AIConversationMessage(
+                id=uuid4().hex,
+                conversation_id=conversation_id,
+                role="assistant",
+                mode=mode if mode in MODE_PROMPTS else "chat",
+                content=content,
+                status=status,
+                tool_calls=tool_calls,
+                metadata=metadata or {},
+            )
+        )
+
+    def _authorization_message_for_request(self, conversation_id: str, request_id: str) -> AIConversationMessage | None:
+        for message in self._conversations.list_messages(conversation_id):
+            metadata = message.metadata if isinstance(message.metadata, dict) else {}
+            request = metadata.get("authorization")
+            if isinstance(request, dict) and request.get("id") == request_id:
+                return message
+        return None
 
     async def _execute_tools(
         self,
@@ -585,15 +901,19 @@ class AIWorkspaceService:
 
     @staticmethod
     def _serialize_message(item: AIConversationMessage) -> dict:
-        return {
+        payload = {
             "id": item.id,
             "role": item.role,
             "mode": item.mode,
             "content": item.content,
             "status": item.status,
             "tool_calls": item.tool_calls,
+            "metadata": item.metadata,
             "created_at": item.created_at.isoformat(),
         }
+        if isinstance(item.metadata, dict) and item.metadata.get("authorization_request") is not None:
+            payload["authorization_request"] = item.metadata["authorization_request"]
+        return payload
 
 
 def _sanitize(value):
