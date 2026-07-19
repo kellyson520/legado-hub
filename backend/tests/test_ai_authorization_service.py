@@ -113,6 +113,7 @@ async def test_decision_is_idempotent_and_creates_only_one_grant():
     assert first["claimed"] is True
     assert second["claimed"] is False
     assert repo.count_active_grants(actor_id="7", conversation_id="c1") == 1
+    assert next(iter(repo.grants.values())).tool_names == ["source.search"]
 
 
 @pytest.mark.asyncio

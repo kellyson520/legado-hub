@@ -73,7 +73,15 @@ class AIConversationAuthorizationService:
             await self._audit_event(actor_id, "ai.authorization.requested", saved.id)
         return self.serialize_request(saved)
 
-    async def decide(self, request_id: str, *, actor_id: str, conversation_id: str, decision: str) -> dict:
+    async def decide(
+        self,
+        request_id: str,
+        *,
+        actor_id: str,
+        conversation_id: str,
+        decision: str,
+        allowed_tool_names: set[str] | frozenset[str] | None = None,
+    ) -> dict:
         if decision not in DECISIONS:
             raise ValidationException("Invalid authorization decision")
         request = self._repo.get_request(request_id, str(actor_id), str(conversation_id))
@@ -114,14 +122,17 @@ class AIConversationAuthorizationService:
         if decision in {"conversation", "remember"}:
             scope = "conversation" if decision == "conversation" else "remembered"
             conversation_scope = str(conversation_id) if scope == "conversation" else None
+            scope_tools = set(claimed.requested_tools) & CONTENT_TOOLS
+            if allowed_tool_names is not None:
+                scope_tools &= set(allowed_tool_names)
             existing = next(
                 (
                     grant for grant in self._repo.list_active_grants(str(actor_id), conversation_scope)
-                    if grant.scope == scope and set(grant.tool_names) >= set(claimed.requested_tools)
+                    if grant.scope == scope and set(grant.tool_names) >= scope_tools
                 ),
                 None,
             )
-            if existing is None:
+            if existing is None and scope_tools:
                 ttl = CONVERSATION_GRANT_TTL if scope == "conversation" else REMEMBERED_GRANT_TTL
                 now = datetime.utcnow()
                 self._repo.create_grant(
@@ -130,7 +141,7 @@ class AIConversationAuthorizationService:
                         actor_id=str(actor_id),
                         conversation_id=conversation_scope,
                         scope=scope,
-                        tool_names=sorted(CONTENT_TOOLS),
+                        tool_names=sorted(scope_tools),
                         expires_at=now + ttl,
                         created_at=now,
                         updated_at=now,
@@ -247,6 +258,7 @@ class AIConversationAuthorizationService:
     def serialize_request(request: AIConversationAuthorizationRequest, *, claimed: bool | None = None) -> dict:
         payload = {
             "id": request.id,
+            "message_id": request.message_id,
             "conversation_id": request.conversation_id,
             "tools": list(request.requested_tools),
             "purpose": request.purpose,

@@ -100,6 +100,44 @@ class ResumePlatform(Platform):
         return self.responses.pop(0)
 
 
+class SearchThenTocPlatform(Platform):
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+        self.responses = [
+            {
+                "output": {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "search-1",
+                            "type": "function",
+                            "function": {"name": "source.search", "arguments": json.dumps({"keyword": "剑来"})},
+                        }],
+                    },
+                },
+            },
+            {
+                "output": {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{
+                            "id": "toc-1",
+                            "type": "function",
+                            "function": {"name": "toc.get", "arguments": json.dumps({"book_id": "book-1"})},
+                        }],
+                    },
+                },
+            },
+        ]
+
+    async def invoke_chat(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.responses.pop(0)
+
+
 @pytest.mark.asyncio
 async def test_model_content_call_pauses_before_execution(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-authorization.sqlite3"))
@@ -173,6 +211,43 @@ async def test_explicit_content_tool_request_also_pauses_before_execution(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_new_content_question_does_not_reuse_another_pending_continuation(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-authorization-conflict.sqlite3"))
+
+    from app.application.services.ai_authorization_service import AIConversationAuthorizationService
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_authorization_repo_impl import SQLiteAIAuthorizationRepository
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    audit = Audit()
+    authorization = AIConversationAuthorizationService(repo=SQLiteAIAuthorizationRepository(), audit=audit)
+    service = AIWorkspaceService(
+        Platform(),
+        SQLiteAIConversationRepository(),
+        Source(),
+        Tasks(),
+        audit,
+        novel_tool_executor=Executor(),
+        authorization_service=authorization,
+    )
+    conversation = await service.create_conversation("7", "多个问题")
+    first = await service.send_message(
+        conversation["id"], "7", "character", "分析主角",
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
+    )
+    second = await service.send_message(
+        conversation["id"], "7", "character", "分析反派",
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
+    )
+
+    assert second["status"] == "failed"
+    assert "已有一条正文读取授权待处理" in second["content"]
+    assert [item["id"] for item in authorization.list_pending("7", conversation["id"])] == [first["authorization_request"]["id"]]
+
+
+@pytest.mark.asyncio
 async def test_once_decision_resumes_saved_call_exactly_once(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-authorization-resume.sqlite3"))
 
@@ -228,6 +303,51 @@ async def test_once_decision_resumes_saved_call_exactly_once(tmp_path, monkeypat
     )
     assert repeated["message"]["id"] == resumed["message"]["id"]
     assert len(executor.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_once_decision_does_not_expand_search_authorization_to_toc(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-authorization-scope.sqlite3"))
+
+    from app.application.services.ai_authorization_service import AIConversationAuthorizationService
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_authorization_repo_impl import SQLiteAIAuthorizationRepository
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    platform = SearchThenTocPlatform()
+    executor = Executor()
+    audit = Audit()
+    authorization = AIConversationAuthorizationService(repo=SQLiteAIAuthorizationRepository(), audit=audit)
+    service = AIWorkspaceService(
+        platform,
+        SQLiteAIConversationRepository(),
+        Source(),
+        Tasks(),
+        audit,
+        novel_tool_executor=executor,
+        authorization_service=authorization,
+    )
+    conversation = await service.create_conversation("7", "授权范围")
+    pending = await service.send_message(
+        conversation["id"], "7", "chat", "搜索剑来",
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
+    )
+
+    resumed = await service.decide_authorization(
+        pending["authorization_request"]["id"],
+        actor_id="7",
+        conversation_id=conversation["id"],
+        decision="once",
+        rbac_permissions={"book_sources.read"},
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
+    )
+
+    assert executor.calls == [("source.search", {"keyword": "剑来", "tenant_id": "7"})]
+    assert resumed["message"]["status"] == "authorization_required"
+    assert resumed["authorization"]["status"] == "failed"
+    assert resumed["next_authorization"]["tools"] == ["toc.get"]
 
 
 @pytest.mark.asyncio
@@ -322,6 +442,7 @@ async def test_reloading_conversation_hydrates_resolved_authorization_card(tmp_p
 
     assert original_card["status"] != "authorization_required"
     assert original_card["authorization_request"]["status"] == "denied"
+    assert original_card["content"] == "你拒绝了正文读取授权，本轮不会基于模型记忆生成原文结论。"
 
 
 @pytest.mark.asyncio

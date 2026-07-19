@@ -15,6 +15,7 @@ export type AIConversationAuthorizationDecision = 'once' | 'conversation' | 'rem
 
 export interface AIConversationAuthorizationRequest {
   id: string
+  message_id?: string
   conversation_id?: string
   tools: string[]
   purpose: string
@@ -120,7 +121,7 @@ export function decideAIConversationAuthorization(
   conversationId: string,
   requestId: string,
   payload: { decision: AIConversationAuthorizationDecision },
-): Promise<ApiEnvelope<{ authorization: AIConversationAuthorizationRequest; message?: AIConversationMessage }>> {
+): Promise<ApiEnvelope<{ authorization: AIConversationAuthorizationRequest; next_authorization?: AIConversationAuthorizationRequest; message?: AIConversationMessage }>> {
   return apiClient.post(`/ai/conversations/${conversationId}/authorization-requests/${requestId}/decision`, payload)
 }
 

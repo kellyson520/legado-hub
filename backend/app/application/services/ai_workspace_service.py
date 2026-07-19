@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from app.core.pagination import paginated_result
 from app.core.redaction import sanitize_error, sanitize_for_boundary
-from app.core.exceptions import AuthorizationException, NotFoundException, ValidationException
+from app.core.exceptions import AuthorizationException, ConflictException, NotFoundException, ValidationException
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 from app.domain.entities.auth import AuditEvent
 
@@ -234,6 +234,16 @@ class AIWorkspaceService:
                 ),
             })
         if authorization_request is not None:
+            if authorization_request.get("message_id") and authorization_request.get("message_id") != user_message.id:
+                assistant = self._append_assistant_message(
+                    conversation.id,
+                    mode,
+                    "已有一条正文读取授权待处理，请先完成或拒绝它，再发起新的原文读取。",
+                    tool_calls,
+                    status="failed",
+                )
+                await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
+                return self._serialize_message(assistant)
             existing = self._find_authorization_message(conversation.id, authorization_request.get("id", ""))
             if existing is not None:
                 await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
@@ -259,6 +269,16 @@ class AIWorkspaceService:
             )
             tool_calls.extend(loop_result.tool_calls)
             if loop_result.authorization_request is not None:
+                if loop_result.authorization_request.get("message_id") and loop_result.authorization_request.get("message_id") != user_message.id:
+                    assistant = self._append_assistant_message(
+                        conversation.id,
+                        mode,
+                        "已有一条正文读取授权待处理，请先完成或拒绝它，再发起新的原文读取。",
+                        tool_calls,
+                        status="failed",
+                    )
+                    await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
+                    return self._serialize_message(assistant)
                 existing = self._find_authorization_message(conversation.id, loop_result.authorization_request.get("id", ""))
                 if existing is not None:
                     await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
@@ -323,6 +343,7 @@ class AIWorkspaceService:
             actor_id=str(actor_id),
             conversation_id=str(conversation_id),
             decision=decision,
+            allowed_tool_names=set(allowed_tool_names),
         )
         if authorization.get("status") == "denied":
             existing = self._find_authorization_message(conversation_id, request_id, resolved_only=True)
@@ -377,7 +398,7 @@ class AIWorkspaceService:
             return {"authorization": finalized, "message": self._serialize_message(message)}
         if request.decision in {"conversation", "remember"}:
             active = self._authorization_service.active_tool_names(str(actor_id), str(conversation_id), set(rbac_permissions))
-            if not (set(request.requested_tools) & active):
+            if not set(request.requested_tools).issubset(active):
                 finalized = await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", claim_token=request.claim_token)
                 message = self._append_assistant_message(conversation_id, str(continuation.get("mode") or "chat"), "授权已撤销或过期，未执行正文读取。", [], status="failed", metadata={"authorization": finalized})
                 return {"authorization": finalized, "message": self._serialize_message(message)}
@@ -389,13 +410,44 @@ class AIWorkspaceService:
                 actor_id=str(actor_id),
                 claim_token=request.claim_token,
             )
+            if request.decision in {"conversation", "remember"}:
+                active = self._authorization_service.active_tool_names(
+                    str(actor_id),
+                    str(conversation_id),
+                    set(rbac_permissions),
+                )
+                if not set(request.requested_tools).issubset(active):
+                    raise AuthorizationException("AI authorization grant was revoked")
 
-        authorized_content_tools = set(_CONTENT_RETRIEVAL_TOOL_NAMES)
+        async def authorization_failure(content: str) -> dict:
+            try:
+                finalized = await self._authorization_service.finalize(
+                    request_id,
+                    actor_id=str(actor_id),
+                    status="failed",
+                    claim_token=request.claim_token,
+                )
+            except (AuthorizationException, ConflictException):
+                finalized = {"id": request_id, "status": "failed", "result_message_id": None}
+            message = self._append_assistant_message(
+                conversation_id,
+                str(continuation.get("mode") or "chat"),
+                content,
+                [],
+                status="failed",
+                metadata={"authorization": finalized},
+            )
+            return {"authorization": finalized, "message": self._serialize_message(message)}
+
+        authorized_content_tools = set(request.requested_tools) & set(_CONTENT_RETRIEVAL_TOOL_NAMES)
         executed_calls = list(executed_calls) if isinstance(executed_calls, list) else []
         messages = list(messages)
         last_executed: dict | None = None
         for pending_call in pending_calls:
-            await renew_claim()
+            try:
+                await renew_claim()
+            except (AuthorizationException, ConflictException):
+                return await authorization_failure("授权已撤销或过期，未执行正文读取。")
             executed = await self._execute_model_tool_call(str(actor_id), pending_call, allowed_names)
             executed_calls.append(executed)
             last_executed = executed
@@ -411,22 +463,44 @@ class AIWorkspaceService:
             assistant = self._append_assistant_message(conversation_id, continuation.get("mode", "chat"), content, executed_calls)
             finalized = await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", claim_token=request.claim_token, result_message_id=assistant.id)
             return {"authorization": finalized, "message": self._serialize_message(assistant)}
-        loop_result = await self._run_model_tool_loop(
-            actor_id=str(actor_id),
-            conversation_id=str(conversation_id),
-            message_id=request.message_id,
-            mode=str(continuation.get("mode") or "chat"),
-            messages=messages,
-            allowed_tool_names=allowed_names,
-            require_content_evidence=bool(continuation.get("require_content_evidence")),
-            authorized_content_tools=authorized_content_tools,
-            executed_calls=executed_calls,
-            renew_claim=renew_claim,
-        )
+        try:
+            loop_result = await self._run_model_tool_loop(
+                actor_id=str(actor_id),
+                conversation_id=str(conversation_id),
+                message_id=request.message_id,
+                mode=str(continuation.get("mode") or "chat"),
+                messages=messages,
+                allowed_tool_names=allowed_names,
+                require_content_evidence=bool(continuation.get("require_content_evidence")),
+                authorized_content_tools=authorized_content_tools,
+                executed_calls=executed_calls,
+                renew_claim=renew_claim,
+                before_authorization_request=lambda: self._authorization_service.finalize(
+                    request_id,
+                    actor_id=str(actor_id),
+                    status="failed",
+                    claim_token=request.claim_token,
+                ),
+            )
+        except (AuthorizationException, ConflictException):
+            return await authorization_failure("授权已撤销或过期，未执行正文读取。")
         if loop_result.authorization_request is not None:
             assistant = self._append_authorization_message(conversation_id, continuation.get("mode", "chat"), loop_result.tool_calls, loop_result.authorization_request)
-            await self._authorization_service.finalize(request_id, actor_id=str(actor_id), status="failed", claim_token=request.claim_token, result_message_id=assistant.id)
-            return {"authorization": loop_result.authorization_request, "message": self._serialize_message(assistant)}
+            previous = self._authorization_service.get_request_record(
+                request_id,
+                actor_id=str(actor_id),
+                conversation_id=str(conversation_id),
+            )
+            authorization = (
+                self._authorization_service.serialize_request(previous)
+                if previous is not None
+                else {"id": request_id, "status": "failed"}
+            )
+            return {
+                "authorization": authorization,
+                "next_authorization": loop_result.authorization_request,
+                "message": self._serialize_message(assistant),
+            }
         assistant = self._append_assistant_message(
             conversation_id,
             str(continuation.get("mode") or "chat"),
@@ -470,6 +544,7 @@ class AIWorkspaceService:
         authorized_content_tools: set[str] | frozenset[str] | None = None,
         executed_calls: list[dict] | None = None,
         renew_claim: Callable[[], Awaitable[None]] | None = None,
+        before_authorization_request: Callable[[], Awaitable[object]] | None = None,
     ) -> _ToolLoopResult:
         if require_content_evidence and not (_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names):
             return _ToolLoopResult("未获授权读取书籍原文，不能基于模型记忆生成人物、剧情或世界观结论。", [])
@@ -517,6 +592,8 @@ class AIWorkspaceService:
                 name = str(function.get("name") or "") if isinstance(function, dict) else ""
                 if self._authorization_service is not None and name in _CONTENT_RETRIEVAL_TOOL_NAMES and name not in authorized_content_tools:
                     arguments = self._model_tool_arguments(function.get("arguments") if isinstance(function, dict) else None)
+                    if before_authorization_request is not None:
+                        await before_authorization_request()
                     authorization_request = await self._create_authorization_request(
                         actor_id=actor_id,
                         conversation_id=conversation_id,
@@ -730,10 +807,15 @@ class AIWorkspaceService:
         payload["metadata"] = safe_metadata
         if request.status == "denied":
             payload["status"] = "denied"
+            payload["content"] = "你拒绝了正文读取授权，本轮不会基于模型记忆生成原文结论。"
         elif request.status == "consumed":
             payload["status"] = "succeeded"
+            payload["content"] = "正文读取授权已批准。"
         elif request.status in {"failed", "expired"}:
             payload["status"] = "failed"
+            payload["content"] = "正文读取授权已过期或未完成，请重新发起读取。"
+        elif request.status == "processing":
+            payload["content"] = "授权正在处理中，请稍候。"
         return payload
 
     async def _execute_tools(

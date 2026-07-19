@@ -292,3 +292,58 @@ test('刷新时会把缺少消息记录的待授权请求补成授权卡片', as
   expect(await screen.findByText('读取正文后再回答')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '本次允许' })).toBeInTheDocument()
 })
+
+test('快速切换对话时旧的异步加载不会覆盖当前对话', async () => {
+  const resolveConversation: Record<string, (value: unknown) => void> = {}
+  aiMocks.listAIConversations.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [
+      { id: 'conversation-1', title: '对话 A', created_at: '2026-07-13T00:00:00Z' },
+      { id: 'conversation-2', title: '对话 B', created_at: '2026-07-13T00:00:00Z' },
+    ],
+    meta: { total: 2 },
+    trace_id: null,
+  })
+  aiMocks.getAIConversation.mockImplementation((conversationId: string) => new Promise((resolve) => {
+    resolveConversation[conversationId] = resolve
+  }))
+  aiMocks.listAIConversationAuthorizations.mockResolvedValue({ success: true, code: 'OK', message: 'ok', data: [], meta: {}, trace_id: null })
+  aiMocks.listAIAuthorizationGrants.mockResolvedValue({ success: true, code: 'OK', message: 'ok', data: [], meta: {}, trace_id: null })
+
+  render(<AIWorkspacePage />)
+  fireEvent.click(await screen.findByText('对话 B'))
+  resolveConversation['conversation-2']({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      id: 'conversation-2',
+      title: '对话 B',
+      created_at: '2026-07-13T00:00:00Z',
+      messages: [{ id: 'message-b', role: 'assistant', mode: 'chat', content: 'B 的回答', status: 'succeeded', tool_calls: [], created_at: '2026-07-13T00:00:01Z' }],
+    },
+    meta: {},
+    trace_id: null,
+  })
+  expect(await screen.findByText('B 的回答')).toBeInTheDocument()
+
+  resolveConversation['conversation-1']({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      id: 'conversation-1',
+      title: '对话 A',
+      created_at: '2026-07-13T00:00:00Z',
+      messages: [{ id: 'message-a', role: 'assistant', mode: 'chat', content: 'A 的回答', status: 'succeeded', tool_calls: [], created_at: '2026-07-13T00:00:01Z' }],
+    },
+    meta: {},
+    trace_id: null,
+  })
+  await waitFor(() => {
+    expect(screen.getByText('B 的回答')).toBeInTheDocument()
+    expect(screen.queryByText('A 的回答')).not.toBeInTheDocument()
+  })
+})

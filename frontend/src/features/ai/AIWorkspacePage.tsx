@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   createAIConversation,
@@ -77,6 +77,7 @@ export function AIWorkspacePage() {
   const [pendingAuthorizations, setPendingAuthorizations] = useState<AIConversationAuthorizationRequest[]>([])
   const [authorizationGrants, setAuthorizationGrants] = useState<AIConversationAuthorizationGrant[]>([])
   const [authorizationBusy, setAuthorizationBusy] = useState<string | null>(null)
+  const loadGeneration = useRef(0)
 
   const toolRequests = useMemo<Array<{ name: string; arguments: Record<string, string> }>>(() => enabledTools.map((name) => ({
     name,
@@ -86,9 +87,12 @@ export function AIWorkspacePage() {
   const canSend = Boolean(activeConversationId && content.trim() && !sending && (!requiresSourceVersion || sourceVersionId.trim()))
 
   const loadConversation = async (conversationId: string) => {
+    const generation = ++loadGeneration.current
     const response = await getAIConversation(conversationId)
+    if (generation !== loadGeneration.current) return
     setActiveConversationId(conversationId)
     const hydratePendingCards = (pending: AIConversationAuthorizationRequest[]) => {
+      if (generation !== loadGeneration.current) return
       const existingRequestIds = new Set(
         response.data.messages
           .map((message) => message.authorization_request?.id)
@@ -113,10 +117,12 @@ export function AIWorkspacePage() {
         listAIConversationAuthorizations(conversationId),
         listAIAuthorizationGrants(conversationId),
       ])
+      if (generation !== loadGeneration.current) return
       setPendingAuthorizations(pending.data)
       setAuthorizationGrants(grants.data)
       hydratePendingCards(pending.data)
     } catch {
+      if (generation !== loadGeneration.current) return
       const pending = response.data.authorization_requests ?? []
       setPendingAuthorizations(pending)
       hydratePendingCards(pending)
@@ -128,6 +134,7 @@ export function AIWorkspacePage() {
       void loadConversation(conversations[0].id)
     }
     if (!loadingConversations && conversations.length === 0) {
+      loadGeneration.current += 1
       setActiveConversationId(null)
       setConversation(null)
     }
@@ -135,6 +142,7 @@ export function AIWorkspacePage() {
 
   const createConversation = async () => {
     if (sending) return
+    loadGeneration.current += 1
     setSending(true)
     try {
       const response = await createAIConversation({ title: t('新的 AI 对话') })
