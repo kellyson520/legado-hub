@@ -60,6 +60,40 @@ test('client retries the original request after refresh succeeds', async () => {
   expect(attempt).toBe(2)
 })
 
+test('client clears auth state when the retried request is still unauthorized', async () => {
+  const onAuthFailure = vi.fn()
+  let attempt = 0
+  const client = createApiClient({
+    getAccessToken: () => 'stale-token',
+    onRefresh: async () => ({
+      accessToken: 'fresh-token',
+      refreshToken: 'fresh-refresh',
+      user: { id: '1', username: 'admin', permissions: [] },
+    }),
+    onAuthFailure,
+    adapter: async (config) => {
+      attempt += 1
+      throw new AxiosError(
+        'still unauthorized',
+        'ERR_BAD_REQUEST',
+        config,
+        undefined,
+        {
+          data: { success: false, code: 'AUTHENTICATION_ERROR', message: 'still unauthorized', data: null, meta: {}, trace_id: null },
+          status: 401,
+          statusText: 'Unauthorized',
+          headers: {},
+          config,
+        }
+      )
+    },
+  })
+
+  await expect(client.get('/api/dashboard')).rejects.toBeInstanceOf(AxiosError)
+  expect(attempt).toBe(2)
+  expect(onAuthFailure).toHaveBeenCalledWith({ clearStoredToken: true })
+})
+
 test('auth provider exposes permissions from the current user payload', async () => {
   render(
     <AuthProvider
@@ -124,4 +158,57 @@ test('stream requests use the shared base URL and authorization binding', async 
   const [, init] = fetchMock.mock.calls[0]
   expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer stream-token')
   fetchMock.mockRestore()
+})
+
+test('stream requests clear auth state when the retried response is still unauthorized', async () => {
+  const onAuthFailure = vi.fn()
+  const fetchMock = vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response('', { status: 401 }))
+    .mockResolvedValueOnce(new Response('', { status: 401 }))
+  const client = createApiClient({
+    baseURL: '/api',
+    getAccessToken: () => 'stale-token',
+    onRefresh: async () => ({
+      accessToken: 'fresh-token',
+      refreshToken: 'fresh-refresh',
+      user: { id: '1', username: 'admin', permissions: [] },
+    }),
+    onAuthFailure,
+  })
+
+  const response = await client.stream('/events/stream')
+
+  expect(response.status).toBe(401)
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  expect(onAuthFailure).toHaveBeenCalledWith({ clearStoredToken: true })
+  fetchMock.mockRestore()
+})
+
+test('auth refresh can mark identity requests as non-refreshable', async () => {
+  const onRefresh = vi.fn(async () => ({
+    accessToken: 'fresh-token',
+    refreshToken: 'fresh-refresh',
+    user: { id: '1', username: 'admin', permissions: [] },
+  }))
+  const client = createApiClient({
+    onRefresh,
+    adapter: async (config) => {
+      throw new AxiosError(
+        'identity unauthorized',
+        'ERR_BAD_REQUEST',
+        config,
+        undefined,
+        {
+          data: { success: false, code: 'AUTHENTICATION_ERROR', message: 'identity unauthorized', data: null, meta: {}, trace_id: null },
+          status: 401,
+          statusText: 'Unauthorized',
+          headers: {},
+          config,
+        }
+      )
+    },
+  })
+
+  await expect(client.get('/auth/me', { skipAuthRefresh: true })).rejects.toBeInstanceOf(AxiosError)
+  expect(onRefresh).not.toHaveBeenCalled()
 })

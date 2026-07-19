@@ -1,4 +1,4 @@
-import { apiClient } from '@/api/client'
+import { apiClient, type ApiRequestConfig } from '@/api/client'
 import type { AuthSession } from '@/api/types'
 
 export interface LoginPayload {
@@ -53,7 +53,7 @@ export async function logout() {
   return apiClient.post<null>('/auth/logout')
 }
 
-export async function getCurrentUser() {
-  const response = await apiClient.get<CurrentIdentity>('/auth/me')
+export async function getCurrentUser(config?: ApiRequestConfig) {
+  const response = await apiClient.get<CurrentIdentity>('/auth/me', config)
   return response.data
 }

@@ -9,20 +9,26 @@ import axios, {
 
 import type { ApiEnvelope, AuthSession } from './types'
 
-type RetryableConfig = InternalAxiosRequestConfig & { _retry?: boolean }
+type RetryableConfig = InternalAxiosRequestConfig & { _retry?: boolean; skipAuthRefresh?: boolean }
+
+export type ApiRequestConfig = AxiosRequestConfig & { skipAuthRefresh?: boolean }
+
+export interface AuthFailureOptions {
+  clearStoredToken?: boolean
+}
 
 export interface CreateApiClientOptions {
   adapter?: AxiosAdapter
   baseURL?: string
   getAccessToken?: () => string | null
   onRefresh?: () => Promise<AuthSession | null>
-  onAuthFailure?: () => void
+  onAuthFailure?: (options?: AuthFailureOptions) => void
 }
 
 export interface AuthClientBinding {
   getAccessToken: () => string | null
   refresh: () => Promise<AuthSession | null>
-  onAuthFailure: () => void
+  onAuthFailure: (options?: AuthFailureOptions) => void
 }
 
 let authBinding: AuthClientBinding | null = null
@@ -84,7 +90,14 @@ export function createApiClient(options: CreateApiClientOptions = {}) {
         return Promise.reject(error)
       }
 
-      if (error.response?.status === 401 && !config._retry && !config.url?.includes('/auth/refresh') && options.onRefresh) {
+      if (error.response?.status === 401) {
+        if (config._retry) {
+          options.onAuthFailure?.({ clearStoredToken: true })
+          return Promise.reject(error)
+        }
+        if (config.skipAuthRefresh || config.url?.includes('/auth/refresh') || !options.onRefresh) {
+          return Promise.reject(error)
+        }
         config._retry = true
         const session = await options.onRefresh()
         if (session?.accessToken) {
@@ -100,15 +113,15 @@ export function createApiClient(options: CreateApiClientOptions = {}) {
 
   return {
     raw: instance,
-    get: async <T>(url: string, config?: AxiosRequestConfig) =>
+    get: async <T>(url: string, config?: ApiRequestConfig) =>
       unwrapResponse<T>(await instance.get<ApiEnvelope<T>>(url, config)),
-    post: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    post: async <T>(url: string, data?: unknown, config?: ApiRequestConfig) =>
       unwrapResponse<T>(await instance.post<ApiEnvelope<T>>(url, data, config)),
-    put: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    put: async <T>(url: string, data?: unknown, config?: ApiRequestConfig) =>
       unwrapResponse<T>(await instance.put<ApiEnvelope<T>>(url, data, config)),
-    patch: async <T>(url: string, data?: unknown, config?: AxiosRequestConfig) =>
+    patch: async <T>(url: string, data?: unknown, config?: ApiRequestConfig) =>
       unwrapResponse<T>(await instance.patch<ApiEnvelope<T>>(url, data, config)),
-    delete: async <T>(url: string, config?: AxiosRequestConfig) =>
+    delete: async <T>(url: string, config?: ApiRequestConfig) =>
       unwrapResponse<T>(await instance.delete<ApiEnvelope<T>>(url, config)),
     stream: async (url: string, init: RequestInit = {}) => {
       const requestUrl = resolveRequestUrl(options.baseURL ?? '/', url)
@@ -122,6 +135,7 @@ export function createApiClient(options: CreateApiClientOptions = {}) {
         if (session?.accessToken) {
           headers.set('Authorization', `Bearer ${session.accessToken}`)
           response = await fetch(requestUrl, { ...init, headers })
+          if (response.status === 401) options.onAuthFailure?.({ clearStoredToken: true })
         } else {
           options.onAuthFailure?.()
         }
@@ -135,5 +149,5 @@ export const apiClient = createApiClient({
   baseURL: '/api',
   getAccessToken: () => authBinding?.getAccessToken() ?? null,
   onRefresh: () => authBinding?.refresh() ?? Promise.resolve(null),
-  onAuthFailure: () => authBinding?.onAuthFailure(),
+  onAuthFailure: (options) => authBinding?.onAuthFailure(options),
 })

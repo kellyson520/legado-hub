@@ -1,9 +1,43 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { AuthSession } from '@/api/types'
-import { configureAuthClient } from '@/api/client'
+import { configureAuthClient, type AuthFailureOptions } from '@/api/client'
 import { createAuthSession, getCurrentUser, login as loginRequest, logout as logoutRequest, refreshSession } from '@/api/modules/auth'
 import { hasPermission as checkPermission } from '@/lib/permissions'
+
+const REFRESH_TOKEN_STORAGE_KEY = 'legado.refresh-token'
+const SESSION_RESTORE_TIMEOUT_MS = 10_000
+
+function readStoredRefreshToken() {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.sessionStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)
+      ?? window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeStoredRefreshToken(token: string | null) {
+  if (typeof window === 'undefined') return
+  try {
+    if (token) {
+      window.sessionStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token)
+      window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token)
+    } else {
+      window.sessionStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY)
+      window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY)
+    }
+  } catch {
+    // Private browsing modes may deny storage access; in-memory auth still works.
+  }
+}
+
+function isUnauthorized(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const response = (error as { response?: { status?: unknown } }).response
+  return response?.status === 401
+}
 
 interface AuthContextValue {
   session: AuthSession | null
@@ -32,22 +66,31 @@ export function AuthProvider({
   const [restoreFailed, setRestoreFailed] = useState(false)
   const sessionRef = useRef<AuthSession | null>(bootstrapSession ?? null)
   const refreshPromiseRef = useRef<Promise<AuthSession | null> | null>(null)
+  const refreshAttemptRef = useRef(0)
+
+  function invalidateRefreshAttempt() {
+    refreshAttemptRef.current += 1
+    refreshPromiseRef.current = null
+  }
 
   function setSession(next: AuthSession | null, persist = true) {
+    if (!next) invalidateRefreshAttempt()
     sessionRef.current = next
     setSessionState(next)
     if (!persist || typeof window === 'undefined') return
-    if (next) window.sessionStorage.setItem('legado.refresh-token', next.refreshToken)
-    else window.sessionStorage.removeItem('legado.refresh-token')
+    writeStoredRefreshToken(next?.refreshToken ?? null)
   }
 
   async function refresh(): Promise<AuthSession | null> {
     if (refreshPromiseRef.current) return refreshPromiseRef.current
-    refreshPromiseRef.current = (async () => {
-      const refreshToken = sessionRef.current?.refreshToken ?? window.sessionStorage.getItem('legado.refresh-token')
+    const refreshAttempt = refreshAttemptRef.current + 1
+    refreshAttemptRef.current = refreshAttempt
+    const currentPromise = (async () => {
+      const refreshToken = sessionRef.current?.refreshToken ?? readStoredRefreshToken()
       if (!refreshToken) return null
       try {
         const tokens = await refreshSession(refreshToken)
+        if (refreshAttemptRef.current !== refreshAttempt) return null
         const provisionalRefreshToken = tokens.refresh_token ?? refreshToken
         sessionRef.current = {
           accessToken: tokens.access_token,
@@ -59,7 +102,8 @@ export function AuthProvider({
             permissions: tokens.permissions ?? [],
           },
         }
-        const identity = await getCurrentUser()
+        const identity = await getCurrentUser({ skipAuthRefresh: true })
+        if (refreshAttemptRef.current !== refreshAttempt) return null
         const next = createAuthSession(
           tokens,
           identity,
@@ -70,17 +114,21 @@ export function AuthProvider({
         )
         setSession(next)
         return next
-      } catch {
-        setSession(null)
+      } catch (error) {
+        // Keep the token for a retry when the failure is transient. An explicit
+        // 401 means the server rejected this refresh session and requires login.
+        if (refreshAttemptRef.current === refreshAttempt) setSession(null, isUnauthorized(error))
         return null
       } finally {
-        refreshPromiseRef.current = null
+        if (refreshAttemptRef.current === refreshAttempt) refreshPromiseRef.current = null
       }
     })()
-    return refreshPromiseRef.current
+    refreshPromiseRef.current = currentPromise
+    return currentPromise
   }
 
   async function login(username: string, password: string) {
+    invalidateRefreshAttempt()
     const tokens = await loginRequest({ username, password })
     const provisional = createAuthSession(tokens, { user_id: 0, permissions: tokens.permissions ?? [], roles: tokens.roles ?? [], display_name: tokens.display_name, session_id: null }, username)
     setSession(provisional)
@@ -94,11 +142,12 @@ export function AuthProvider({
   }
 
   async function logout() {
+    invalidateRefreshAttempt()
     try { if (sessionRef.current) await logoutRequest() } finally { setSession(null) }
   }
 
   async function restoreSession() {
-    const refreshToken = sessionRef.current?.refreshToken ?? window.sessionStorage.getItem('legado.refresh-token')
+    const refreshToken = sessionRef.current?.refreshToken ?? readStoredRefreshToken()
     if (!refreshToken) {
       setRestoreFailed(false)
       setInitializing(false)
@@ -109,11 +158,11 @@ export function AuthProvider({
     try {
       const restored = await Promise.race([
         refresh(),
-        new Promise<null>((_, reject) => window.setTimeout(() => reject(new Error('Session restore timed out')), 3_000)),
+        new Promise<null>((_, reject) => window.setTimeout(() => reject(new Error('Session restore timed out')), SESSION_RESTORE_TIMEOUT_MS)),
       ])
       setRestoreFailed(!restored)
     } catch {
-      setSession(null)
+      setSession(null, false)
       setRestoreFailed(true)
     } finally {
       setInitializing(false)
@@ -121,10 +170,17 @@ export function AuthProvider({
   }
 
   useEffect(() => {
-    configureAuthClient({ getAccessToken: () => sessionRef.current?.accessToken ?? null, refresh, onAuthFailure: () => setSession(null) })
+    configureAuthClient({
+      getAccessToken: () => sessionRef.current?.accessToken ?? null,
+      refresh,
+      onAuthFailure: (options: AuthFailureOptions = {}) => setSession(null, options.clearStoredToken === true),
+    })
     if (bootstrapSession === undefined) void restoreSession()
     else setInitializing(false)
-    return () => configureAuthClient(null)
+    return () => {
+      invalidateRefreshAttempt()
+      configureAuthClient(null)
+    }
   }, [])
 
   const value = useMemo<AuthContextValue>(
