@@ -9,8 +9,12 @@ import {
   type OperationDeliveryRow,
   type OperationStreamEvent,
 } from '@/api/modules/operations'
+import { AttemptTimeline } from '@/components/detail/AttemptTimeline'
+import { DataTable, type DataTableColumn } from '@/components/data/DataTable'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
-import { ConsoleLayout } from '@/components/layout/ConsoleLayout'
+import { StatusBadge } from '@/components/data/StatusBadge'
+import { DetailPanel } from '@/components/detail/DetailPanel'
+import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { useServerPagination } from '@/hooks/useServerPagination'
 
 const STREAM_RETRY_DELAY_MS = 2_000
@@ -180,8 +184,49 @@ export function EventDeliveriesPage() {
     [deliveries, selectedEventId]
   )
 
+  const deliveryColumns: DataTableColumn<OperationDeliveryRow>[] = [
+    {
+      id: 'event',
+      header: t('Event'),
+      cell: (delivery) => {
+        const eventId = getDeliveryId(delivery)
+        return (
+          <button
+            type="button"
+            className="text-left font-medium text-foreground hover:text-primary"
+            onClick={() => setSelectedEventId(eventId)}
+            aria-label={`${getDeliveryEventType(delivery)} ${eventId}`}
+          >
+            <span className="block">{getDeliveryEventType(delivery)}</span>
+            <span className="block text-xs text-muted-foreground">{eventId}</span>
+          </button>
+        )
+      },
+    },
+    { id: 'status', header: t('Status'), cell: (delivery) => <StatusBadge status={delivery.status} /> },
+    { id: 'tenant', header: t('Tenant'), cell: (delivery) => getDeliveryTenant(delivery) },
+    { id: 'attempts', header: t('Attempts'), cell: (delivery) => getDeliveryAttemptCount(delivery) },
+    {
+      id: 'last-error',
+      header: t('Last error'),
+      cell: (delivery) => <span className="text-muted-foreground">{delivery.lastError ?? delivery.last_error ?? '-'}</span>,
+    },
+  ]
+
+  const attemptItems = attempts.map((attempt) => ({
+    id: attempt.id,
+    label: t('Attempt {number}', { number: getAttemptNumber(attempt) }),
+    status: attempt.delivered ? 'delivered' : 'failed',
+    detail: attempt.delivered ? t('delivered') : (
+      <>
+        <span>{`${t('HTTP ')}${getAttemptStatusCode(attempt) ?? '-'}`}</span>
+        {getAttemptError(attempt) ? <span className="mt-1 block">{getAttemptError(attempt)}</span> : <span className="mt-1 block">{t('No error payload')}</span>}
+      </>
+    ),
+  }))
+
   return (
-    <ConsoleLayout
+    <ConsolePageShell
       eyebrow="Operations"
       title="Event deliveries"
       description="查看 webhook 投递状态、失败历史与最近流式事件，辅助排查 event delivery 的 retry、dedupe 和实时推送链路。"
@@ -192,78 +237,34 @@ export function EventDeliveriesPage() {
       }
     >
       <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-        <div className="overflow-hidden rounded-2xl border border-border bg-card">
+        <div className="space-y-3">
           <PaginatedListControls
             pagination={pagination}
-            empty={!pagination.loading && deliveries.length === 0}
+            empty={false}
             loadingLabel="正在加载事件投递…"
             errorLabel="Failed to load event deliveries."
             emptyLabel="No event deliveries yet"
             searchLabel="搜索事件投递"
           />
-          <table className="min-w-full divide-y divide-border text-sm">
-            <thead className="bg-muted/40 text-left text-muted-foreground">
-              <tr>
-                <th className="px-4 py-3 font-medium">Event</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Tenant</th>
-                <th className="px-4 py-3 font-medium">Attempts</th>
-                <th className="px-4 py-3 font-medium">Last error</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {deliveries.map((delivery) => {
-                const eventId = getDeliveryId(delivery)
-                const isSelected = eventId === selectedEventId
-                return (
-                  <tr key={eventId} className={isSelected ? 'bg-muted/30' : undefined}>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        className="text-left font-medium text-foreground hover:text-primary"
-                        onClick={() => setSelectedEventId(eventId)}
-                        aria-label={`${getDeliveryEventType(delivery)} ${eventId}`}
-                      >
-                        <span className="block">{getDeliveryEventType(delivery)}</span>
-                        <span className="block text-xs text-muted-foreground">{eventId}</span>
-                      </button>
-                    </td>
-                    <td className="px-4 py-3">{delivery.status}</td>
-                    <td className="px-4 py-3">{getDeliveryTenant(delivery)}</td>
-                    <td className="px-4 py-3">{getDeliveryAttemptCount(delivery)}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{delivery.lastError ?? delivery.last_error ?? '-'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+          <DataTable
+            rows={deliveries}
+            columns={deliveryColumns}
+            getRowKey={getDeliveryId}
+            getRowClassName={(delivery) => getDeliveryId(delivery) === selectedEventId ? 'bg-muted/30' : undefined}
+            emptyLabel={t('No event deliveries yet')}
+          />
         </div>
 
-        <aside className="rounded-2xl border border-border bg-card p-4">
-          <div className="space-y-1 border-b border-border pb-4">
-            <h2 className="text-sm font-semibold text-foreground">Attempt history</h2>
-            <p className="text-xs text-muted-foreground">
-              {selectedDelivery ? `Inspecting ${getDeliveryEventType(selectedDelivery)}` : 'Select a delivery row to inspect retry history.'}
-            </p>
-          </div>
-          <div className="mt-4 space-y-3">
-            {attempts.map((attempt) => (
-              <div key={attempt.id} className="rounded-xl border border-border bg-muted/20 p-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium text-foreground">Attempt {getAttemptNumber(attempt)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {attempt.delivered ? 'delivered' : `HTTP ${getAttemptStatusCode(attempt) ?? '-'}`}
-                  </span>
-                </div>
-                <p className="mt-2 text-muted-foreground">{getAttemptError(attempt) ?? 'No error payload'}</p>
-              </div>
-            ))}
-            {attempts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No persisted attempts for the selected delivery.</p>
-            ) : null}
-          </div>
-        </aside>
+        <DetailPanel
+          title={t('Attempt history')}
+          description={selectedDelivery
+            ? t('Inspecting {type}', { type: getDeliveryEventType(selectedDelivery) })
+            : t('Select a delivery row to inspect retry history.')}
+          emptyLabel={t('No persisted attempts for the selected delivery.')}
+        >
+          {attempts.length ? <AttemptTimeline items={attemptItems} /> : null}
+        </DetailPanel>
       </div>
-    </ConsoleLayout>
+    </ConsolePageShell>
   )
 }

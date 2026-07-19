@@ -3,7 +3,7 @@ import { Badge, type BadgeProps } from '@/components/ui/badge'
 
 type StatusTone = NonNullable<BadgeProps['variant']>
 
-const successStatuses = new Set(['accepted', 'completed', 'enabled', 'healthy', 'ok', 'passed', 'published', 'succeeded'])
+const successStatuses = new Set(['accepted', 'completed', 'delivered', 'enabled', 'healthy', 'ok', 'passed', 'published', 'succeeded'])
 const warningStatuses = new Set(['awaiting_manual_verification', 'candidate', 'degraded', 'pending', 'queued', 'running', 'scheduled'])
 const failureStatuses = new Set(['blocked', 'dead', 'error', 'failed', 'rejected'])
 
