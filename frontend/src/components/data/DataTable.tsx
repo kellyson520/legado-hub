@@ -14,10 +14,12 @@ export interface DataTableProps<Row> {
   rows: Row[]
   columns: DataTableColumn<Row>[]
   getRowKey: (row: Row) => string | number
+  getRowClassName?: (row: Row) => string | undefined
+  emptyLabel?: ReactNode
   className?: string
 }
 
-export function DataTable<Row>({ rows, columns, getRowKey, className }: DataTableProps<Row>) {
+export function DataTable<Row>({ rows, columns, getRowKey, getRowClassName, emptyLabel, className }: DataTableProps<Row>) {
   return (
     <div className={cn('overflow-hidden rounded-md border border-border bg-card', className)}>
       <Table>
@@ -27,8 +29,14 @@ export function DataTable<Row>({ rows, columns, getRowKey, className }: DataTabl
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row) => (
-            <TableRow key={getRowKey(row)}>
+          {rows.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={Math.max(columns.length, 1)} className="h-24 text-center text-muted-foreground">
+                {emptyLabel ?? '-'}
+              </TableCell>
+            </TableRow>
+          ) : rows.map((row) => (
+            <TableRow key={getRowKey(row)} className={getRowClassName?.(row)}>
               {columns.map((column) => <TableCell key={column.id} className={column.className}>{column.cell(row)}</TableCell>)}
             </TableRow>
           ))}
