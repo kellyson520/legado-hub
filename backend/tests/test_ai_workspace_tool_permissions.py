@@ -68,3 +68,31 @@ def test_workspace_joint_test_is_not_granted_without_source_write(monkeypatch):
     names = ai_router._workspace_tool_names(Identity({"ai.run", "book_sources.read"}))
 
     assert "source.joint_test" not in names
+
+
+def test_workspace_content_reading_tools_require_source_read_permission(monkeypatch):
+    import app.interfaces.http.ai as ai_router
+
+    monkeypatch.setattr(
+        ai_router,
+        "build_system_settings_service",
+        lambda: SettingsService({"enabled": False, "provider_configured": False}),
+    )
+
+    names = ai_router._workspace_tool_names(Identity({"ai.run", "book_sources.read"}))
+
+    assert {"source.search", "toc.get", "chapter.fetch"} <= names
+
+
+def test_workspace_content_reading_tools_are_not_granted_without_source_read_permission(monkeypatch):
+    import app.interfaces.http.ai as ai_router
+
+    monkeypatch.setattr(
+        ai_router,
+        "build_system_settings_service",
+        lambda: SettingsService({"enabled": False, "provider_configured": False}),
+    )
+
+    names = ai_router._workspace_tool_names(Identity({"ai.run"}))
+
+    assert not ({"source.search", "toc.get", "chapter.fetch"} & names)

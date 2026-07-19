@@ -531,6 +531,117 @@ async def test_chat_workspace_requires_evidence_for_a_character_biography_reques
     assert platform.calls[0]["payload"]["tool_choice"] == "required"
 
 
+@pytest.mark.asyncio
+async def test_workspace_stops_when_model_repeats_the_same_tool_call(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-repeated-tool.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    repeated_call = {
+        "id": "repeated-search",
+        "type": "function",
+        "function": {"name": "source.search", "arguments": json.dumps({"keyword": "剑来"})},
+    }
+
+    class RepeatingPlatform:
+        def __init__(self):
+            self.calls = []
+
+        async def invoke_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"output": {"message": {"role": "assistant", "content": "", "tool_calls": [repeated_call]}}}
+
+    class SearchExecutor:
+        async def ainvoke(self, name, arguments):
+            assert name == "source.search"
+            return type("ToolResult", (), {
+                "status": "accepted",
+                "data": {"items": [{"source_id": 1, "book_url": "https://example.test/book"}]},
+                "error_code": None,
+            })()
+
+    bootstrap_sqlite()
+    platform = RepeatingPlatform()
+    service = AIWorkspaceService(
+        platform,
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        novel_tool_executor=SearchExecutor(),
+    )
+    conversation = await service.create_conversation("7", "重复工具")
+
+    reply = await service.send_message(
+        conversation["id"],
+        "7",
+        "character",
+        "介绍《剑来》陈平安",
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
+    )
+
+    assert len(platform.calls) == 2
+    assert "重复" in reply["content"]
+    assert [item["name"] for item in reply["tool_calls"]] == ["source.search"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_stops_when_source_tool_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-rejected-tool.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    search_call = {
+        "id": "rejected-search",
+        "type": "function",
+        "function": {"name": "source.search", "arguments": json.dumps({"keyword": "剑来"})},
+    }
+
+    class RepeatingPlatform:
+        def __init__(self):
+            self.calls = []
+
+        async def invoke_chat(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"output": {"message": {"role": "assistant", "content": "", "tool_calls": [search_call]}}}
+
+    class RejectingExecutor:
+        async def ainvoke(self, name, arguments):
+            return type("ToolResult", (), {
+                "status": "rejected",
+                "data": {},
+                "error_code": "permissionerror",
+            })()
+
+    bootstrap_sqlite()
+    platform = RepeatingPlatform()
+    service = AIWorkspaceService(
+        platform,
+        SQLiteAIConversationRepository(),
+        VisibleSourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        novel_tool_executor=RejectingExecutor(),
+    )
+    conversation = await service.create_conversation("7", "工具拒绝")
+
+    reply = await service.send_message(
+        conversation["id"],
+        "7",
+        "character",
+        "介绍《剑来》陈平安",
+        allowed_tool_names={"source.search", "toc.get", "chapter.fetch"},
+    )
+
+    assert len(platform.calls) == 1
+    assert "书源读取工具未能取得证据" in reply["content"]
+    assert [item["name"] for item in reply["tool_calls"]] == ["source.search"]
+
+
 def test_workspace_schema_exposes_bounded_source_joint_test_tool():
     from app.application.services.ai_workspace_service import AIWorkspaceService
 

@@ -34,6 +34,9 @@ def _workspace_tool_names(identity) -> set[str]:
             "list_visible_sources",
             "get_source_rule_summary",
             "get_source_validation_summary",
+            "source.search",
+            "toc.get",
+            "chapter.fetch",
         })
     source_agent_settings = build_system_settings_service().get_source_build_agent_settings()
     if (

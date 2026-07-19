@@ -249,6 +249,7 @@ class AIWorkspaceService:
         if require_content_evidence and not (_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names):
             return "未获授权读取书籍原文，不能基于模型记忆生成人物、剧情或世界观结论。", []
         executed_calls: list[dict] = []
+        seen_tool_calls: set[str] = set()
         for _turn in range(_MAX_MODEL_TOOL_TURNS):
             has_chapter_evidence = self._has_chapter_evidence(executed_calls)
             model_tool_names = allowed_tool_names
@@ -277,8 +278,14 @@ class AIWorkspaceService:
 
             messages.append(assistant_message)
             for model_call in model_calls:
+                fingerprint = self._model_tool_call_fingerprint(model_call)
+                if fingerprint in seen_tool_calls:
+                    return "检测到模型重复调用同一书源工具，已停止循环。请提供更具体的书名、章节或检查书源规则。", executed_calls
+                seen_tool_calls.add(fingerprint)
                 executed = await self._execute_model_tool_call(actor_id, model_call, allowed_tool_names)
                 executed_calls.append(executed)
+                if self._is_rejected_tool_result(executed.get("result")):
+                    return "书源读取工具未能取得证据，已停止重复尝试。请先启用并发布健康书源后重试。", executed_calls
                 messages.append({
                     "role": "tool",
                     "tool_call_id": str(model_call.get("id") or ""),
@@ -382,6 +389,28 @@ class AIWorkspaceService:
         if not isinstance(arguments, dict):
             raise ValidationException("Invalid AI tool arguments")
         return arguments
+
+    @classmethod
+    def _model_tool_call_fingerprint(cls, model_call: dict) -> str:
+        function = model_call.get("function") if isinstance(model_call, dict) else None
+        if not isinstance(function, dict):
+            return json.dumps({"name": "", "arguments": None}, sort_keys=True)
+        name = str(function.get("name") or "")
+        raw_arguments = function.get("arguments")
+        try:
+            arguments = cls._model_tool_arguments(raw_arguments)
+        except (ValidationException, ValueError, json.JSONDecodeError):
+            arguments = raw_arguments
+        return json.dumps(
+            {"name": name, "arguments": arguments},
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+
+    @staticmethod
+    def _is_rejected_tool_result(result: object) -> bool:
+        return isinstance(result, dict) and result.get("status") == "rejected"
 
     @staticmethod
     def _assistant_message(output) -> dict:
