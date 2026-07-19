@@ -1,6 +1,6 @@
 import json
 
-from sqlalchemy import case, func, or_
+from sqlalchemy import and_, case, func, or_
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.infrastructure.persistence.sqlite.session import SessionLocal
@@ -161,6 +161,54 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                 )
             rows = query.offset(offset).limit(limit).all()
             return [self._inventory_row_to_snapshot(row) for row in rows], total
+        finally:
+            self._close(db)
+
+    def count_book_source_health_statuses(
+        self,
+        statuses: list[str] | None = None,
+        search: str = "",
+    ) -> dict[str, int]:
+        db = self._db()
+        try:
+            derived_status = func.coalesce(SourceHealthSnapshotModel.health_status, "unknown")
+            inventory_status = case(
+                (
+                    or_(
+                        SourceHealthSnapshotModel.source_id.is_(None),
+                        and_(
+                            derived_status == "unknown",
+                            SourceHealthSnapshotModel.failure_reason == "not_probed",
+                        ),
+                    ),
+                    "unprobed",
+                ),
+                else_=derived_status,
+            )
+            normalized_search = search.strip()
+            search_pattern = like_pattern(normalized_search)
+            query = (
+                db.query(inventory_status.label("inventory_status"), func.count(BookSourceModel.id))
+                .outerjoin(
+                    SourceHealthSnapshotModel,
+                    SourceHealthSnapshotModel.source_id == BookSourceModel.id,
+                )
+            )
+            if statuses:
+                query = query.filter(derived_status.in_(statuses))
+            if normalized_search:
+                query = query.filter(
+                    or_(
+                        BookSourceModel.bookSourceName.ilike(search_pattern, escape=LIKE_ESCAPE),
+                        BookSourceModel.bookSourceUrl.ilike(search_pattern, escape=LIKE_ESCAPE),
+                    )
+                )
+            grouped = query.group_by(inventory_status).all()
+            counts = {str(status): int(count) for status, count in grouped}
+            for status in ("healthy", "degraded", "blocked", "dead", "unprobed", "unknown"):
+                counts.setdefault(status, 0)
+            counts["total"] = sum(counts.values())
+            return counts
         finally:
             self._close(db)
 

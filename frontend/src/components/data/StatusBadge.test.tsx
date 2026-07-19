@@ -8,6 +8,7 @@ test('StatusBadge maps operational statuses to readable semantic variants', () =
       <StatusBadge status="healthy" />
       <StatusBadge status="candidate" />
       <StatusBadge status="scheduled" />
+      <StatusBadge status="unprobed" />
       <StatusBadge status="failed" />
     </>,
   )
@@ -15,5 +16,6 @@ test('StatusBadge maps operational statuses to readable semantic variants', () =
   expect(screen.getByText('健康')).toHaveClass('bg-emerald-500')
   expect(screen.getByText('候选')).toHaveClass('bg-amber-500')
   expect(screen.getByText('已计划')).toHaveClass('bg-amber-500')
+  expect(screen.getByText('未探测')).toHaveClass('bg-amber-500')
   expect(screen.getByText('已失败')).toHaveClass('bg-destructive')
 })

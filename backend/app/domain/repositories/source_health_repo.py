@@ -27,6 +27,13 @@ class SourceHealthRepository(ABC):
     ) -> tuple[list[SourceHealthSnapshot], int]:
         raise NotImplementedError
 
+    def count_book_source_health_statuses(
+        self,
+        statuses: list[str] | None = None,
+        search: str = "",
+    ) -> dict[str, int]:
+        raise NotImplementedError
+
     @abstractmethod
     def upsert_snapshot(self, snapshot: SourceHealthSnapshot) -> SourceHealthSnapshot:
         raise NotImplementedError

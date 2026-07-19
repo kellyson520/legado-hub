@@ -15,6 +15,7 @@ export interface PaginatedMeta {
   total: number
   total_pages: number
   search?: string
+  status_counts?: Record<string, number>
 }
 
 export interface PaginatedQueryParams {

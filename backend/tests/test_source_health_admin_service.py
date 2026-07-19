@@ -76,7 +76,22 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
     searched = await service.list_book_source_health(page=1, page_size=10, search="unprobed-two")
     snapshots, snapshot_total = health_repo.list_snapshots(limit=100)
 
-    assert first_page["meta"] == {"page": 1, "page_size": 2, "total": 3, "total_pages": 2, "search": ""}
+    assert first_page["meta"] == {
+        "page": 1,
+        "page_size": 2,
+        "total": 3,
+        "total_pages": 2,
+        "search": "",
+        "status_counts": {
+            "total": 3,
+            "healthy": 1,
+            "degraded": 0,
+            "blocked": 0,
+            "dead": 0,
+            "unprobed": 2,
+            "unknown": 0,
+        },
+    }
     assert [item["source_id"] for item in first_page["items"]] == [unprobed_first["id"], probed["id"]]
     assert first_page["items"][0] == {
         "source_id": unprobed_first["id"],
@@ -99,12 +114,104 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
     assert first_page["items"][1]["toc_status"] == "degraded"
     assert first_page["items"][1]["route_score"] == 87.5
     assert first_page["items"][1]["metadata"] == {"from": "snapshot"}
-    assert unknown_second_page["meta"] == {"page": 2, "page_size": 1, "total": 2, "total_pages": 2, "search": ""}
+    assert first_page["meta"]["status_counts"] == {
+        "total": 3,
+        "healthy": 1,
+        "degraded": 0,
+        "blocked": 0,
+        "dead": 0,
+        "unprobed": 2,
+        "unknown": 0,
+    }
+    assert unknown_second_page["meta"] == {
+        "page": 2,
+        "page_size": 1,
+        "total": 2,
+        "total_pages": 2,
+        "search": "",
+        "status_counts": {
+            "total": 2,
+            "healthy": 0,
+            "degraded": 0,
+            "blocked": 0,
+            "dead": 0,
+            "unprobed": 2,
+            "unknown": 0,
+        },
+    }
     assert [item["source_id"] for item in unknown_second_page["items"]] == [unprobed_last["id"]]
-    assert searched["meta"] == {"page": 1, "page_size": 10, "total": 1, "total_pages": 1, "search": "unprobed-two"}
+    assert searched["meta"] == {
+        "page": 1,
+        "page_size": 10,
+        "total": 1,
+        "total_pages": 1,
+        "search": "unprobed-two",
+        "status_counts": {
+            "total": 1,
+            "healthy": 0,
+            "degraded": 0,
+            "blocked": 0,
+            "dead": 0,
+            "unprobed": 1,
+            "unknown": 0,
+        },
+    }
     assert [item["source_id"] for item in searched["items"]] == [unprobed_last["id"]]
     assert snapshot_total == 1
     assert [snapshot.source_id for snapshot in snapshots] == [probed["id"]]
+
+
+@pytest.mark.asyncio
+async def test_health_inventory_counts_unknown_failures_separately_from_unprobed(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-status-counts.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.domain.entities.source_health import SourceHealthSnapshot
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    await source_repo.create_book_source(
+        {"bookSourceName": "尚未探测", "bookSourceUrl": "https://unprobed.example", "enabled": True},
+        actor_id=1,
+    )
+    unknown = await source_repo.create_book_source(
+        {"bookSourceName": "未知错误", "bookSourceUrl": "https://unknown-error.example", "enabled": True},
+        actor_id=1,
+    )
+    health_repo.upsert_snapshot(
+        SourceHealthSnapshot(
+            source_id=unknown["id"],
+            source_name="未知错误",
+            source_url="https://unknown-error.example",
+            health_status="unknown",
+            failure_reason="parser_unknown",
+        )
+    )
+
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=None,
+        classifier=None,
+    )
+
+    result = await service.list_book_source_health(page=1, page_size=20)
+
+    assert result["meta"]["status_counts"] == {
+        "total": 2,
+        "healthy": 0,
+        "degraded": 0,
+        "blocked": 0,
+        "dead": 0,
+        "unprobed": 1,
+        "unknown": 1,
+    }
+    assert [item["failure_reason"] for item in result["items"]] == ["not_probed", "parser_unknown"]
 
 
 @pytest.mark.asyncio
@@ -221,7 +328,22 @@ async def test_health_inventory_paginates_in_repository_without_loading_full_sou
     finally:
         event.remove(engine, "before_cursor_execute", capture_statement)
 
-    assert result["meta"] == {"page": 2, "page_size": 1, "total": 2, "total_pages": 2, "search": ""}
+    assert result["meta"] == {
+        "page": 2,
+        "page_size": 1,
+        "total": 2,
+        "total_pages": 2,
+        "search": "",
+        "status_counts": {
+            "total": 2,
+            "healthy": 0,
+            "degraded": 0,
+            "blocked": 0,
+            "dead": 0,
+            "unprobed": 2,
+            "unknown": 0,
+        },
+    }
     assert [item["source_id"] for item in result["items"]] == [second_unprobed["id"]]
     health_queries = [statement.lower() for statement in statements if "source_health_snapshots" in statement.lower()]
     assert health_queries

@@ -85,6 +85,133 @@ async def test_provider_forwards_tool_fields_and_returns_tool_calls():
 
 
 @pytest.mark.asyncio
+async def test_provider_maps_internal_tool_names_to_openai_safe_names_and_back():
+    captured: dict = {}
+    response_body = {
+        "model": "deepseek-v4-pro",
+        "choices": [{
+            "message": {
+                "content": "",
+                "tool_calls": [{
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "source_search", "arguments": '{"keyword":"剑来"}'},
+                }],
+            },
+        }],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.read()))
+        return httpx.Response(200, json=response_body)
+
+    from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider(
+        "test",
+        "https://api.example.test/v1",
+        "provider-api-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await provider.invoke_chat(
+        "deepseek-v4-pro",
+        {
+            "messages": [
+                {"role": "user", "content": "查找剑来"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call-0",
+                        "type": "function",
+                        "function": {"name": "toc.get", "arguments": "{}"},
+                    }],
+                },
+                {"role": "tool", "tool_call_id": "call-0", "content": "{}"},
+            ],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "source.search",
+                    "description": "Search sources",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }],
+            "tool_choice": "required",
+        },
+    )
+
+    assert captured["tools"][0]["function"]["name"] == "source_search"
+    assert captured["messages"][1]["tool_calls"][0]["function"]["name"] == "toc_get"
+    assert result["output"]["tool_calls"][0]["function"]["name"] == "source.search"
+    assert result["output"]["message"]["tool_calls"][0]["function"]["name"] == "source.search"
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_retries_required_tool_choice_as_auto_for_thinking_models():
+    requests: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.read())
+        requests.append(payload)
+        if len(requests) == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Thinking mode does not support this tool_choice",
+                        "type": "invalid_request_error",
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "deepseek-v4-pro",
+                "choices": [{"message": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "source_search", "arguments": "{}"},
+                    }],
+                }}],
+            },
+        )
+
+    from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider(
+        "deepseek",
+        "https://api.example.test/v1",
+        "provider-api-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await provider.invoke_chat(
+        "deepseek-v4-pro",
+        {
+            "messages": [{"role": "user", "content": "查找剑来"}],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "source.search",
+                    "description": "Search sources",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }],
+            "tool_choice": "required",
+        },
+    )
+
+    assert len(requests) == 2
+    assert requests[0]["tool_choice"] == "required"
+    assert requests[1]["tool_choice"] == "auto"
+    assert result["output"]["tool_calls"][0]["function"]["name"] == "source.search"
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
 async def test_openai_compatible_provider_invokes_chat_completion_endpoint():
     captured: dict = {}
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Eye } from 'lucide-react'
 
+import { useLanguage } from '@/app/providers/LanguageProvider'
 import {
   listSourceHealth,
   probeSourceHealth,
@@ -10,6 +11,7 @@ import {
   type SourceHealthRow,
 } from '@/api/modules/sourceHealth'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
+import { StatusBadge } from '@/components/data/StatusBadge'
 import { StatusMessage } from '@/components/data/StatusMessage'
 import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { Button } from '@/components/ui/button'
@@ -24,6 +26,102 @@ function tone(status: string) {
   if (status === 'degraded') return 'text-amber-600 dark:text-amber-400'
   if (status === 'blocked' || status === 'failed' || status === 'dead') return 'text-rose-600 dark:text-rose-400'
   return 'text-muted-foreground'
+}
+
+type HealthStatus = 'healthy' | 'degraded' | 'blocked' | 'dead' | 'unprobed' | 'unknown'
+
+interface HealthSummary {
+  total: number
+  healthy: number
+  degraded: number
+  blocked: number
+  dead: number
+  unprobed: number
+  unknown: number
+}
+
+const HEALTH_STATUSES: HealthStatus[] = ['healthy', 'degraded', 'blocked', 'dead', 'unprobed', 'unknown']
+
+function displayHealthStatus(row: Pick<SourceHealthRow, 'health_status' | 'failure_reason'>): HealthStatus {
+  if (row.health_status === 'unknown' && row.failure_reason === 'not_probed') return 'unprobed'
+  return HEALTH_STATUSES.includes(row.health_status as HealthStatus)
+    ? row.health_status as HealthStatus
+    : 'unknown'
+}
+
+function countPageStatuses(rows: SourceHealthRow[]): HealthSummary {
+  const summary: HealthSummary = {
+    total: rows.length,
+    healthy: 0,
+    degraded: 0,
+    blocked: 0,
+    dead: 0,
+    unprobed: 0,
+    unknown: 0,
+  }
+  rows.forEach((row) => {
+    summary[displayHealthStatus(row)] += 1
+  })
+  return summary
+}
+
+function readCount(counts: Record<string, number> | undefined, key: keyof HealthSummary, fallback: number) {
+  const value = counts?.[key]
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+function MetricCard({ label, value, status }: { label: string; value: number | string; status?: HealthStatus }) {
+  const accent = status === 'healthy'
+    ? 'border-l-emerald-500'
+    : status === 'degraded' || status === 'unprobed'
+      ? 'border-l-amber-500'
+      : status === 'blocked' || status === 'dead'
+        ? 'border-l-rose-500'
+        : status === 'unknown'
+          ? 'border-l-slate-400'
+          : 'border-l-primary'
+  return (
+    <Card className={`border-l-4 p-4 ${accent}`}>
+      <p className="text-sm font-medium text-muted-foreground">{label}{value}</p>
+    </Card>
+  )
+}
+
+function HealthMetrics({ title, description, summary, prefix, unavailable }: {
+  title: string
+  description: string
+  summary: HealthSummary
+  prefix: '总' | '本页'
+  unavailable?: boolean
+}) {
+  const { t } = useLanguage()
+  const metrics: Array<{ key: keyof HealthSummary; label: string; status?: HealthStatus }> = [
+    { key: 'total', label: `${prefix}计： ` },
+    { key: 'healthy', label: `${prefix}健康： `, status: 'healthy' },
+    { key: 'degraded', label: `${prefix}降级： `, status: 'degraded' },
+    { key: 'blocked', label: `${prefix}阻断： `, status: 'blocked' },
+    { key: 'dead', label: `${prefix}失效： `, status: 'dead' },
+    { key: 'unprobed', label: `${prefix}未探测： `, status: 'unprobed' },
+    { key: 'unknown', label: `${prefix}未知： `, status: 'unknown' },
+  ]
+  return (
+    <section aria-labelledby={`${prefix}-health-summary`} className="space-y-3">
+      <div>
+        <h2 id={`${prefix}-health-summary`} className="text-base font-semibold text-foreground">{t(title)}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{t(description)}</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-7">
+        {metrics.map((metric) => (
+          <MetricCard
+            key={metric.key}
+            label={t(metric.label)}
+            value={metric.key !== 'total' && unavailable ? '—' : summary[metric.key]}
+            status={metric.status}
+          />
+        ))}
+      </div>
+    </section>
+  )
 }
 
 export function SourceHealthPage() {
@@ -113,13 +211,19 @@ export function SourceHealthPage() {
     }
   }
 
-  const summary = rows.reduce(
-    (acc, row) => {
-      acc[row.health_status] = (acc[row.health_status] || 0) + 1
-      return acc
-    },
-    {} as Record<string, number>
+  const pageSummary = countPageStatuses(rows)
+  const hasTotalStatusCounts = Boolean(
+    meta.status_counts && Object.keys(meta.status_counts).some((key) => key !== 'total'),
   )
+  const totalSummary: HealthSummary = {
+    total: readCount(meta.status_counts, 'total', meta.total),
+    healthy: hasTotalStatusCounts ? readCount(meta.status_counts, 'healthy', 0) : 0,
+    degraded: hasTotalStatusCounts ? readCount(meta.status_counts, 'degraded', 0) : 0,
+    blocked: hasTotalStatusCounts ? readCount(meta.status_counts, 'blocked', 0) : 0,
+    dead: hasTotalStatusCounts ? readCount(meta.status_counts, 'dead', 0) : 0,
+    unprobed: hasTotalStatusCounts ? readCount(meta.status_counts, 'unprobed', 0) : 0,
+    unknown: hasTotalStatusCounts ? readCount(meta.status_counts, 'unknown', 0) : 0,
+  }
 
   return (
     <ConsolePageShell
@@ -127,12 +231,20 @@ export function SourceHealthPage() {
       title="Source health control plane"
       description="展示 search / toc / content 三层状态、失败原因、分流策略，并提供重探测与恢复入口。"
     >
-      <div className="grid gap-4 md:grid-cols-5">
-        <Card className="p-4">Total: {meta.total}</Card>
-        <Card className="p-4">本页 Healthy: {summary.healthy || 0}</Card>
-        <Card className="p-4">本页 Blocked: {summary.blocked || 0}</Card>
-        <Card className="p-4">本页 Dead: {summary.dead || 0}</Card>
-        <Card className="p-4">本页未探测: {summary.unknown || 0}</Card>
+      <div className="space-y-6">
+        <HealthMetrics
+          title={hasTotalStatusCounts ? '全量健康统计' : '全量健康统计（状态分布不可用）'}
+          description={hasTotalStatusCounts ? '按当前搜索条件汇总所有书源的健康状态。' : '当前后端未返回全量状态分布，已隐藏分项，仅显示总量。'}
+          summary={totalSummary}
+          prefix="总"
+          unavailable={!hasTotalStatusCounts}
+        />
+        <HealthMetrics
+          title="当前分页统计"
+          description="只统计当前页面已加载的书源。"
+          summary={pageSummary}
+          prefix="本页"
+        />
       </div>
 
       <Card className="p-5">
@@ -164,7 +276,10 @@ export function SourceHealthPage() {
                   <div>
                     <h4 className="text-base font-semibold text-foreground">{row.source_name}</h4>
                     <p className="text-sm text-muted-foreground">{row.source_url}</p>
-                    <p className={`mt-2 text-sm ${tone(row.health_status)}`}>health: {row.failure_reason === 'not_probed' ? '未探测' : row.health_status}</p>
+                    <div className={`mt-2 flex items-center gap-2 text-sm ${tone(displayHealthStatus(row))}`}>
+                      <span>health: </span>
+                      <StatusBadge status={displayHealthStatus(row)} />
+                    </div>
                     <p className="mt-1 text-sm text-muted-foreground">
                       reason:{' '}
                       <span>{row.failure_reason || '-'}</span>
@@ -199,14 +314,17 @@ export function SourceHealthPage() {
                   </div>
                 </div>
                 <div className="mt-4 grid gap-2 md:grid-cols-3">
-                  <div className={`rounded-md border border-border bg-muted/30 p-3 text-sm ${tone(row.search_status)}`}>
-                    search: {row.search_status}
+                  <div className={`flex items-center justify-between rounded-md border border-border bg-muted/30 p-3 text-sm ${tone(row.search_status)}`}>
+                    <span>search: </span>
+                    <StatusBadge status={row.search_status} />
                   </div>
-                  <div className={`rounded-md border border-border bg-muted/30 p-3 text-sm ${tone(row.toc_status)}`}>
-                    toc: {row.toc_status}
+                  <div className={`flex items-center justify-between rounded-md border border-border bg-muted/30 p-3 text-sm ${tone(row.toc_status)}`}>
+                    <span>toc: </span>
+                    <StatusBadge status={row.toc_status} />
                   </div>
-                  <div className={`rounded-md border border-border bg-muted/30 p-3 text-sm ${tone(row.content_status)}`}>
-                    content: {row.content_status}
+                  <div className={`flex items-center justify-between rounded-md border border-border bg-muted/30 p-3 text-sm ${tone(row.content_status)}`}>
+                    <span>content: </span>
+                    <StatusBadge status={row.content_status} />
                   </div>
                 </div>
               </article>

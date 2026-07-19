@@ -5,7 +5,14 @@ import { normalizePageMeta } from './pagination'
 describe('normalizePageMeta', () => {
   test('keeps valid server metadata and search', () => {
     expect(normalizePageMeta(
-      { page: 2, page_size: 20, total: 41, total_pages: 3, search: 'beta' },
+      {
+        page: 2,
+        page_size: 20,
+        total: 41,
+        total_pages: 3,
+        search: 'beta',
+        status_counts: { total: 41, healthy: 30, unprobed: 8, unknown: 3 },
+      },
       1,
       20,
       20,
@@ -15,6 +22,7 @@ describe('normalizePageMeta', () => {
       total: 41,
       total_pages: 3,
       search: 'beta',
+      status_counts: { total: 41, healthy: 30, unprobed: 8, unknown: 3 },
     })
   })
 

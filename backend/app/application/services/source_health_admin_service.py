@@ -32,12 +32,17 @@ class SourceHealthAdminService:
             limit=page_size,
             offset=offset,
         )
+        status_counts = self._health_repo.count_book_source_health_statuses(
+            statuses=statuses,
+            search=search,
+        )
         return paginated_result(
             [self._snapshot_to_dict(item) for item in rows],
             page=page,
             page_size=page_size,
             total=total,
             search=search,
+            status_counts=status_counts,
         )
 
     async def get_book_source_health(self, source_id: int) -> dict:

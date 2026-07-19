@@ -55,7 +55,20 @@ function healthResponse(page: number, data = page === 2 ? pageTwoRows : pageOneR
     code: 'OK',
     message: 'ok',
     data,
-    meta: { page, page_size: 20, total: 21 },
+    meta: {
+      page,
+      page_size: 20,
+      total: 21,
+      status_counts: {
+        total: 21,
+        healthy: 12,
+        degraded: 2,
+        blocked: 3,
+        dead: 1,
+        unprobed: 2,
+        unknown: 1,
+      },
+    },
     trace_id: null,
   }
 }
@@ -119,6 +132,12 @@ test('source health page shows stage statuses, page-scoped summaries, and unique
   expect(screen.getByText('本页阻断： 1')).toBeInTheDocument()
   expect(screen.getByText('本页失效： 0')).toBeInTheDocument()
   expect(screen.getByText('本页未探测： 0')).toBeInTheDocument()
+  expect(screen.getByText('总健康： 12')).toBeInTheDocument()
+  expect(screen.getByText('总降级： 2')).toBeInTheDocument()
+  expect(screen.getByText('总阻断： 3')).toBeInTheDocument()
+  expect(screen.getByText('总失效： 1')).toBeInTheDocument()
+  expect(screen.getByText('总未探测： 2')).toBeInTheDocument()
+  expect(screen.getByText('总未知： 1')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: '探测书源 七猫小说' })).toBeEnabled()
   expect(screen.getByRole('button', { name: '恢复书源 七猫小说' })).toBeEnabled()
   expect(
@@ -126,6 +145,68 @@ test('source health page shows stage statuses, page-scoped summaries, and unique
       (link) => link.getAttribute('href') === '/sources/health/7'
     )
   ).toBeDefined()
+})
+
+test('source health page separates unprobed rows from unknown errors', async () => {
+  const response = healthResponse(1, [
+    {
+      ...pageOneRows[0],
+      source_id: 30,
+      source_name: '尚未探测书源',
+      health_status: 'unknown',
+      search_status: 'unknown',
+      toc_status: 'unknown',
+      content_status: 'unknown',
+      failure_reason: 'not_probed',
+    },
+    {
+      ...pageOneRows[1],
+      source_id: 31,
+      source_name: '解析异常书源',
+      health_status: 'unknown',
+      failure_reason: 'unknown_error',
+    },
+  ])
+  response.meta.total = 2
+  response.meta.status_counts = {
+    total: 2,
+    healthy: 0,
+    degraded: 0,
+    blocked: 0,
+    dead: 0,
+    unprobed: 1,
+    unknown: 1,
+  }
+  vi.mocked(listSourceHealth).mockResolvedValueOnce(response)
+
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('尚未探测书源')).toBeInTheDocument()
+  expect(screen.getByText('本页未探测： 1')).toBeInTheDocument()
+  expect(screen.getByText('本页未知： 1')).toBeInTheDocument()
+  expect(screen.getByText('总未探测： 1')).toBeInTheDocument()
+  expect(screen.getByText('总未知： 1')).toBeInTheDocument()
+})
+
+test('source health page does not present page counts as full distribution when metadata is unavailable', async () => {
+  const response = healthResponse(1)
+  delete (response.meta as { status_counts?: unknown }).status_counts
+  vi.mocked(listSourceHealth).mockResolvedValueOnce(response)
+
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('全量健康统计（状态分布不可用）')).toBeInTheDocument()
+  expect(screen.getByText('总计： 21')).toBeInTheDocument()
+  expect(screen.getByText('总健康： —')).toBeInTheDocument()
+  expect(screen.getByText('本页健康： 1')).toBeInTheDocument()
 })
 
 test('smart probe button probes every visible source instead of only refreshing the list', async () => {
