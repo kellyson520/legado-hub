@@ -7,8 +7,32 @@ export type AIWorkspaceMode = 'chat' | 'character' | 'storyline' | 'world'
 
 export interface AIWorkspaceToolCall {
   name: string
-  arguments: Record<string, string>
+  arguments: Record<string, unknown>
   result: unknown
+}
+
+export type AIConversationAuthorizationDecision = 'once' | 'conversation' | 'remember' | 'deny'
+
+export interface AIConversationAuthorizationRequest {
+  id: string
+  conversation_id?: string
+  tools: string[]
+  purpose: string
+  status: string
+  decision?: AIConversationAuthorizationDecision | null
+  expires_at?: string | null
+  resolved_at?: string | null
+  result_message_id?: string | null
+  choices?: AIConversationAuthorizationDecision[]
+}
+
+export interface AIConversationAuthorizationGrant {
+  id: string
+  scope: 'conversation' | 'remembered'
+  conversation_id?: string | null
+  tools: string[]
+  expires_at: string
+  revoked_at?: string | null
 }
 
 export interface AIConversationMessage {
@@ -16,8 +40,10 @@ export interface AIConversationMessage {
   role: 'user' | 'assistant'
   mode: AIWorkspaceMode
   content: string
-  status: 'succeeded' | 'failed'
+  status: 'succeeded' | 'failed' | 'authorization_required' | 'denied'
   tool_calls: AIWorkspaceToolCall[]
+  metadata?: Record<string, unknown>
+  authorization_request?: AIConversationAuthorizationRequest
   created_at: string
 }
 
@@ -29,6 +55,7 @@ export interface AIConversationSummary {
 
 export interface AIConversation extends AIConversationSummary {
   messages: AIConversationMessage[]
+  authorization_requests?: AIConversationAuthorizationRequest[]
 }
 
 export interface AITaskRow {
@@ -87,4 +114,24 @@ export function sendAIConversationMessage(
   }
 ): Promise<ApiEnvelope<AIConversationMessage>> {
   return apiClient.post(`/ai/conversations/${conversationId}/messages`, payload)
+}
+
+export function decideAIConversationAuthorization(
+  conversationId: string,
+  requestId: string,
+  payload: { decision: AIConversationAuthorizationDecision },
+): Promise<ApiEnvelope<{ authorization: AIConversationAuthorizationRequest; message?: AIConversationMessage }>> {
+  return apiClient.post(`/ai/conversations/${conversationId}/authorization-requests/${requestId}/decision`, payload)
+}
+
+export function listAIConversationAuthorizations(conversationId: string): Promise<ApiEnvelope<AIConversationAuthorizationRequest[]>> {
+  return apiClient.get(`/ai/conversations/${conversationId}/authorization-requests`, { params: { status: 'pending' } })
+}
+
+export function listAIAuthorizationGrants(conversationId?: string): Promise<ApiEnvelope<AIConversationAuthorizationGrant[]>> {
+  return apiClient.get('/ai/authorization-grants', { params: conversationId ? { conversation_id: conversationId } : undefined })
+}
+
+export function revokeAIAuthorizationGrant(grantId: string): Promise<ApiEnvelope<AIConversationAuthorizationGrant>> {
+  return apiClient.post(`/ai/authorization-grants/${grantId}/revoke`)
 }

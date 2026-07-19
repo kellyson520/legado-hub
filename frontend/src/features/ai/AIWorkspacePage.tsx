@@ -2,10 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 
 import {
   createAIConversation,
+  decideAIConversationAuthorization,
   getAIConversation,
+  listAIAuthorizationGrants,
+  listAIConversationAuthorizations,
   listAIConversations,
+  revokeAIAuthorizationGrant,
   sendAIConversationMessage,
   type AIConversation,
+  type AIConversationAuthorizationGrant,
+  type AIConversationAuthorizationRequest,
   type AIConversationMessage,
   type AIConversationSummary,
   type AIWorkspaceMode,
@@ -31,6 +37,12 @@ const toolOptions = [
   { name: 'get_source_rule_summary', label: '读取书源规则摘要', detail: '需填写书源版本 ID，仅读取规则概览' },
   { name: 'list_ai_analysis_results', label: '查看我的分析结果', detail: '仅读取当前账户的 AI 任务结果' },
 ] as const
+
+const authorizationToolLabels: Record<string, { zh: string; en: string }> = {
+  'source.search': { zh: '搜索已启用书源', en: 'Search enabled sources' },
+  'toc.get': { zh: '读取作品目录', en: 'Read the table of contents' },
+  'chapter.fetch': { zh: '读取章节原文', en: 'Read chapter text' },
+}
 
 const modeLabel: Record<AIWorkspaceMode, string> = Object.fromEntries(modes.map((mode) => [mode.value, mode.label])) as Record<AIWorkspaceMode, string>
 
@@ -62,6 +74,9 @@ export function AIWorkspacePage() {
   const [sourceVersionId, setSourceVersionId] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
+  const [pendingAuthorizations, setPendingAuthorizations] = useState<AIConversationAuthorizationRequest[]>([])
+  const [authorizationGrants, setAuthorizationGrants] = useState<AIConversationAuthorizationGrant[]>([])
+  const [authorizationBusy, setAuthorizationBusy] = useState<string | null>(null)
 
   const toolRequests = useMemo<Array<{ name: string; arguments: Record<string, string> }>>(() => enabledTools.map((name) => ({
     name,
@@ -74,6 +89,16 @@ export function AIWorkspacePage() {
     const response = await getAIConversation(conversationId)
     setConversation(response.data)
     setActiveConversationId(conversationId)
+    try {
+      const [pending, grants] = await Promise.all([
+        listAIConversationAuthorizations(conversationId),
+        listAIAuthorizationGrants(conversationId),
+      ])
+      setPendingAuthorizations(pending.data)
+      setAuthorizationGrants(grants.data)
+    } catch {
+      setPendingAuthorizations(response.data.authorization_requests ?? [])
+    }
   }
 
   useEffect(() => {
@@ -94,6 +119,8 @@ export function AIWorkspacePage() {
       const next = response.data
       setConversation({ ...next, messages: [] })
       setActiveConversationId(next.id)
+      setPendingAuthorizations([])
+      setAuthorizationGrants([])
       pagination.reload()
       setContent('')
       setError('')
@@ -166,6 +193,50 @@ export function AIWorkspacePage() {
     void send(user.content, user.mode)
   }
 
+  const decideAuthorization = async (request: AIConversationAuthorizationRequest, decision: 'once' | 'conversation' | 'remember' | 'deny') => {
+    if (!activeConversationId || authorizationBusy) return
+    setAuthorizationBusy(request.id)
+    setError('')
+    try {
+      const response = await decideAIConversationAuthorization(activeConversationId, request.id, { decision })
+      const resolved = response.data.authorization
+      setPendingAuthorizations((current) => current.filter((item) => item.id !== request.id))
+      setConversation((current) => {
+        if (!current) return current
+        const messages = current.messages.map((message) => {
+          if (message.authorization_request?.id !== request.id) return message
+          return {
+            ...message,
+            status: decision === 'deny' ? 'denied' as const : 'succeeded' as const,
+            authorization_request: resolved,
+          }
+        })
+        const resumed = response.data.message
+        if (resumed && !messages.some((message) => message.id === resumed.id)) messages.push(resumed)
+        return { ...current, messages }
+      })
+      const grants = await listAIAuthorizationGrants(activeConversationId)
+      setAuthorizationGrants(grants.data)
+    } catch {
+      setError('授权处理失败，请稍后重试。')
+    } finally {
+      setAuthorizationBusy(null)
+    }
+  }
+
+  const revokeGrant = async (grant: AIConversationAuthorizationGrant) => {
+    if (authorizationBusy) return
+    setAuthorizationBusy(grant.id)
+    try {
+      await revokeAIAuthorizationGrant(grant.id)
+      setAuthorizationGrants((current) => current.filter((item) => item.id !== grant.id))
+    } catch {
+      setError('撤销授权失败，请稍后重试。')
+    } finally {
+      setAuthorizationBusy(null)
+    }
+  }
+
   const toggleTool = (name: string) => {
     setEnabledTools((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name])
   }
@@ -217,6 +288,12 @@ export function AIWorkspacePage() {
 
           <div className="min-h-[320px] flex-1 space-y-5 bg-[radial-gradient(circle_at_top_right,hsl(var(--accent))_0,transparent_30%)] p-5">
             <StatusMessage tone="error" message={error} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2" />
+            {authorizationGrants.filter((grant) => grant.scope === 'conversation').map((grant) => (
+              <div key={grant.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/35 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                <span>{t('ai.authorization.activeConversation')}</span>
+                <Button size="sm" variant="outline" onClick={() => void revokeGrant(grant)} disabled={authorizationBusy === grant.id} aria-label={t('ai.authorization.revoke')}>{t('ai.authorization.revoke')}</Button>
+              </div>
+            ))}
             {!loadingConversations && !conversation ? <div className="grid min-h-[250px] place-items-center text-center text-sm text-muted-foreground">新建一个 AI 对话后，即可开始人物、剧情和世界观解析。</div> : null}
             {conversation?.messages.map((message, index) => (
               <article key={message.id} className={`max-w-3xl ${message.role === 'user' ? 'ml-auto' : ''}`}>
@@ -226,6 +303,30 @@ export function AIWorkspacePage() {
                     <span>{formatTime(message.created_at, locale)}</span>
                   </div>
                   <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
+                  {message.authorization_request && message.status === 'authorization_required' ? (
+                    <div className="mt-4 overflow-hidden rounded-lg border border-amber-400/35 bg-amber-400/10 p-4 text-amber-50 shadow-inner">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-300/20 text-sm font-bold text-amber-100">!</div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold">{t('ai.authorization.title')}</p>
+                          <p className="mt-1 text-xs leading-5 text-amber-50/80">{message.authorization_request.purpose}</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {message.authorization_request.tools.map((tool) => {
+                              const label = authorizationToolLabels[tool]
+                              return <span key={tool} className="rounded-full border border-amber-200/25 bg-amber-100/10 px-2.5 py-1 text-xs">{locale === 'en-US' ? label?.en ?? tool : label?.zh ?? tool}</span>
+                            })}
+                          </div>
+                          <p className="mt-3 text-xs leading-5 text-amber-50/70">{t('ai.authorization.boundary')}</p>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <Button size="sm" onClick={() => void decideAuthorization(message.authorization_request!, 'once')} disabled={authorizationBusy === message.authorization_request.id}>{t('ai.authorization.once')}</Button>
+                            <Button size="sm" variant="outline" onClick={() => void decideAuthorization(message.authorization_request!, 'conversation')} disabled={authorizationBusy === message.authorization_request.id}>{t('ai.authorization.conversation')}</Button>
+                            <Button size="sm" variant="outline" onClick={() => void decideAuthorization(message.authorization_request!, 'remember')} disabled={authorizationBusy === message.authorization_request.id}>{t('ai.authorization.remember')}</Button>
+                            <Button size="sm" variant="ghost" onClick={() => void decideAuthorization(message.authorization_request!, 'deny')} disabled={authorizationBusy === message.authorization_request.id}>{t('ai.authorization.deny')}</Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   {message.status === 'failed' ? <Button className="mt-3" size="sm" variant="outline" onClick={() => retryMessage(index)} disabled={sending}>重试</Button> : null}
                 </div>
                 {message.tool_calls?.length ? (
