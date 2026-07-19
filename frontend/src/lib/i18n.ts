@@ -512,6 +512,8 @@ const catalogs: Record<Locale, Record<string, string>> = {
     'ai.authorization.deny': '拒绝',
     'ai.authorization.activeConversation': '当前对话已允许读取正文',
     'ai.authorization.revoke': '撤销授权',
+    'ai.authorization.approvedMessage': '正文读取授权已批准。',
+    'ai.authorization.deniedMessage': '正文读取授权已拒绝。',
     'Sign in': '登录',
     'Username': '用户名',
     'Password': '密码',
@@ -1025,6 +1027,8 @@ const catalogs: Record<Locale, Record<string, string>> = {
     'ai.authorization.deny': 'Deny',
     'ai.authorization.activeConversation': 'This conversation can read source text',
     'ai.authorization.revoke': 'Revoke access',
+    'ai.authorization.approvedMessage': 'Source reading authorization approved.',
+    'ai.authorization.deniedMessage': 'Source reading authorization denied.',
   },
 }
 

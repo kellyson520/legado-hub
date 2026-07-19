@@ -207,6 +207,7 @@ export function AIWorkspacePage() {
           if (message.authorization_request?.id !== request.id) return message
           return {
             ...message,
+            content: decision === 'deny' ? t('ai.authorization.deniedMessage') : t('ai.authorization.approvedMessage'),
             status: decision === 'deny' ? 'denied' as const : 'succeeded' as const,
             authorization_request: resolved,
           }

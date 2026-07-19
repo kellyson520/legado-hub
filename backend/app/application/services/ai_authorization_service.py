@@ -80,16 +80,16 @@ class AIConversationAuthorizationService:
                 await self._audit_event(actor_id, "ai.authorization.expired", request_id)
             request = expired or request
         if request.status != "pending":
-            return self.serialize_request(request)
+            return self.serialize_request(request, claimed=False)
 
         claimed = self._repo.claim_request(request_id, str(actor_id), str(conversation_id), decision)
         if claimed is None:
             current = self._repo.get_request(request_id, str(actor_id), str(conversation_id))
-            return self.serialize_request(current) if current is not None else {"id": request_id, "status": "expired"}
+            return self.serialize_request(current, claimed=False) if current is not None else {"id": request_id, "status": "expired", "claimed": False}
         if decision == "deny":
             denied = self._repo.finalize_request(request_id, str(actor_id), "denied") or claimed
             await self._audit_event(actor_id, "ai.authorization.denied", request_id)
-            return self.serialize_request(denied)
+            return self.serialize_request(denied, claimed=True)
 
         if decision in {"conversation", "remember"}:
             scope = "conversation" if decision == "conversation" else "remembered"
@@ -117,7 +117,7 @@ class AIConversationAuthorizationService:
                     )
                 )
         await self._audit_event(actor_id, f"ai.authorization.approved_{decision}", request_id)
-        return self.serialize_request(claimed)
+        return self.serialize_request(claimed, claimed=True)
 
     def get_request_record(self, request_id: str, *, actor_id: str, conversation_id: str) -> AIConversationAuthorizationRequest | None:
         return self._repo.get_request(request_id, str(actor_id), str(conversation_id))
@@ -168,8 +168,8 @@ class AIConversationAuthorizationService:
         return names
 
     @staticmethod
-    def serialize_request(request: AIConversationAuthorizationRequest) -> dict:
-        return {
+    def serialize_request(request: AIConversationAuthorizationRequest, *, claimed: bool | None = None) -> dict:
+        payload = {
             "id": request.id,
             "conversation_id": request.conversation_id,
             "tools": list(request.requested_tools),
@@ -181,6 +181,9 @@ class AIConversationAuthorizationService:
             "result_message_id": request.result_message_id,
             "choices": CHOICES if request.status == "pending" else [],
         }
+        if claimed is not None:
+            payload["claimed"] = claimed
+        return payload
 
     @staticmethod
     def serialize_grant(grant: AIConversationAuthorizationGrant) -> dict:

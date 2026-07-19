@@ -110,6 +110,8 @@ async def test_decision_is_idempotent_and_creates_only_one_grant():
     second = await service.decide(request["id"], actor_id="7", conversation_id="c1", decision="conversation")
 
     assert first["status"] == second["status"] == "processing"
+    assert first["claimed"] is True
+    assert second["claimed"] is False
     assert repo.count_active_grants(actor_id="7", conversation_id="c1") == 1
 
 

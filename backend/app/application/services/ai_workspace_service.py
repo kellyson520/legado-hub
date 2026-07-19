@@ -329,6 +329,8 @@ class AIWorkspaceService:
                     if message.id == message_id:
                         return {"authorization": authorization, "message": self._serialize_message(message)}
             return {"authorization": authorization}
+        if authorization.get("claimed") is not True:
+            return {"authorization": authorization}
         request = self._authorization_service.get_request_record(
             request_id,
             actor_id=str(actor_id),
