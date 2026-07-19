@@ -486,6 +486,11 @@ class AIWorkspaceService:
             return await authorization_failure("授权已撤销或过期，未执行正文读取。")
         if loop_result.authorization_request is not None:
             assistant = self._append_authorization_message(conversation_id, continuation.get("mode", "chat"), loop_result.tool_calls, loop_result.authorization_request)
+            self._authorization_service.attach_result_message(
+                request_id,
+                actor_id=str(actor_id),
+                result_message_id=assistant.id,
+            )
             previous = self._authorization_service.get_request_record(
                 request_id,
                 actor_id=str(actor_id),

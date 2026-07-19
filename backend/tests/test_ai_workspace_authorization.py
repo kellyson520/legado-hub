@@ -347,6 +347,7 @@ async def test_once_decision_does_not_expand_search_authorization_to_toc(tmp_pat
     assert executor.calls == [("source.search", {"keyword": "剑来", "tenant_id": "7"})]
     assert resumed["message"]["status"] == "authorization_required"
     assert resumed["authorization"]["status"] == "failed"
+    assert resumed["authorization"]["result_message_id"] == resumed["message"]["id"]
     assert resumed["next_authorization"]["tools"] == ["toc.get"]
 
 
