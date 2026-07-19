@@ -376,7 +376,7 @@ export function AIWorkspacePage() {
                       </div>
                     </div>
                   ) : null}
-                  {message.status === 'failed' ? <Button className="mt-3" size="sm" variant="outline" onClick={() => retryMessage(index)} disabled={sending}>重试</Button> : null}
+                  {message.status === 'failed' && !message.authorization_request ? <Button className="mt-3" size="sm" variant="outline" onClick={() => retryMessage(index)} disabled={sending}>重试</Button> : null}
                 </div>
                 {message.tool_calls?.length ? (
                   <div className="mt-2 space-y-2 rounded-lg border border-primary/20 bg-accent/35 p-3">

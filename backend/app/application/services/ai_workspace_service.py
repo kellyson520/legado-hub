@@ -437,6 +437,13 @@ class AIWorkspaceService:
                 status="failed",
                 metadata={"authorization": finalized},
             )
+            attached = self._authorization_service.attach_result_message(
+                request_id,
+                actor_id=str(actor_id),
+                result_message_id=message.id,
+            )
+            if attached is not None:
+                finalized = attached
             return {"authorization": finalized, "message": self._serialize_message(message)}
 
         authorized_content_tools = set(request.requested_tools) & set(_CONTENT_RETRIEVAL_TOOL_NAMES)
@@ -485,6 +492,11 @@ class AIWorkspaceService:
         except (AuthorizationException, ConflictException):
             return await authorization_failure("授权已撤销或过期，未执行正文读取。")
         if loop_result.authorization_request is not None:
+            if (
+                loop_result.authorization_request.get("message_id")
+                and loop_result.authorization_request.get("message_id") != request.message_id
+            ):
+                return await authorization_failure("另一条正文读取授权正在等待处理，本次续跑已停止，请先完成当前授权。")
             assistant = self._append_authorization_message(conversation_id, continuation.get("mode", "chat"), loop_result.tool_calls, loop_result.authorization_request)
             self._authorization_service.attach_result_message(
                 request_id,
