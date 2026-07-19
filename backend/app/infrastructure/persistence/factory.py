@@ -57,6 +57,7 @@ from app.infrastructure.legado.engine.repairer import repair_source_rules
 from app.infrastructure.legado.engine.quality_gate import evaluate_runtime_health
 from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIRuntimeRepository
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+from app.infrastructure.persistence.sqlite.ai_authorization_repo_impl import SQLiteAIAuthorizationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_runtime_repo_impl import SQLiteNovelRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_analysis_task_repo_impl import SQLiteNovelAnalysisTaskRepository
@@ -522,6 +523,11 @@ def close_interactive_browser_supervisor() -> None:
 def build_ai_runtime_repository() -> SQLiteAIRuntimeRepository:
     ensure_sqlite_bootstrap()
     return SQLiteAIRuntimeRepository()
+
+
+def build_ai_authorization_repository() -> SQLiteAIAuthorizationRepository:
+    ensure_sqlite_bootstrap()
+    return SQLiteAIAuthorizationRepository()
 
 
 def build_translation_runtime_repository() -> SQLiteTranslationRuntimeRepository:

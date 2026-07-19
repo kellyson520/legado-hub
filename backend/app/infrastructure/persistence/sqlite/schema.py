@@ -509,7 +509,43 @@ class AIConversationMessageModel(Base):
     content = Column(Text, nullable=False, default="")
     status = Column(String, nullable=False, default="succeeded")
     tool_calls = Column(Text, nullable=False, default="[]")
+    metadata_payload = Column(Text, nullable=False, default="{}")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class AIConversationAuthorizationRequestModel(Base):
+    __tablename__ = "ai_authorization_requests"
+
+    id = Column(String, primary_key=True)
+    actor_id = Column(String, nullable=False, index=True)
+    conversation_id = Column(String, ForeignKey("ai_conversations.id"), nullable=False, index=True)
+    message_id = Column(String, nullable=False, index=True)
+    requested_tools = Column(Text, nullable=False, default="[]")
+    requested_calls = Column(Text, nullable=False, default="[]")
+    purpose = Column(Text, nullable=False, default="")
+    continuation = Column(Text, nullable=False, default="{}")
+    status = Column(String, nullable=False, default="pending", index=True)
+    decision = Column(String, nullable=True)
+    expires_at = Column(DateTime, nullable=True, index=True)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by = Column(String, nullable=True)
+    result_message_id = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AIConversationAuthorizationGrantModel(Base):
+    __tablename__ = "ai_authorization_grants"
+
+    id = Column(String, primary_key=True)
+    actor_id = Column(String, nullable=False, index=True)
+    conversation_id = Column(String, ForeignKey("ai_conversations.id"), nullable=True, index=True)
+    scope = Column(String, nullable=False, index=True)
+    tool_names = Column(Text, nullable=False, default="[]")
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 class TranslationTaskModel(Base):

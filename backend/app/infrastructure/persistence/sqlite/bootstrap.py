@@ -126,6 +126,30 @@ def _ensure_sqlite_novel_analysis_columns() -> None:
                 )
 
 
+def _ensure_sqlite_ai_conversation_columns() -> None:
+    with engine.begin() as connection:
+        rows = connection.exec_driver_sql("PRAGMA table_info(ai_conversation_messages)").fetchall()
+        if rows and "metadata_payload" not in {row[1] for row in rows}:
+            connection.exec_driver_sql("ALTER TABLE ai_conversation_messages ADD COLUMN metadata_payload TEXT NOT NULL DEFAULT '{}'")
+        request_rows = connection.exec_driver_sql("PRAGMA table_info(ai_authorization_requests)").fetchall()
+        if request_rows:
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_ai_authorization_requests_actor_conversation "
+                "ON ai_authorization_requests (actor_id, conversation_id)"
+            )
+            connection.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_ai_authorization_requests_active "
+                "ON ai_authorization_requests (actor_id, conversation_id) "
+                "WHERE status IN ('pending', 'processing')"
+            )
+        grant_rows = connection.exec_driver_sql("PRAGMA table_info(ai_authorization_grants)").fetchall()
+        if grant_rows:
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_ai_authorization_grants_actor_scope "
+                "ON ai_authorization_grants (actor_id, scope)"
+            )
+
+
 def _ensure_default_provider_routes() -> None:
     from app.application.ports.provider import PROVIDER_ROUTE_GROUPS
 
@@ -172,6 +196,7 @@ def bootstrap_sqlite() -> None:
     _ensure_sqlite_translation_columns()
     _ensure_sqlite_provider_columns()
     _ensure_sqlite_novel_analysis_columns()
+    _ensure_sqlite_ai_conversation_columns()
     _ensure_default_provider_routes()
     _ensure_sqlite_event_delivery_indexes()
     db = SessionLocal()

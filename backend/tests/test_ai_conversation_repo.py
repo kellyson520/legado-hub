@@ -17,6 +17,7 @@ def test_conversation_repository_persists_messages_and_owner(tmp_path, monkeypat
             role="user",
             mode="character",
             content="介绍主角",
+            metadata={"authorization_request_id": "auth-1"},
         )
     )
 
@@ -25,4 +26,6 @@ def test_conversation_repository_persists_messages_and_owner(tmp_path, monkeypat
     assert owned is not None
     assert owned.title == "人物介绍"
     assert repo.get_conversation("conversation-1", "8") is None
-    assert [item.content for item in repo.list_messages("conversation-1")] == ["介绍主角"]
+    messages = repo.list_messages("conversation-1")
+    assert [item.content for item in messages] == ["介绍主角"]
+    assert messages[0].metadata == {"authorization_request_id": "auth-1"}

@@ -95,6 +95,7 @@ class SQLiteAIConversationRepository(AIConversationRepository):
                 content=message.content,
                 status=message.status,
                 tool_calls=json.dumps(message.tool_calls, ensure_ascii=False),
+                metadata_payload=json.dumps(message.metadata, ensure_ascii=False),
                 created_at=message.created_at,
             )
             db.add(model)
@@ -126,5 +127,6 @@ class SQLiteAIConversationRepository(AIConversationRepository):
             content=model.content,
             status=model.status,
             tool_calls=json.loads(model.tool_calls or "[]"),
+            metadata=json.loads(model.metadata_payload or "{}"),
             created_at=model.created_at,
         )

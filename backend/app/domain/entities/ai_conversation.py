@@ -19,4 +19,5 @@ class AIConversationMessage:
     content: str
     status: str = "succeeded"
     tool_calls: list[dict] = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
