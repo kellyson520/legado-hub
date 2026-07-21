@@ -1,0 +1,118 @@
+"""Recoverable migrations for the standalone ``novel.db`` SQLite store."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+NOVEL_COLUMNS = (
+    "id", "book_url", "book_name", "author", "source_name", "total_chapters",
+    "total_words", "status", "source_type", "ingest_progress", "ingest_error_msg",
+    "character_count", "entity_count", "event_count", "relationship_count",
+    "summary_global", "created_at", "updated_at",
+)
+
+
+async def migrate_novel_database(db: Any) -> int:
+    """Migrate an old global-URL schema without exposing partial state.
+
+    The function is deliberately independent of the application settings so it
+    can be used by startup code and by migration tests with an in-memory DB.
+    ``user_version`` is advanced only after all DDL and data copy operations
+    have committed successfully.
+    """
+
+    await db.execute("PRAGMA foreign_keys=OFF")
+    async with db.execute("PRAGMA user_version") as cursor:
+        current_version = int((await cursor.fetchone())[0])
+
+    async with db.execute("PRAGMA table_info(novels)") as cursor:
+        columns = {row[1] for row in await cursor.fetchall()}
+
+    if columns and "owner_scope" not in columns:
+        await db.execute("ALTER TABLE novels RENAME TO novels_legacy")
+        await db.execute(
+            """CREATE TABLE novels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_url TEXT NOT NULL,
+                book_name TEXT NOT NULL DEFAULT '',
+                author TEXT NOT NULL DEFAULT '',
+                source_name TEXT NOT NULL DEFAULT '',
+                total_chapters INTEGER NOT NULL DEFAULT 0,
+                total_words INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                source_type TEXT NOT NULL DEFAULT 'book_source',
+                ingest_progress REAL NOT NULL DEFAULT 0.0,
+                ingest_error_msg TEXT,
+                character_count INTEGER NOT NULL DEFAULT 0,
+                entity_count INTEGER NOT NULL DEFAULT 0,
+                event_count INTEGER NOT NULL DEFAULT 0,
+                relationship_count INTEGER NOT NULL DEFAULT 0,
+                summary_global TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                owner_scope TEXT NOT NULL DEFAULT 'legacy'
+            )"""
+        )
+        selected = ", ".join(NOVEL_COLUMNS)
+        await db.execute(
+            f"INSERT INTO novels ({selected}, owner_scope) "
+            f"SELECT {selected}, 'legacy' FROM novels_legacy"
+        )
+        await db.execute("DROP TABLE novels_legacy")
+
+    await db.executescript(
+        """CREATE UNIQUE INDEX IF NOT EXISTS ux_novels_owner_url
+               ON novels(owner_scope, book_url);
+           CREATE INDEX IF NOT EXISTS idx_novels_status ON novels(status);
+           CREATE INDEX IF NOT EXISTS idx_novels_owner_updated
+               ON novels(owner_scope, updated_at DESC);
+           CREATE TABLE IF NOT EXISTS novel_index_states (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               owner_scope TEXT NOT NULL,
+               book_id INTEGER NOT NULL,
+               chapter_id INTEGER,
+               content_hash TEXT NOT NULL DEFAULT '',
+               knowledge_version TEXT NOT NULL DEFAULT '',
+               extraction_status TEXT NOT NULL DEFAULT 'pending',
+               bm25_status TEXT NOT NULL DEFAULT 'pending',
+               vector_status TEXT NOT NULL DEFAULT 'disabled',
+               embedding_model TEXT NOT NULL DEFAULT '',
+               embedding_dimension INTEGER NOT NULL DEFAULT 0,
+               last_success_at TIMESTAMP,
+               failure_reason TEXT NOT NULL DEFAULT '',
+               updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
+           );
+           CREATE INDEX IF NOT EXISTS idx_novel_index_states_owner_book
+               ON novel_index_states(owner_scope, book_id, chapter_id);
+           CREATE TABLE IF NOT EXISTS novel_reading_progress (
+               owner_scope TEXT NOT NULL,
+               book_id INTEGER NOT NULL,
+               chapter_id INTEGER NOT NULL,
+               offset_chars INTEGER NOT NULL DEFAULT 0,
+               percent REAL NOT NULL DEFAULT 0.0,
+               theme TEXT NOT NULL DEFAULT 'paper',
+               background TEXT NOT NULL DEFAULT '',
+               font_size INTEGER NOT NULL DEFAULT 18,
+               updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               PRIMARY KEY(owner_scope, book_id),
+               FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
+           );
+           CREATE TABLE IF NOT EXISTS novel_model_preferences (
+               owner_scope TEXT NOT NULL,
+               scope_type TEXT NOT NULL,
+               scope_id TEXT NOT NULL,
+               task_type TEXT NOT NULL,
+               model_ref TEXT NOT NULL,
+               provider_group TEXT NOT NULL DEFAULT 'novel',
+               updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               PRIMARY KEY(owner_scope, scope_type, scope_id, task_type)
+           );"""
+    )
+    await db.commit()
+    if current_version < 1:
+        await db.execute("PRAGMA user_version=1")
+        await db.commit()
+    await db.execute("PRAGMA foreign_keys=ON")
+    return max(current_version, 1)

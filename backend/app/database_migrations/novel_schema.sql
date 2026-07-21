@@ -4,7 +4,7 @@
 -- novels: 小说索引
 CREATE TABLE IF NOT EXISTS novels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    book_url TEXT NOT NULL UNIQUE,
+    book_url TEXT NOT NULL,
     book_name TEXT NOT NULL DEFAULT '',
     author TEXT NOT NULL DEFAULT '',
     source_name TEXT NOT NULL DEFAULT '',
@@ -20,9 +20,59 @@ CREATE TABLE IF NOT EXISTS novels (
     relationship_count INTEGER NOT NULL DEFAULT 0,
     summary_global TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    owner_scope TEXT NOT NULL DEFAULT 'legacy'
 );
 CREATE INDEX IF NOT EXISTS idx_novels_status ON novels(status);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_novels_owner_url ON novels(owner_scope, book_url);
+CREATE INDEX IF NOT EXISTS idx_novels_owner_updated ON novels(owner_scope, updated_at DESC);
+
+-- Incremental understanding checkpoints.  A NULL chapter_id is the optional
+-- book-level checkpoint; chapter rows are always filtered by owner_scope.
+CREATE TABLE IF NOT EXISTS novel_index_states (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_scope TEXT NOT NULL,
+    book_id INTEGER NOT NULL,
+    chapter_id INTEGER,
+    content_hash TEXT NOT NULL DEFAULT '',
+    knowledge_version TEXT NOT NULL DEFAULT '',
+    extraction_status TEXT NOT NULL DEFAULT 'pending',
+    bm25_status TEXT NOT NULL DEFAULT 'pending',
+    vector_status TEXT NOT NULL DEFAULT 'disabled',
+    embedding_model TEXT NOT NULL DEFAULT '',
+    embedding_dimension INTEGER NOT NULL DEFAULT 0,
+    last_success_at TIMESTAMP,
+    failure_reason TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_novel_index_states_owner_book
+    ON novel_index_states(owner_scope, book_id, chapter_id);
+
+CREATE TABLE IF NOT EXISTS novel_reading_progress (
+    owner_scope TEXT NOT NULL,
+    book_id INTEGER NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    offset_chars INTEGER NOT NULL DEFAULT 0,
+    percent REAL NOT NULL DEFAULT 0.0,
+    theme TEXT NOT NULL DEFAULT 'paper',
+    background TEXT NOT NULL DEFAULT '',
+    font_size INTEGER NOT NULL DEFAULT 18,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(owner_scope, book_id),
+    FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS novel_model_preferences (
+    owner_scope TEXT NOT NULL,
+    scope_type TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    task_type TEXT NOT NULL,
+    model_ref TEXT NOT NULL,
+    provider_group TEXT NOT NULL DEFAULT 'novel',
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(owner_scope, scope_type, scope_id, task_type)
+);
 
 -- novel_source_mirrors: 书源镜像
 CREATE TABLE IF NOT EXISTS novel_source_mirrors (

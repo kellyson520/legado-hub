@@ -24,7 +24,14 @@ class SQLiteAIConversationRepository(AIConversationRepository):
             model = AIConversationModel(
                 id=conversation.id,
                 actor_id=conversation.actor_id,
+                owner_scope=conversation.owner_scope,
                 title=conversation.title,
+                book_id=conversation.book_id,
+                entrypoint=conversation.entrypoint,
+                context_range=conversation.context_range,
+                model_ref=conversation.model_ref,
+                knowledge_version=conversation.knowledge_version,
+                toolset_version=conversation.toolset_version,
                 created_at=conversation.created_at,
             )
             db.add(model)
@@ -34,18 +41,27 @@ class SQLiteAIConversationRepository(AIConversationRepository):
         finally:
             self._close(db)
 
-    def list_conversations(self, actor_id: str) -> list[AIConversation]:
+    def list_conversations(self, actor_id: str, owner_scope: str | None = None) -> list[AIConversation]:
         db = self._db()
         try:
-            rows = db.query(AIConversationModel).filter(AIConversationModel.actor_id == actor_id).order_by(AIConversationModel.created_at.desc()).all()
+            query = db.query(AIConversationModel).filter(AIConversationModel.actor_id == actor_id)
+            if owner_scope is not None:
+                query = query.filter(AIConversationModel.owner_scope == owner_scope)
+            rows = query.order_by(AIConversationModel.created_at.desc()).all()
             return [self._conversation(row) for row in rows]
         finally:
             self._close(db)
 
-    def get_conversation(self, conversation_id: str, actor_id: str) -> AIConversation | None:
+    def get_conversation(self, conversation_id: str, actor_id: str, owner_scope: str | None = None) -> AIConversation | None:
         db = self._db()
         try:
-            model = db.query(AIConversationModel).filter(AIConversationModel.id == conversation_id, AIConversationModel.actor_id == actor_id).first()
+            query = db.query(AIConversationModel).filter(
+                AIConversationModel.id == conversation_id,
+                AIConversationModel.actor_id == actor_id,
+            )
+            if owner_scope is not None:
+                query = query.filter(AIConversationModel.owner_scope == owner_scope)
+            model = query.first()
             return self._conversation(model) if model is not None else None
         finally:
             self._close(db)
@@ -61,6 +77,10 @@ class SQLiteAIConversationRepository(AIConversationRepository):
                 content=message.content,
                 status=message.status,
                 tool_calls=json.dumps(message.tool_calls, ensure_ascii=False),
+                owner_scope=message.owner_scope,
+                entrypoint=message.entrypoint,
+                book_id=message.book_id,
+                chapter_id=message.chapter_id,
                 created_at=message.created_at,
             )
             db.add(model)
@@ -70,17 +90,32 @@ class SQLiteAIConversationRepository(AIConversationRepository):
         finally:
             self._close(db)
 
-    def list_messages(self, conversation_id: str) -> list[AIConversationMessage]:
+    def list_messages(self, conversation_id: str, owner_scope: str | None = None) -> list[AIConversationMessage]:
         db = self._db()
         try:
-            rows = db.query(AIConversationMessageModel).filter(AIConversationMessageModel.conversation_id == conversation_id).order_by(AIConversationMessageModel.created_at.asc()).all()
+            query = db.query(AIConversationMessageModel).filter(AIConversationMessageModel.conversation_id == conversation_id)
+            if owner_scope is not None:
+                query = query.filter(AIConversationMessageModel.owner_scope == owner_scope)
+            rows = query.order_by(AIConversationMessageModel.created_at.asc()).all()
             return [self._message(row) for row in rows]
         finally:
             self._close(db)
 
     @staticmethod
     def _conversation(model: AIConversationModel) -> AIConversation:
-        return AIConversation(id=model.id, actor_id=model.actor_id, title=model.title, created_at=model.created_at)
+        return AIConversation(
+            id=model.id,
+            actor_id=model.actor_id,
+            title=model.title,
+            owner_scope=model.owner_scope,
+            book_id=model.book_id,
+            entrypoint=model.entrypoint,
+            context_range=model.context_range,
+            model_ref=model.model_ref,
+            knowledge_version=model.knowledge_version,
+            toolset_version=model.toolset_version,
+            created_at=model.created_at,
+        )
 
     @staticmethod
     def _message(model: AIConversationMessageModel) -> AIConversationMessage:
@@ -92,5 +127,9 @@ class SQLiteAIConversationRepository(AIConversationRepository):
             content=model.content,
             status=model.status,
             tool_calls=json.loads(model.tool_calls or "[]"),
+            owner_scope=model.owner_scope,
+            entrypoint=model.entrypoint,
+            book_id=model.book_id,
+            chapter_id=model.chapter_id,
             created_at=model.created_at,
         )

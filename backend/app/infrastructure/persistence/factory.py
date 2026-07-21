@@ -35,6 +35,9 @@ from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIR
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_runtime_repo_impl import SQLiteNovelRuntimeRepository
+from app.infrastructure.persistence.sqlite.novel_model_preference_repo_impl import (
+    SQLiteNovelModelPreferenceRepository,
+)
 from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLiteEventDeliveryRepository
 from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
 from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
@@ -321,6 +324,11 @@ def build_work_knowledge_repository() -> SQLiteWorkKnowledgeRepository:
 def build_novel_runtime_repository() -> SQLiteNovelRuntimeRepository:
     bootstrap_sqlite()
     return SQLiteNovelRuntimeRepository()
+
+
+def build_novel_model_preference_repository() -> SQLiteNovelModelPreferenceRepository:
+    bootstrap_sqlite()
+    return SQLiteNovelModelPreferenceRepository()
 
 
 def build_ai_service() -> AIService:

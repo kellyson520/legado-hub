@@ -51,3 +51,21 @@ class TestNovelIngestionService:
             raw_titles=titles,
         )
         assert book1.id == book2.id
+
+    async def test_ingest_catalog_isolated_by_owner_scope(self, ingestion_service):
+        first = await ingestion_service.ingest_catalog(
+            book_url="https://scoped.test/book",
+            book_name="甲本",
+            raw_titles=["第1章 甲"],
+            owner_scope="user:1",
+        )
+        second = await ingestion_service.ingest_catalog(
+            book_url="https://scoped.test/book",
+            book_name="乙本",
+            raw_titles=["第1章 乙"],
+            owner_scope="user:2",
+        )
+
+        assert first.id != second.id
+        assert first.owner_scope == "user:1"
+        assert second.owner_scope == "user:2"

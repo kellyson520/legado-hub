@@ -34,6 +34,7 @@ async def get_novel_service():
     
     from app.application.services.novel_app_service import NovelAppService
     from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRepository
+    from app.infrastructure.persistence.sqlite.novel_db_migrator import migrate_novel_database
     import aiosqlite
     import os
     from app.core.config import settings
@@ -51,6 +52,7 @@ async def get_novel_service():
         with open(schema_path) as f:
             await _novel_db.executescript(f.read())
         await _novel_db.commit()
+    await migrate_novel_database(_novel_db)
     
     repo = SqliteNovelRepository(_novel_db)
     _novel_service_singleton = NovelAppService(repo)

@@ -92,7 +92,46 @@ def _ensure_sqlite_provider_columns() -> None:
         if "api_key" not in columns:
             connection.exec_driver_sql("ALTER TABLE provider_accounts ADD COLUMN api_key TEXT NOT NULL DEFAULT ''")
         if "default_model" not in columns:
-            connection.exec_driver_sql("ALTER TABLE provider_accounts ADD COLUMN default_model VARCHAR NOT NULL DEFAULT ''")
+                connection.exec_driver_sql("ALTER TABLE provider_accounts ADD COLUMN default_model VARCHAR NOT NULL DEFAULT ''")
+
+
+def _ensure_sqlite_novel_columns() -> None:
+    """Add Task 1 novel ownership/context columns to existing databases."""
+    required = {
+        "ai_conversations": {
+            "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+            "book_id": "INTEGER",
+            "entrypoint": "VARCHAR NOT NULL DEFAULT 'workspace'",
+            "context_range": "VARCHAR NOT NULL DEFAULT 'book'",
+            "model_ref": "VARCHAR",
+            "knowledge_version": "VARCHAR NOT NULL DEFAULT ''",
+            "toolset_version": "VARCHAR NOT NULL DEFAULT ''",
+        },
+        "ai_conversation_messages": {
+            "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+            "entrypoint": "VARCHAR NOT NULL DEFAULT 'workspace'",
+            "book_id": "INTEGER",
+            "chapter_id": "INTEGER",
+        },
+        "novel_ingestions": {
+            "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+            "book_id": "INTEGER",
+        },
+        "novel_tasks": {
+            "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+            "book_id": "INTEGER",
+            "chapter_id": "INTEGER",
+        },
+    }
+    with engine.begin() as connection:
+        for table, columns in required.items():
+            rows = connection.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            if not rows:
+                continue
+            existing = {row[1] for row in rows}
+            for column, ddl in columns.items():
+                if column not in existing:
+                    connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 def _ensure_default_provider_routes() -> None:
@@ -136,6 +175,7 @@ def bootstrap_sqlite() -> None:
     _ensure_sqlite_job_columns()
     _ensure_sqlite_translation_columns()
     _ensure_sqlite_provider_columns()
+    _ensure_sqlite_novel_columns()
     _ensure_default_provider_routes()
     _ensure_sqlite_event_delivery_indexes()
     db = SessionLocal()

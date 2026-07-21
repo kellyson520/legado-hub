@@ -441,7 +441,14 @@ class AIConversationModel(Base):
 
     id = Column(String, primary_key=True)
     actor_id = Column(String, nullable=False, index=True)
+    owner_scope = Column(String, nullable=False, default="legacy", index=True)
     title = Column(String, nullable=False, default="")
+    book_id = Column(Integer, nullable=True, index=True)
+    entrypoint = Column(String, nullable=False, default="workspace")
+    context_range = Column(String, nullable=False, default="book")
+    model_ref = Column(String, nullable=True)
+    knowledge_version = Column(String, nullable=False, default="")
+    toolset_version = Column(String, nullable=False, default="")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
@@ -455,6 +462,10 @@ class AIConversationMessageModel(Base):
     content = Column(Text, nullable=False, default="")
     status = Column(String, nullable=False, default="succeeded")
     tool_calls = Column(Text, nullable=False, default="[]")
+    owner_scope = Column(String, nullable=False, default="legacy", index=True)
+    entrypoint = Column(String, nullable=False, default="workspace")
+    book_id = Column(Integer, nullable=True, index=True)
+    chapter_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
@@ -497,6 +508,8 @@ class NovelIngestionModel(Base):
     __tablename__ = "novel_ingestions"
 
     id = Column(String, primary_key=True)
+    owner_scope = Column(String, nullable=False, default="legacy", index=True)
+    book_id = Column(Integer, nullable=True, index=True)
     title = Column(String, nullable=False, default="")
     source_text = Column(Text, nullable=False, default="")
     status = Column(String, nullable=False, index=True)
@@ -510,6 +523,9 @@ class NovelTaskModel(Base):
 
     id = Column(String, primary_key=True)
     novel_id = Column(String, ForeignKey("novel_ingestions.id"), nullable=False, index=True)
+    owner_scope = Column(String, nullable=False, default="legacy", index=True)
+    book_id = Column(Integer, nullable=True, index=True)
+    chapter_id = Column(Integer, nullable=True, index=True)
     actor_id = Column(String, nullable=False, index=True)
     status = Column(String, nullable=False, index=True)
     provider_name = Column(String, nullable=False, default="")
@@ -518,6 +534,57 @@ class NovelTaskModel(Base):
     result_payload = Column(Text, nullable=False, default="{}")
     usage_payload = Column(Text, nullable=False, default="{}")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class NovelIndexStateModel(Base):
+    __tablename__ = "novel_index_states"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_scope = Column(String, nullable=False, index=True)
+    book_id = Column(Integer, nullable=False, index=True)
+    chapter_id = Column(Integer, nullable=True, index=True)
+    content_hash = Column(String, nullable=False, default="")
+    knowledge_version = Column(String, nullable=False, default="")
+    extraction_status = Column(String, nullable=False, default="pending")
+    bm25_status = Column(String, nullable=False, default="pending")
+    vector_status = Column(String, nullable=False, default="disabled")
+    embedding_model = Column(String, nullable=False, default="")
+    embedding_dimension = Column(Integer, nullable=False, default=0)
+    last_success_at = Column(DateTime, nullable=True)
+    failure_reason = Column(Text, nullable=False, default="")
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class NovelReadingProgressModel(Base):
+    __tablename__ = "novel_reading_progress"
+
+    owner_scope = Column(String, primary_key=True)
+    book_id = Column(Integer, primary_key=True)
+    chapter_id = Column(Integer, nullable=False)
+    offset_chars = Column(Integer, nullable=False, default=0)
+    percent = Column(Float, nullable=False, default=0.0)
+    theme = Column(String, nullable=False, default="paper")
+    background = Column(Text, nullable=False, default="")
+    font_size = Column(Integer, nullable=False, default=18)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class NovelModelPreferenceModel(Base):
+    __tablename__ = "novel_model_preferences"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_scope", "scope_type", "scope_id", "task_type",
+            name="ux_novel_model_preferences_scope_task",
+        ),
+    )
+
+    owner_scope = Column(String, primary_key=True)
+    scope_type = Column(String, primary_key=True)
+    scope_id = Column(String, primary_key=True)
+    task_type = Column(String, primary_key=True)
+    model_ref = Column(String, nullable=False)
+    provider_group = Column(String, nullable=False, default="novel")
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class CanonicalWorkModel(Base):
