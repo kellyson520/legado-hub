@@ -23,6 +23,14 @@ class SystemSettingsRepository(ABC):
     def set_bool(self, key: str, value: bool) -> None:
         raise NotImplementedError
 
+    # These helpers are optional for legacy adapters; novel settings use them
+    # when available while the versioned settings contract remains intact.
+    def get_value(self, key: str, default: str | None = None) -> str | None:
+        raise NotImplementedError
+
+    def set_value(self, key: str, value: str) -> None:
+        raise NotImplementedError
+
     @abstractmethod
     def get_int(self, key: str, default: int) -> int:
         raise NotImplementedError

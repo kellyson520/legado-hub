@@ -101,3 +101,65 @@ def test_source_build_agent_availability_uses_source_build_route():
     settings = SystemSettingsService(SettingsRepo(), Registry()).get_source_build_agent_settings()
 
     assert settings["provider_configured"] is False
+
+
+def test_novel_vector_settings_persist_without_returning_credentials(monkeypatch, tmp_path):
+    client, headers = build_client(monkeypatch, tmp_path, ["system.settings.manage"])
+
+    initial = client.get("/api/system/novel-settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json()["data"]["vector_backend"] == "disabled"
+    assert "api_key" not in initial.json()["data"]
+
+    updated = client.put(
+        "/api/system/novel-settings",
+        headers=headers,
+        json={
+            "vector_backend": "qdrant",
+            "endpoint": "https://qdrant.example",
+            "api_key": "qdrant-secret",
+            "collection_prefix": "novel",
+            "dimension": 768,
+            "embedding_model": "text-embedding-3-small",
+            "batch_size": 8,
+            "threshold": 0.72,
+            "concurrency": 2,
+            "retries": 1,
+            "cache_ttl": 600,
+            "enabled_tools": ["read"],
+        },
+    )
+    assert updated.status_code == 200
+    body = updated.json()["data"]
+    assert body["vector_backend"] == "qdrant"
+    assert body["endpoint"] == "https://qdrant.example"
+    assert body["credential_configured"] is True
+    assert "qdrant-secret" not in str(updated.json())
+    assert "api_key" not in body
+
+    persisted = client.get("/api/system/novel-settings", headers=headers)
+    assert persisted.status_code == 200
+    assert persisted.json()["data"]["embedding_model"] == "text-embedding-3-small"
+    assert "qdrant-secret" not in str(persisted.json())
+
+
+def test_novel_vector_settings_reject_qdrant_without_endpoint(monkeypatch, tmp_path):
+    client, headers = build_client(monkeypatch, tmp_path, ["system.settings.manage"])
+
+    response = client.put(
+        "/api/system/novel-settings",
+        headers=headers,
+        json={"vector_backend": "qdrant", "endpoint": ""},
+    )
+
+    assert response.status_code == 422
+
+
+def test_novel_vector_store_health_supports_disabled_backend(monkeypatch, tmp_path):
+    client, headers = build_client(monkeypatch, tmp_path, ["system.settings.manage"])
+
+    response = client.post("/api/system/novel-settings/test-vector-store", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["enabled"] is False
+    assert response.json()["data"]["backend"] == "disabled"

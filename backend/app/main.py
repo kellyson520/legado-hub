@@ -12,11 +12,14 @@ from app.infrastructure.persistence.factory import (
     build_source_repository,
     build_source_runtime_service,
     close_interactive_browser_supervisor,
+    close_novel_repository,
 )
 from app.infrastructure.legado.engine.runtime_process import RuntimeProcessManager
+from app.interfaces.http.novel_agent_compat import compat_router as novel_agent_compat_router
 from app.interfaces.http.router import api_router
 from app.tasks.scheduler import (
     run_event_delivery_job,
+    run_novel_index_job,
     run_source_build_job,
     start_scheduler,
     stop_scheduler,
@@ -68,12 +71,29 @@ async def _source_build_worker(stop_event: asyncio.Event) -> None:
             continue
 
 
+async def _novel_index_worker(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            await run_novel_index_job(limit=settings.NOVEL_INDEX_BATCH_SIZE)
+        except Exception:
+            logger.exception(
+                "novel index worker iteration failed",
+                extra={"action": "worker_error", "worker": "novel_index"},
+            )
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=settings.NOVEL_INDEX_POLL_SECONDS)
+        except asyncio.TimeoutError:
+            continue
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     worker_task = None
     stop_event = None
     source_build_worker_task = None
     source_build_stop_event = None
+    novel_index_worker_task = None
+    novel_index_stop_event = None
     scheduler_started = False
     app.state.runtime_process = RuntimeProcessManager()
     try:
@@ -95,6 +115,10 @@ async def lifespan(app: FastAPI):
             source_build_stop_event = asyncio.Event()
             source_build_worker_task = asyncio.create_task(_source_build_worker(source_build_stop_event))
             app.state.source_build_worker_task = source_build_worker_task
+        if settings.ENV != 'test' and settings.NOVEL_INDEX_WORKER_ENABLED:
+            novel_index_stop_event = asyncio.Event()
+            novel_index_worker_task = asyncio.create_task(_novel_index_worker(novel_index_stop_event))
+            app.state.novel_index_worker_task = novel_index_worker_task
         yield
     finally:
         if scheduler_started:
@@ -103,10 +127,15 @@ async def lifespan(app: FastAPI):
             stop_event.set()
         if source_build_stop_event is not None:
             source_build_stop_event.set()
+        if novel_index_stop_event is not None:
+            novel_index_stop_event.set()
         if worker_task is not None:
             await worker_task
         if source_build_worker_task is not None:
             await source_build_worker_task
+        if novel_index_worker_task is not None:
+            await novel_index_worker_task
+        await close_novel_repository()
         await asyncio.to_thread(close_interactive_browser_supervisor)
         app.state.runtime_process.close()
 
@@ -124,6 +153,7 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(TraceMiddleware)
 register_exception_handlers(app)
 app.include_router(api_router)
+app.include_router(novel_agent_compat_router)
 
 
 @app.get("/")

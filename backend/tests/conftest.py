@@ -23,6 +23,7 @@ MODULE_PREFIXES = (
     "app.core.security",
     "app.core.exception_handlers",
     "app.core.permissions",
+    "app.interfaces.api",
     "app.interfaces.http",
     "app.infrastructure.persistence",
     "app.application.services",

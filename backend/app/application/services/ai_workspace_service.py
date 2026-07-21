@@ -112,6 +112,7 @@ class AIWorkspaceService:
         novel_tool_executor=None,
         source_joint_test_executor=None,
         authorization_service=None,
+        novel_agent_app=None,
     ):
         self._platform = platform
         self._conversations = conversations
@@ -122,16 +123,51 @@ class AIWorkspaceService:
         self._novel_tool_executor = novel_tool_executor
         self._source_joint_test_executor = source_joint_test_executor
         self._authorization_service = authorization_service
+        self._novel_agent_app = novel_agent_app
 
-    async def create_conversation(self, actor_id: str, title: str = "") -> dict:
+    async def create_conversation(
+        self,
+        actor_id: str,
+        title: str = "",
+        *,
+        owner_scope: str | None = None,
+        book_id: int | None = None,
+        entrypoint: str = "workspace",
+        model_ref: str | None = None,
+    ) -> dict:
+        if self._novel_agent_app is not None:
+            return await self._novel_agent_app.create_conversation(
+                owner_scope or _owner_scope_for_actor(actor_id),
+                title,
+                book_id=book_id,
+                entrypoint=entrypoint,
+                model_ref=model_ref,
+            )
+        scope = owner_scope or _owner_scope_for_actor(actor_id)
         conversation = self._conversations.create_conversation(
-            AIConversation(id=uuid4().hex, actor_id=str(actor_id), title=title.strip() or "新对话")
+            AIConversation(
+                id=uuid4().hex,
+                actor_id=str(actor_id),
+                title=title.strip() or "新对话",
+                owner_scope=scope,
+                book_id=book_id,
+                entrypoint=entrypoint,
+                context_range="chapter" if entrypoint == "reader" else "book",
+                model_ref=model_ref,
+            )
         )
         await self._audit_event(actor_id, "ai.conversation.create", conversation.id)
         return self._serialize_conversation(conversation)
 
-    async def list_conversations(self, actor_id: str) -> list[dict]:
-        return [self._serialize_conversation(item) for item in self._conversations.list_conversations(str(actor_id))]
+    async def list_conversations(self, actor_id: str, owner_scope: str | None = None) -> list[dict]:
+        scope = owner_scope or _owner_scope_for_actor(actor_id)
+        if self._novel_agent_app is not None:
+            return await self._novel_agent_app.list_conversations(scope)
+        try:
+            rows = self._conversations.list_conversations(str(actor_id), owner_scope=owner_scope)
+        except TypeError:
+            rows = self._conversations.list_conversations(str(actor_id))
+        return [self._serialize_conversation(item) for item in rows]
 
     async def list_conversations_page(
         self,
@@ -140,16 +176,36 @@ class AIWorkspaceService:
         page: int = 1,
         page_size: int = 50,
         search: str = "",
+        owner_scope: str | None = None,
     ) -> dict:
+        if self._novel_agent_app is not None:
+            all_rows = await self.list_conversations(actor_id, owner_scope)
+            normalized = search.strip().lower()
+            filtered = [
+                item for item in all_rows
+                if not normalized or normalized in f"{item.get('id', '')} {item.get('title', '')}".lower()
+            ]
+            total = len(filtered)
+            rows = filtered[(page - 1) * page_size : page * page_size]
+            return paginated_result(rows, page=page, page_size=page_size, total=total, search=search)
         if hasattr(self._conversations, "list_conversations_page"):
-            rows, total = self._conversations.list_conversations_page(
-                str(actor_id),
-                page=page,
-                page_size=page_size,
-                search=search,
-            )
+            try:
+                rows, total = self._conversations.list_conversations_page(
+                    str(actor_id),
+                    page=page,
+                    page_size=page_size,
+                    search=search,
+                    owner_scope=owner_scope,
+                )
+            except TypeError:
+                rows, total = self._conversations.list_conversations_page(
+                    str(actor_id), page=page, page_size=page_size, search=search,
+                )
         else:
-            all_rows = self._conversations.list_conversations(str(actor_id))
+            try:
+                all_rows = self._conversations.list_conversations(str(actor_id), owner_scope=owner_scope)
+            except TypeError:
+                all_rows = self._conversations.list_conversations(str(actor_id))
             normalized = search.strip().lower()
             filtered = [
                 item for item in all_rows
@@ -165,21 +221,32 @@ class AIWorkspaceService:
             search=search,
         )
 
-    def get_conversation(self, conversation_id: str, actor_id: str) -> dict:
-        conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
+    def get_conversation(self, conversation_id: str, actor_id: str, owner_scope: str | None = None) -> dict:
+        if self._novel_agent_app is not None:
+            return self._novel_agent_app.get_conversation(owner_scope or _owner_scope_for_actor(actor_id), conversation_id)
+        try:
+            conversation = self._conversations.get_conversation(conversation_id, str(actor_id), owner_scope=owner_scope)
+        except TypeError:
+            conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
         if conversation is None:
             raise NotFoundException("AI conversation not found")
         return {
             **self._serialize_conversation(conversation),
             "messages": [
                 self._serialize_conversation_message(item, str(actor_id), conversation.id)
-                for item in self._conversations.list_messages(conversation.id)
+                for item in self._list_messages(conversation.id, owner_scope=owner_scope)
             ],
             "authorization_requests": (
                 self._authorization_service.list_pending(str(actor_id), conversation.id)
                 if self._authorization_service is not None else []
             ),
         }
+
+    def _list_messages(self, conversation_id: str, *, owner_scope: str | None = None) -> list[AIConversationMessage]:
+        try:
+            return self._conversations.list_messages(conversation_id, owner_scope=owner_scope)
+        except TypeError:
+            return self._conversations.list_messages(conversation_id)
 
     async def send_message(
         self,
@@ -190,12 +257,34 @@ class AIWorkspaceService:
         tool_requests: list[dict] | None = None,
         source_version_id: str | None = None,
         allowed_tool_names: set[str] | frozenset[str] | None = None,
+        *,
+        owner_scope: str | None = None,
+        entrypoint: str = "workspace",
+        book_id: int | None = None,
+        chapter_id: int | None = None,
+        request_model: str | None = None,
+        stream: bool = False,
     ) -> dict:
+        if self._novel_agent_app is not None:
+            return await self._novel_agent_app.send_message(
+                owner_scope or _owner_scope_for_actor(actor_id),
+                conversation_id,
+                content,
+                entrypoint=entrypoint,
+                book_id=book_id,
+                chapter_id=chapter_id,
+                mode=mode,
+                request_model=request_model,
+                stream=stream,
+            )
         if mode not in MODE_PROMPTS:
             raise ValidationException("Unsupported AI mode")
         if not content.strip():
             raise ValidationException("Message content is required")
-        conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
+        try:
+            conversation = self._conversations.get_conversation(conversation_id, str(actor_id), owner_scope=owner_scope)
+        except TypeError:
+            conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
         if conversation is None:
             raise NotFoundException("AI conversation not found")
 
@@ -206,6 +295,10 @@ class AIWorkspaceService:
                 role="user",
                 mode=mode,
                 content=content.strip(),
+                owner_scope=owner_scope or _owner_scope_for_actor(actor_id),
+                entrypoint=entrypoint,
+                book_id=book_id,
+                chapter_id=chapter_id,
             )
         )
         tools = _DEFAULT_TOOL_NAMES if allowed_tool_names is None else frozenset(allowed_tool_names)
@@ -299,6 +392,10 @@ class AIWorkspaceService:
                     mode=mode,
                     content=loop_result.content,
                     tool_calls=tool_calls,
+                    owner_scope=owner_scope or _owner_scope_for_actor(actor_id),
+                    entrypoint=entrypoint,
+                    book_id=book_id,
+                    chapter_id=chapter_id,
                 )
             )
         except Exception as exc:
@@ -547,6 +644,18 @@ class AIWorkspaceService:
         if self._authorization_service is None:
             raise ValidationException("AI conversation authorization is unavailable")
         return await self._authorization_service.revoke_grant(grant_id, actor_id=str(actor_id))
+
+    async def list_novel_tools(self, actor_id: str, book_id: int | None = None) -> list[dict]:
+        if self._novel_agent_app is None:
+            return []
+        return await self._novel_agent_app.list_tools(_owner_scope_for_actor(actor_id), book_id)
+
+    async def call_novel_tool(self, actor_id: str, tool_name: str, arguments: dict, **kwargs) -> dict:
+        if self._novel_agent_app is None:
+            raise ValidationException("Novel agent is not configured")
+        return await self._novel_agent_app.call_tool(
+            _owner_scope_for_actor(actor_id), tool_name, arguments, **kwargs,
+        )
 
     async def _run_model_tool_loop(
         self,
@@ -1122,7 +1231,16 @@ class AIWorkspaceService:
 
     @staticmethod
     def _serialize_conversation(item: AIConversation) -> dict:
-        return {"id": item.id, "title": item.title, "created_at": item.created_at.isoformat()}
+        return {
+            "id": item.id,
+            "title": item.title,
+            "owner_scope": item.owner_scope,
+            "book_id": item.book_id,
+            "entrypoint": item.entrypoint,
+            "context_range": item.context_range,
+            "model_ref": item.model_ref,
+            "created_at": item.created_at.isoformat(),
+        }
 
     @staticmethod
     def _serialize_message(item: AIConversationMessage) -> dict:
@@ -1140,6 +1258,10 @@ class AIWorkspaceService:
             "status": item.status,
             "tool_calls": item.tool_calls,
             "metadata": safe_metadata,
+            "owner_scope": item.owner_scope,
+            "entrypoint": item.entrypoint,
+            "book_id": item.book_id,
+            "chapter_id": item.chapter_id,
             "created_at": item.created_at.isoformat(),
         }
         if safe_metadata.get("authorization_request") is not None:
@@ -1149,3 +1271,8 @@ class AIWorkspaceService:
 
 def _sanitize(value):
     return sanitize_for_boundary(value)
+
+
+def _owner_scope_for_actor(actor_id: str) -> str:
+    value = str(actor_id)
+    return value if ":" in value else f"user:{value}"

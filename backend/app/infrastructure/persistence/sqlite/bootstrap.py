@@ -45,6 +45,15 @@ def _ensure_sqlite_user_columns() -> None:
                 connection.exec_driver_sql(f"ALTER TABLE users ADD COLUMN {column} {ddl}")
 
 
+def _ensure_sqlite_api_key_columns() -> None:
+    with engine.begin() as connection:
+        rows = connection.exec_driver_sql("PRAGMA table_info(api_keys)").fetchall()
+        if not rows:
+            return
+        if "user_id" not in {row[1] for row in rows}:
+            connection.exec_driver_sql("ALTER TABLE api_keys ADD COLUMN user_id INTEGER")
+
+
 def _ensure_sqlite_job_columns() -> None:
     with engine.begin() as connection:
         rows = connection.exec_driver_sql("PRAGMA table_info(jobs)").fetchall()
@@ -128,6 +137,9 @@ def _ensure_sqlite_novel_analysis_columns() -> None:
 
 def _ensure_sqlite_ai_conversation_columns() -> None:
     with engine.begin() as connection:
+        conversation_rows = connection.exec_driver_sql("PRAGMA table_info(ai_conversations)").fetchall()
+        if conversation_rows and "chapter_id" not in {row[1] for row in conversation_rows}:
+            connection.exec_driver_sql("ALTER TABLE ai_conversations ADD COLUMN chapter_id INTEGER")
         rows = connection.exec_driver_sql("PRAGMA table_info(ai_conversation_messages)").fetchall()
         if rows and "metadata_payload" not in {row[1] for row in rows}:
             connection.exec_driver_sql("ALTER TABLE ai_conversation_messages ADD COLUMN metadata_payload TEXT NOT NULL DEFAULT '{}'")
@@ -211,6 +223,94 @@ def _ensure_sqlite_ai_conversation_columns() -> None:
             )
 
 
+def _ensure_sqlite_novel_columns() -> None:
+    required = {
+        "ai_conversations": {
+            "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+            "book_id": "INTEGER",
+            "entrypoint": "VARCHAR NOT NULL DEFAULT 'workspace'",
+            "context_range": "VARCHAR NOT NULL DEFAULT 'book'",
+            "model_ref": "VARCHAR",
+            "knowledge_version": "VARCHAR NOT NULL DEFAULT ''",
+            "toolset_version": "VARCHAR NOT NULL DEFAULT ''",
+        },
+        "ai_conversation_messages": {
+            "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+            "entrypoint": "VARCHAR NOT NULL DEFAULT 'workspace'",
+            "book_id": "INTEGER",
+            "chapter_id": "INTEGER",
+        },
+        "novel_ingestions": {
+            "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+            "book_id": "INTEGER",
+        },
+        "novel_tasks": {
+            "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+            "book_id": "INTEGER",
+            "chapter_id": "INTEGER",
+        },
+    }
+    with engine.begin() as connection:
+        for table, columns in required.items():
+            rows = connection.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            if not rows:
+                continue
+            existing = {row[1] for row in rows}
+            for column, ddl in columns.items():
+                if column not in existing:
+                    connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def _ensure_sqlite_agent_runtime_columns() -> None:
+    required_columns = {
+        "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+        "book_id": "INTEGER",
+        "chapter_id": "INTEGER",
+        "entrypoint": "VARCHAR NOT NULL DEFAULT ''",
+        "conversation_id": "VARCHAR NOT NULL DEFAULT ''",
+        "provider_name": "VARCHAR NOT NULL DEFAULT ''",
+        "model_name": "VARCHAR NOT NULL DEFAULT ''",
+        "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+        "cache_hit": "BOOLEAN NOT NULL DEFAULT 0",
+        "input_tokens": "INTEGER NOT NULL DEFAULT 0",
+        "output_tokens": "INTEGER NOT NULL DEFAULT 0",
+        "cost": "FLOAT NOT NULL DEFAULT 0",
+        "tool_names": "TEXT NOT NULL DEFAULT '[]'",
+        "evidence_ids": "TEXT NOT NULL DEFAULT '[]'",
+    }
+    with engine.begin() as connection:
+        rows = connection.exec_driver_sql("PRAGMA table_info(agent_runs)").fetchall()
+        if not rows:
+            return
+        existing = {row[1] for row in rows}
+        for column, ddl in required_columns.items():
+            if column not in existing:
+                connection.exec_driver_sql(f"ALTER TABLE agent_runs ADD COLUMN {column} {ddl}")
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_owner_book "
+            "ON agent_runs(owner_scope, book_id, created_at DESC)"
+        )
+
+
+def _ensure_sqlite_novel_vector_table() -> None:
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """CREATE TABLE IF NOT EXISTS novel_vectors (
+                owner_scope VARCHAR NOT NULL,
+                book_id INTEGER NOT NULL,
+                chapter_id INTEGER NOT NULL,
+                knowledge_version VARCHAR NOT NULL,
+                vector TEXT NOT NULL DEFAULT '[]',
+                payload TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY(owner_scope, book_id, chapter_id, knowledge_version)
+            )"""
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_novel_vectors_scope_book_version "
+            "ON novel_vectors(owner_scope, book_id, knowledge_version)"
+        )
+
+
 def _ensure_default_provider_routes() -> None:
     from app.application.ports.provider import PROVIDER_ROUTE_GROUPS
 
@@ -252,12 +352,16 @@ def bootstrap_sqlite() -> None:
     _ = _schema
     Base.metadata.create_all(bind=engine)
     _ensure_sqlite_user_columns()
+    _ensure_sqlite_api_key_columns()
     _ensure_sqlite_source_columns()
     _ensure_sqlite_job_columns()
     _ensure_sqlite_translation_columns()
     _ensure_sqlite_provider_columns()
     _ensure_sqlite_novel_analysis_columns()
     _ensure_sqlite_ai_conversation_columns()
+    _ensure_sqlite_novel_columns()
+    _ensure_sqlite_agent_runtime_columns()
+    _ensure_sqlite_novel_vector_table()
     _ensure_default_provider_routes()
     _ensure_sqlite_event_delivery_indexes()
     db = SessionLocal()

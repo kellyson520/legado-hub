@@ -27,6 +27,8 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
         try:
             model = NovelIngestionModel(
                 id=ingestion.id or uuid4().hex,
+                owner_scope=ingestion.owner_scope,
+                book_id=ingestion.book_id,
                 title=ingestion.title,
                 source_text=ingestion.source_text,
                 status=ingestion.status,
@@ -40,10 +42,13 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
         finally:
             self._close(db)
 
-    def list_ingestions(self) -> list[NovelIngestion]:
+    def list_ingestions(self, owner_scope: str | None = None) -> list[NovelIngestion]:
         db = self._db()
         try:
-            rows = db.query(NovelIngestionModel).order_by(NovelIngestionModel.created_at.desc()).all()
+            query = db.query(NovelIngestionModel)
+            if owner_scope is not None:
+                query = query.filter(NovelIngestionModel.owner_scope == owner_scope)
+            rows = query.order_by(NovelIngestionModel.created_at.desc()).all()
             return [self._to_ingestion(row) for row in rows]
         finally:
             self._close(db)
@@ -55,10 +60,13 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
         page_size: int = 50,
         search: str = "",
         status: str | None = None,
+        owner_scope: str | None = None,
     ) -> tuple[list[NovelIngestion], int]:
         db = self._db()
         try:
             query = db.query(NovelIngestionModel)
+            if owner_scope is not None:
+                query = query.filter(NovelIngestionModel.owner_scope == owner_scope)
             if status:
                 query = query.filter(NovelIngestionModel.status == status)
             normalized_search = search.strip()
@@ -83,11 +91,33 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
         finally:
             self._close(db)
 
-    def get_ingestion(self, novel_id: str) -> NovelIngestion | None:
+    def get_ingestion(self, novel_id: str, owner_scope: str | None = None) -> NovelIngestion | None:
         db = self._db()
         try:
-            row = db.query(NovelIngestionModel).filter(NovelIngestionModel.id == novel_id).first()
+            query = db.query(NovelIngestionModel).filter(NovelIngestionModel.id == novel_id)
+            if owner_scope is not None:
+                query = query.filter(NovelIngestionModel.owner_scope == owner_scope)
+            row = query.first()
             return self._to_ingestion(row) if row else None
+        finally:
+            self._close(db)
+
+    def claim_legacy_scope(self, owner_scope: str) -> dict:
+        if not owner_scope or owner_scope == "legacy":
+            raise ValueError("legacy scope cannot be claimed by itself")
+        db = self._db()
+        try:
+            ingestion_cursor = db.query(NovelIngestionModel).filter(
+                NovelIngestionModel.owner_scope == "legacy"
+            ).update({NovelIngestionModel.owner_scope: owner_scope}, synchronize_session=False)
+            task_cursor = db.query(NovelTaskModel).filter(
+                NovelTaskModel.owner_scope == "legacy"
+            ).update({NovelTaskModel.owner_scope: owner_scope}, synchronize_session=False)
+            db.commit()
+            return {"ingestions": ingestion_cursor, "tasks": task_cursor}
+        except Exception:
+            db.rollback()
+            raise
         finally:
             self._close(db)
 
@@ -97,6 +127,9 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
             model = NovelTaskModel(
                 id=task.id or uuid4().hex,
                 novel_id=task.novel_id,
+                owner_scope=task.owner_scope,
+                book_id=task.book_id,
+                chapter_id=task.chapter_id,
                 actor_id=task.actor_id,
                 status=task.status,
                 provider_name=task.provider,
@@ -105,7 +138,7 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
                 result_payload=json.dumps(task.result, ensure_ascii=False),
                 usage_payload=json.dumps(task.usage, ensure_ascii=False),
             )
-            db.add(model)
+            model = db.merge(model)
             ingestion = db.query(NovelIngestionModel).filter(NovelIngestionModel.id == task.novel_id).first()
             if ingestion is not None:
                 ingestion.status = task.status
@@ -117,10 +150,13 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
         finally:
             self._close(db)
 
-    def list_tasks(self) -> list[NovelAnalysisTask]:
+    def list_tasks(self, owner_scope: str | None = None) -> list[NovelAnalysisTask]:
         db = self._db()
         try:
-            rows = db.query(NovelTaskModel).order_by(NovelTaskModel.created_at.desc()).all()
+            query = db.query(NovelTaskModel)
+            if owner_scope is not None:
+                query = query.filter(NovelTaskModel.owner_scope == owner_scope)
+            rows = query.order_by(NovelTaskModel.created_at.desc()).all()
             return [self._to_task(row) for row in rows]
         finally:
             self._close(db)
@@ -129,6 +165,8 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
     def _to_ingestion(model: NovelIngestionModel) -> NovelIngestion:
         return NovelIngestion(
             id=model.id,
+            owner_scope=model.owner_scope,
+            book_id=model.book_id,
             title=model.title,
             source_text=model.source_text,
             status=model.status,
@@ -141,7 +179,10 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
     def _to_task(model: NovelTaskModel) -> NovelAnalysisTask:
         return NovelAnalysisTask(
             id=model.id,
+            owner_scope=model.owner_scope,
             novel_id=model.novel_id,
+            book_id=model.book_id,
+            chapter_id=model.chapter_id,
             actor_id=model.actor_id,
             status=model.status,
             provider=model.provider_name,

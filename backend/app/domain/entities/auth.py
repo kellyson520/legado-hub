@@ -37,6 +37,7 @@ class ApiKey:
     id: int = 0
     name: str = ""
     key_hash: str = ""
+    user_id: int | None = None
     permissions: list[str] = field(default_factory=list)
     is_enabled: bool = True
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

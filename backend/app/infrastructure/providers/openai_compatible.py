@@ -109,6 +109,17 @@ def _models_endpoint_url(endpoint_url: str) -> str:
     return normalized.rstrip("/") + "/models"
 
 
+def _embeddings_endpoint_url(endpoint_url: str) -> str:
+    normalized = endpoint_url.rstrip("/")
+    if normalized.endswith("/embeddings"):
+        return normalized
+    if normalized.endswith("/chat/completions"):
+        return normalized[: -len("/chat/completions")] + "/embeddings"
+    if normalized.endswith("/v1"):
+        return normalized + "/embeddings"
+    return normalized + "/v1/embeddings"
+
+
 class OpenAICompatibleProvider:
     def __init__(
         self,
@@ -194,6 +205,33 @@ class OpenAICompatibleProvider:
         normalized = str(message).lower()
         return "thinking mode" in normalized and "tool_choice" in normalized
 
+    async def invoke_embedding(self, model: str, payload: dict) -> dict:
+        request_body = {"model": model, "input": payload.get("input", [])}
+        for field in ("encoding_format", "dimensions", "user"):
+            if field in payload:
+                request_body[field] = payload[field]
+        response = await self._client.post(
+            _embeddings_endpoint_url(self._endpoint_url),
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            json=request_body,
+        )
+        response.raise_for_status()
+        body = response.json()
+        usage = body.get("usage", {}) if isinstance(body, dict) else {}
+        return {
+            "provider_name": self.name,
+            "model": body.get("model", model) if isinstance(body, dict) else model,
+            "data": body.get("data", []) if isinstance(body, dict) else [],
+            "usage": {
+                "input_tokens": usage.get("prompt_tokens", 0),
+                "output_tokens": 0,
+                "total_tokens": usage.get("total_tokens", usage.get("prompt_tokens", 0)),
+            },
+            "raw": body,
+        }
     async def list_models(self) -> list[str]:
         response = await self._client.get(
             _models_endpoint_url(self._endpoint_url),

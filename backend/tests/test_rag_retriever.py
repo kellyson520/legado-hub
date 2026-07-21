@@ -134,6 +134,40 @@ class TestRAGRetriever:
         assert "宗门大比" in ctx
 
 
+@pytest.mark.asyncio
+async def test_scoped_retrieval_returns_evidence_and_never_uses_hash_vectors():
+    db = await aiosqlite.connect(":memory:")
+    with open("app/database_migrations/novel_schema.sql", encoding="utf-8") as schema:
+        await db.executescript(schema.read())
+    try:
+        from app.domain.entities.novel import NovelBook, NovelChapter
+        from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRepository
+        from app.infrastructure.vectorstores.disabled import DisabledVectorStore
+
+        repo = SqliteNovelRepository(db)
+        book = await repo.save_book("user:1", NovelBook(book_url="https://rag.test", book_name="检索书"))
+        await repo.save_chapter(
+            "user:1",
+            NovelChapter(
+                book_id=book.id,
+                canonical_full="C1",
+                canonical_num=1,
+                chapter_title="离开",
+                raw_text="林远离开青云宗，周宁在城门送别。",
+            ),
+        )
+        retriever = RAGRetriever(repo, vector_store=DisabledVectorStore())
+        await retriever.build_bm25_index("user:1", book.id, knowledge_version="k1")
+        results = await retriever.retrieve("user:1", book_id=book.id, query="林远离开", top_k=5)
+
+        assert results
+        assert all(result.owner_scope == "user:1" for result in results)
+        assert all(result.chapter_num >= 0 and result.evidence for result in results)
+        assert {result.source for result in results} <= {"bm25", "vector", "kg"}
+    finally:
+        await db.close()
+
+
 class TestPromptBuilder:
     """Prompt 构建器测试"""
 

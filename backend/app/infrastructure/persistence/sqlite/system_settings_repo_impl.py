@@ -137,6 +137,17 @@ class SQLiteSystemSettingsRepository(SystemSettingsRepository):
         finally:
             self._close(db)
 
+    def get_value(self, key: str, default: str | None = None) -> str | None:
+        db = self._db()
+        try:
+            row = db.query(SystemSettingModel).filter(SystemSettingModel.key == key).first()
+            return default if row is None else row.value
+        finally:
+            self._close(db)
+
+    def set_value(self, key: str, value: str) -> None:
+        self._set_value(key, str(value))
+
     @classmethod
     def _to_versioned_setting(
         cls,

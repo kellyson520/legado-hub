@@ -47,6 +47,7 @@ class AgentRun:
     tenant_id: str
     agent_kind: str
     input_payload: dict[str, Any] = field(default_factory=dict)
+    request_metadata: dict[str, Any] = field(default_factory=dict)
     status: Literal['candidate'] = 'candidate'
     created_at: datetime | None = None
 

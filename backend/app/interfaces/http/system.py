@@ -10,6 +10,7 @@ from app.domain.repositories.system_settings_repo import ConcurrentSettingsUpdat
 from app.infrastructure.persistence.factory import (
     build_provider_platform_service,
     build_system_settings_service,
+    build_vector_store,
 )
 from app.interfaces.http.deps import require_permission
 
@@ -57,6 +58,26 @@ class ProviderRouteEntryRequest(BaseModel):
 
 class ProviderRouteRequest(BaseModel):
     entries: list[ProviderRouteEntryRequest] = Field(min_length=1, max_length=20)
+
+
+class NovelSettingsRequest(BaseModel):
+    vector_backend: str | None = Field(default=None, min_length=1, max_length=20)
+    backend: str | None = Field(default=None, min_length=1, max_length=20)
+    endpoint: str | None = Field(default=None, max_length=500)
+    api_key: str | None = Field(default=None, max_length=2000)
+    collection_prefix: str | None = Field(default=None, min_length=1, max_length=80)
+    dimension: int | None = Field(default=None, ge=0, le=65536)
+    embedding_model: str | None = Field(default=None, max_length=200)
+    batch_size: int | None = Field(default=None, ge=1, le=256)
+    threshold: float | None = Field(default=None, ge=0, le=1)
+    concurrency: int | None = Field(default=None, ge=1, le=64)
+    retries: int | None = Field(default=None, ge=0, le=10)
+    cache_ttl: int | None = Field(default=None, ge=0)
+    enabled_tools: list[str] | None = Field(default=None, max_length=3)
+    chapter_size: int | None = Field(default=None, ge=1000, le=100000)
+    index_policy: str | None = Field(default=None, pattern="^(incremental|full)$")
+    cost_budget_daily: float | None = Field(default=None, ge=0)
+    cost_budget_per_request: float | None = Field(default=None, ge=0)
 
 
 def _system_response(message: str, data):
@@ -252,6 +273,50 @@ async def update_interactive_browser_settings(
         'interactive browser settings saved',
         build_system_settings_service().set_interactive_browser_settings(**payload.model_dump()),
     )
+
+
+@router.get("/novel-settings")
+async def get_novel_settings(
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    data = build_system_settings_service().get_novel_settings()
+    return _system_response("novel settings loaded", data)
+
+
+@router.put("/novel-settings")
+async def update_novel_settings(
+    payload: NovelSettingsRequest,
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    try:
+        data = build_system_settings_service().set_novel_settings(payload.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _system_response("novel settings saved", data)
+
+
+@router.post("/novel-settings/test-vector-store")
+async def test_novel_vector_store(
+    _=Depends(require_permission(Permission.SYSTEM_SETTINGS_MANAGE)),
+):
+    service = build_system_settings_service()
+    configured = service.get_novel_settings()
+    store = build_vector_store()
+    try:
+        data = await store.health()
+    except Exception as exc:
+        data = {
+            "enabled": False,
+            "backend": configured.get("vector_backend", "disabled"),
+            "error": str(exc)[:200],
+        }
+    finally:
+        close = getattr(store, "aclose", None)
+        if callable(close):
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+    return _system_response("novel vector store tested", data)
 
 
 @router.get("/quotas")

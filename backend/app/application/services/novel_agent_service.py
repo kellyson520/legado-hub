@@ -5,14 +5,40 @@ from app.domain.entities.novel_runtime import NovelAnalysisTask, NovelIngestion
 
 
 class NovelAgentService:
-    def __init__(self, platform=None, repo=None):
+    def __init__(self, platform=None, repo=None, app_service=None):
         self._platform = platform
         self._repo = repo
+        self._app_service = app_service
 
-    async def start_analysis(self, novel_id: str, actor_id: str = "system") -> dict:
+    async def create_conversation(self, owner_scope: str, title: str = "", **kwargs) -> dict:
+        if self._app_service is None:
+            raise NotFoundException("unified novel agent is not configured")
+        return await self._app_service.create_conversation(owner_scope, title, **kwargs)
+
+    def get_conversation(self, owner_scope: str, conversation_id: str) -> dict:
+        if self._app_service is None:
+            raise NotFoundException("unified novel agent is not configured")
+        return self._app_service.get_conversation(owner_scope, conversation_id)
+
+    async def send_message(self, owner_scope: str, conversation_id: str, content: str, **kwargs):
+        if self._app_service is None:
+            raise NotFoundException("unified novel agent is not configured")
+        return await self._app_service.send_message(owner_scope, conversation_id, content, **kwargs)
+
+    async def list_tools(self, owner_scope: str, book_id: int | None = None) -> list[dict]:
+        if self._app_service is None:
+            return []
+        return await self._app_service.list_tools(owner_scope, book_id)
+
+    async def call_tool(self, owner_scope: str, tool_name: str, arguments: dict, **kwargs) -> dict:
+        if self._app_service is None:
+            raise NotFoundException("unified novel agent is not configured")
+        return await self._app_service.call_tool(owner_scope, tool_name, arguments, **kwargs)
+
+    async def start_analysis(self, novel_id: str, actor_id: str = "system", owner_scope: str | None = None) -> dict:
         if self._repo is None:
             raise NotFoundException("novel ingestion not found")
-        ingestion = self._repo.get_ingestion(novel_id)
+        ingestion = self._repo.get_ingestion(novel_id, owner_scope=owner_scope)
         if ingestion is None:
             raise NotFoundException("novel ingestion not found")
         invocation = await self._platform.invoke_chat(
@@ -25,6 +51,8 @@ class NovelAgentService:
             id=uuid4().hex,
             novel_id=novel_id,
             actor_id=actor_id,
+            owner_scope=ingestion.owner_scope,
+            book_id=ingestion.book_id,
             status="succeeded",
             provider=invocation.get("provider_name", ""),
             model=invocation.get("model", "gpt-4.1-mini"),

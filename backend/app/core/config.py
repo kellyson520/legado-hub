@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     INTERACTIVE_BROWSER_XVFB_PATH: str = "Xvfb"
     INTERACTIVE_BROWSER_X11VNC_PATH: str = "x11vnc"
     INTERACTIVE_BROWSER_WEBSOCKIFY_PATH: str = "websockify"
+    NOVEL_INDEX_WORKER_ENABLED: bool = True
+    NOVEL_INDEX_POLL_SECONDS: float = 5.0
+    NOVEL_INDEX_BATCH_SIZE: int = 10
+    NOVEL_DB_PATH: str = (BASE_DIR / "data" / "novel.db").as_posix()
 
     @field_validator("ENV")
     @classmethod

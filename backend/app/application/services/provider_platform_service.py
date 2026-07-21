@@ -71,6 +71,84 @@ class ProviderPlatformService:
 
         raise ProviderInvocationError(provider_group, failures)
 
+    async def invoke_novel_chat(
+        self,
+        *,
+        owner_scope: str,
+        model: str | None,
+        payload: dict[str, Any],
+        quota_scope: tuple[str, str],
+    ) -> dict[str, Any]:
+        return await self._invoke_specialized("novel_chat", "invoke_chat", owner_scope, model, payload, quota_scope)
+
+    async def invoke_novel_extract(
+        self,
+        *,
+        owner_scope: str,
+        model: str | None,
+        payload: dict[str, Any],
+        quota_scope: tuple[str, str],
+    ) -> dict[str, Any]:
+        return await self._invoke_specialized("novel_extract", "invoke_chat", owner_scope, model, payload, quota_scope)
+
+    async def invoke_novel_summary(
+        self,
+        *,
+        owner_scope: str,
+        model: str | None,
+        payload: dict[str, Any],
+        quota_scope: tuple[str, str],
+    ) -> dict[str, Any]:
+        return await self._invoke_specialized("novel_summary", "invoke_chat", owner_scope, model, payload, quota_scope)
+
+    async def invoke_novel_embedding(
+        self,
+        *,
+        owner_scope: str,
+        model: str | None,
+        payload: dict[str, Any],
+        quota_scope: tuple[str, str],
+    ) -> dict[str, Any]:
+        return await self._invoke_specialized("novel_embedding", "invoke_embedding", owner_scope, model, payload, quota_scope)
+
+    async def _invoke_specialized(
+        self,
+        provider_group: str,
+        method_name: str,
+        owner_scope: str,
+        model: str | None,
+        payload: dict[str, Any],
+        quota_scope: tuple[str, str],
+    ) -> dict[str, Any]:
+        self._quota_limiter.assert_allowed(quota_scope)
+        selections = self._registry.resolve_group(provider_group)
+        requested_model = (model or "").strip()
+        use_route_model = not requested_model
+        failures: list[str] = []
+        for attempt_count, selection in enumerate(selections, start=1):
+            candidate_model = selection.model if use_route_model else requested_model
+            if not candidate_model:
+                raise LookupError(f"no model configured for provider route group '{provider_group}'")
+            try:
+                method = getattr(selection.provider, method_name)
+                result = await method(model=candidate_model, payload=payload)
+                normalized = self._normalize_result(
+                    result=result,
+                    provider=selection.provider,
+                    provider_group=provider_group,
+                    model=candidate_model,
+                    attempt_count=attempt_count,
+                )
+                normalized["owner_scope"] = owner_scope
+                return normalized
+            except Exception as exc:
+                if self._is_non_retryable_request_error(exc):
+                    raise
+                failures.append(self._sanitize_provider_failure(selection.provider.name, exc))
+                if requested_model and self._is_model_not_found_error(exc):
+                    use_route_model = True
+        raise ProviderInvocationError(provider_group, failures)
+
     def list_provider_accounts(self) -> list[dict]:
         data = [
             self._serialize_provider_account(account)

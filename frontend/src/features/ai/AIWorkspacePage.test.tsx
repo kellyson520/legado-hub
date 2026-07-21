@@ -58,6 +58,25 @@ const aiMocks = vi.hoisted(() => ({
   revokeAIAuthorizationGrant: vi.fn(),
 }))
 
+const novelMocks = vi.hoisted(() => ({
+  listNovelBooks: vi.fn().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{ id: 7, book_name: '测试书', author: '作者', progress: { percent: 0.42 } }],
+    meta: { total: 1 },
+    trace_id: null,
+  }),
+  listNovelModels: vi.fn().mockResolvedValue({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: { novel_chat: [{ provider: 'deepseek', model: 'deepseek-chat' }] },
+    meta: {},
+    trace_id: null,
+  }),
+}))
+
 const statusMocks = vi.hoisted(() => ({
   ListStatus: vi.fn((props: { loading: boolean; empty: boolean }) => {
     void props
@@ -66,6 +85,7 @@ const statusMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/modules/ai', () => aiMocks)
+vi.mock('@/api/modules/novel', () => novelMocks)
 vi.mock('@/components/data/ListStatus', () => statusMocks)
 
 import { AIWorkspacePage } from './AIWorkspacePage'
@@ -88,6 +108,24 @@ test('工作台按中文模式发送消息并显示工具引用', async () => {
     }))
   })
   expect(await screen.findByText('主角在冲突中选择保护同伴。')).toBeInTheDocument()
+})
+
+test('工作台选择书籍和模型后以 workspace 上下文发送', async () => {
+  render(<AIWorkspacePage />)
+
+  fireEvent.change(await screen.findByLabelText('选择书籍'), { target: { value: '7' } })
+  fireEvent.change(screen.getByLabelText('选择模型'), { target: { value: 'deepseek-chat' } })
+  fireEvent.change(screen.getByLabelText('输入消息'), { target: { value: '继续分析' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+  await waitFor(() => {
+    expect(aiMocks.sendAIConversationMessage).toHaveBeenCalledWith('conversation-1', expect.objectContaining({
+      content: '继续分析',
+      entrypoint: 'workspace',
+      book_id: 7,
+      model: 'deepseek-chat',
+    }))
+  })
 })
 
 test('失败消息显示安全提示并允许重试', async () => {

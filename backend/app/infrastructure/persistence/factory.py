@@ -1,3 +1,5 @@
+import asyncio
+from pathlib import Path
 from threading import Lock
 from functools import partial
 
@@ -17,6 +19,10 @@ from app.application.services.maintenance_service import MaintenanceService
 from app.application.services.interactive_browser_service import InteractiveBrowserService
 from app.application.services.interactive_browser_supervisor import InteractiveBrowserSupervisor
 from app.application.services.novel_agent_service import NovelAgentService
+from app.application.services.novel_agent_app_service import NovelAgentAppService
+from app.application.services.novel_cache_service import NovelCacheService
+from app.application.services.novel_ingestion_service import NovelIngestionService
+from app.application.services.novel_model_selection_service import NovelModelSelectionService
 from app.application.services.novel_analysis_pipeline_service import NovelAnalysisPipelineService
 from app.application.services.novel_analysis_audit_service import NovelAnalysisAuditService
 from app.application.services.novel_analysis_task_service import NovelAnalysisTaskService
@@ -47,6 +53,7 @@ from app.application.services.work_knowledge_service import WorkKnowledgeService
 from app.application.services.work_ingestion_service import WorkIngestionService
 from app.application.services.novel_analysis_tool_executor import NovelAnalysisToolExecutor
 from app.core.config import settings
+from app.infrastructure.cache.memory_cache import MemoryCacheProvider
 from app.infrastructure.browser.playwright_driver import PlaywrightBrowserDriver
 from app.infrastructure.browser.interactive_probe import run_browser_probe
 from app.infrastructure.http.outbound import SafeAsyncHttpClient, SafeWebhookSender
@@ -61,6 +68,10 @@ from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLi
 from app.infrastructure.persistence.sqlite.ai_authorization_repo_impl import SQLiteAIAuthorizationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
 from app.infrastructure.persistence.sqlite.novel_runtime_repo_impl import SQLiteNovelRuntimeRepository
+from app.infrastructure.persistence.sqlite.novel_model_preference_repo_impl import SQLiteNovelModelPreferenceRepository
+from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRepository
+from app.infrastructure.persistence.sqlite.novel_db_migrator import migrate_novel_database
+from app.infrastructure.novel_ingestion.url_security import NovelUrlPolicy
 from app.infrastructure.persistence.sqlite.novel_analysis_task_repo_impl import SQLiteNovelAnalysisTaskRepository
 from app.infrastructure.persistence.sqlite.narrative_knowledge_repo_impl import SQLiteNarrativeKnowledgeRepository
 from app.infrastructure.persistence.sqlite.event_delivery_repo_impl import SQLiteEventDeliveryRepository
@@ -77,16 +88,22 @@ from app.infrastructure.persistence.sqlite.source_health_repo_impl import SQLite
 from app.infrastructure.persistence.sqlite.source_review_repo_impl import SQLiteSourceReviewRepository
 from app.infrastructure.persistence.sqlite.source_runtime_repo_impl import SQLiteSourceRuntimeRepository
 from app.infrastructure.persistence.sqlite.system_settings_repo_impl import SQLiteSystemSettingsRepository
+from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.infrastructure.persistence.sqlite.interactive_browser_repo_impl import SQLiteInteractiveBrowserRepository
 from app.infrastructure.persistence.sqlite.translation_runtime_repo_impl import (
     SQLiteTranslationRuntimeRepository,
 )
 from app.infrastructure.persistence.sqlite.quota_usage_repo_impl import SQLiteQuotaUsageRepository
 from app.infrastructure.persistence.sqlite.work_knowledge_repo_impl import SQLiteWorkKnowledgeRepository
+from app.infrastructure.vectorstores import DisabledVectorStore, PgVectorStore, QdrantVectorStore, SQLiteVectorStore
 
 
 _interactive_browser_service_singleton: InteractiveBrowserSupervisor | None = None
 _interactive_browser_service_lock = Lock()
+_novel_cache_provider = MemoryCacheProvider()
+_novel_cache_service: NovelCacheService | None = None
+_novel_database = None
+_novel_database_lock = asyncio.Lock()
 
 
 def build_auth_repository() -> SQLiteAuthRepository:
@@ -482,7 +499,35 @@ def build_system_settings_service() -> SystemSettingsService:
     return SystemSettingsService(
         repo=build_system_settings_repository(),
         provider_registry=build_provider_registry(),
+        metrics_provider=SQLiteAgentRuntimeRepository(),
     )
+
+
+def build_vector_store():
+    """Build the configured novel vector backend without exposing credentials."""
+    config = build_system_settings_service().get_novel_settings(include_secrets=True)
+    backend = config.get("vector_backend", "disabled")
+    if backend == "sqlite":
+        return SQLiteVectorStore(session_factory=SessionLocal)
+    if backend == "qdrant":
+        return QdrantVectorStore(
+            endpoint=config.get("endpoint", ""),
+            collection=config.get("collection_prefix", "novel"),
+            api_key=config.get("api_key", ""),
+        )
+    if backend == "pgvector":
+        return PgVectorStore(session_factory=SessionLocal)
+    return DisabledVectorStore()
+
+
+def build_novel_cache_service() -> NovelCacheService:
+    global _novel_cache_service
+    ttl = int(build_system_settings_service().get_novel_settings().get("cache_ttl", 3600) or 0)
+    if _novel_cache_service is None:
+        _novel_cache_service = NovelCacheService(_novel_cache_provider, default_ttl=ttl)
+    else:
+        _novel_cache_service._default_ttl = ttl
+    return _novel_cache_service
 
 
 def build_interactive_browser_service() -> InteractiveBrowserSupervisor:
@@ -546,6 +591,40 @@ def build_novel_runtime_repository() -> SQLiteNovelRuntimeRepository:
     return SQLiteNovelRuntimeRepository()
 
 
+def build_novel_model_preference_repository() -> SQLiteNovelModelPreferenceRepository:
+    ensure_sqlite_bootstrap()
+    return SQLiteNovelModelPreferenceRepository()
+
+
+async def build_novel_repository() -> SqliteNovelRepository:
+    """Return the shared async repository for the standalone novel database."""
+    global _novel_database
+    async with _novel_database_lock:
+        if _novel_database is None:
+            import aiosqlite
+
+            database_path = Path(settings.NOVEL_DB_PATH)
+            database_path.parent.mkdir(parents=True, exist_ok=True)
+            _novel_database = await aiosqlite.connect(database_path.as_posix())
+            schema_path = Path(__file__).resolve().parents[2] / "database_migrations" / "novel_schema.sql"
+            async with _novel_database.execute("PRAGMA table_info(novels)") as cursor:
+                columns = {row[1] for row in await cursor.fetchall()}
+            if columns and "owner_scope" not in columns:
+                await migrate_novel_database(_novel_database)
+            else:
+                await _novel_database.executescript(schema_path.read_text(encoding="utf-8"))
+                await migrate_novel_database(_novel_database)
+    return SqliteNovelRepository(_novel_database)
+
+
+async def close_novel_repository() -> None:
+    global _novel_database
+    async with _novel_database_lock:
+        if _novel_database is not None:
+            await _novel_database.close()
+            _novel_database = None
+
+
 def build_ai_service() -> AIService:
     return AIService(
         platform=build_provider_platform_service(),
@@ -601,7 +680,52 @@ def build_novel_app_service() -> NovelAppService:
 
 
 def build_novel_agent_service() -> NovelAgentService:
+    app_service = build_novel_agent_app_service()
     return NovelAgentService(
         platform=build_provider_platform_service(),
         repo=build_novel_runtime_repository(),
+        app_service=app_service,
+    )
+
+
+def build_novel_ingestion_service(*, repo, source_reader=None, runtime_repo=None) -> NovelIngestionService:
+    return NovelIngestionService(
+        repo=repo,
+        source_reader=source_reader or build_source_read_service(),
+        runtime_repo=runtime_repo or build_novel_runtime_repository(),
+        url_policy=NovelUrlPolicy(),
+    )
+
+
+def build_novel_agent_app_service(
+    *,
+    novel_repo=None,
+    retriever=None,
+    conversations=None,
+    model_selection=None,
+    cache=None,
+    agent_runtime=None,
+    tool_registry=None,
+    enabled_tool_categories=None,
+) -> NovelAgentAppService:
+    """Assemble the shared novel assistant around existing boundaries."""
+    ensure_sqlite_bootstrap()
+    if enabled_tool_categories is None:
+        configured = build_system_settings_service().get_novel_settings().get("agent_permissions", {})
+        enabled_tool_categories = {
+            category for category, enabled in configured.items() if enabled
+        }
+    return NovelAgentAppService(
+        platform=build_provider_platform_service(),
+        conversations=conversations or SQLiteAIConversationRepository(),
+        novel_repo=novel_repo,
+        retriever=retriever,
+        model_selection=model_selection or NovelModelSelectionService(
+            preferences=build_novel_model_preference_repository(),
+            routes=build_provider_registry(),
+        ),
+        cache=cache or build_novel_cache_service(),
+        agent_runtime=agent_runtime or build_agent_runtime_service(),
+        tool_registry=tool_registry,
+        enabled_tool_categories=enabled_tool_categories,
     )

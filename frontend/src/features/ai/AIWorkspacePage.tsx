@@ -16,6 +16,7 @@ import {
   type AIConversationSummary,
   type AIWorkspaceMode,
 } from '@/api/modules/ai'
+import { listNovelBooks, listNovelModels, type NovelBook, type NovelModelOption } from '@/api/modules/novel'
 import { useLanguage } from '@/app/providers/LanguageProvider'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
@@ -66,6 +67,10 @@ export function AIWorkspacePage() {
     load: listAIConversations,
   })
   const { rows: conversations, loading: loadingConversations } = pagination
+  const [books, setBooks] = useState<NovelBook[]>([])
+  const [models, setModels] = useState<NovelModelOption[]>([])
+  const [selectedBookId, setSelectedBookId] = useState('')
+  const [selectedModel, setSelectedModel] = useState('')
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [conversation, setConversation] = useState<AIConversation | null>(null)
   const [mode, setMode] = useState<AIWorkspaceMode>('chat')
@@ -91,6 +96,8 @@ export function AIWorkspacePage() {
     const response = await getAIConversation(conversationId)
     if (generation !== loadGeneration.current) return
     setActiveConversationId(conversationId)
+    if (response.data.book_id != null) setSelectedBookId(String(response.data.book_id))
+    if (response.data.model_ref) setSelectedModel(response.data.model_ref)
     const hydratePendingCards = (pending: AIConversationAuthorizationRequest[]) => {
       if (generation !== loadGeneration.current) return
       const existingRequestIds = new Set(
@@ -129,6 +136,16 @@ export function AIWorkspacePage() {
     }
   }
 
+  const loadNovelContext = async () => {
+    try {
+      const [booksResponse, modelsResponse] = await Promise.all([listNovelBooks(), listNovelModels()])
+      setBooks(booksResponse.data)
+      setModels(modelsResponse.data.novel_chat ?? [])
+    } catch {
+      // Novel context is optional; the existing AI workspace remains usable.
+    }
+  }
+
   useEffect(() => {
     if (!activeConversationId && conversations[0]) {
       void loadConversation(conversations[0].id)
@@ -140,12 +157,21 @@ export function AIWorkspacePage() {
     }
   }, [activeConversationId, conversations, loadingConversations])
 
+  useEffect(() => {
+    void loadNovelContext()
+  }, [])
+
   const createConversation = async () => {
     if (sending) return
     loadGeneration.current += 1
     setSending(true)
     try {
-      const response = await createAIConversation({ title: t('新的 AI 对话') })
+      const response = await createAIConversation({
+        title: t('新的 AI 对话'),
+        ...(selectedBookId ? { book_id: Number(selectedBookId) } : {}),
+        ...(selectedModel ? { model: selectedModel } : {}),
+        entrypoint: 'workspace',
+      })
       const next = response.data
       setConversation({ ...next, messages: [] })
       setActiveConversationId(next.id)
@@ -197,6 +223,9 @@ export function AIWorkspacePage() {
         mode: outgoingMode,
         tool_requests: outgoingTools,
         source_version_id: outgoingTools.some((tool) => tool.name === 'get_source_rule_summary') ? sourceVersionId.trim() : undefined,
+        entrypoint: 'workspace',
+        ...(selectedBookId ? { book_id: Number(selectedBookId) } : {}),
+        ...(selectedModel ? { model: selectedModel } : {}),
       })
       setConversation((current) => current ? { ...current, messages: [...current.messages, response.data] } : current)
     } catch {
@@ -326,6 +355,20 @@ export function AIWorkspacePage() {
           <header className="border-b border-border px-5 py-4">
             <p className="text-xs font-semibold text-primary">受控 Agent 对话</p>
             <h2 className="mt-1 text-lg font-semibold">{conversation?.title ?? '选择或新建一个对话'}</h2>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <label className="text-xs font-medium text-muted-foreground">选择书籍
+                <select aria-label="选择书籍" value={selectedBookId} onChange={(event) => setSelectedBookId(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring">
+                  <option value="">不绑定书籍</option>
+                  {books.map((book) => <option key={book.id} value={book.id}>{book.book_name}</option>)}
+                </select>
+              </label>
+              <label className="text-xs font-medium text-muted-foreground">选择模型
+                <select aria-label="选择模型" value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring">
+                  <option value="">系统路由默认</option>
+                  {models.map((item) => <option key={`${item.provider}:${item.model}`} value={item.model}>{item.model} · {item.provider}</option>)}
+                </select>
+              </label>
+            </div>
           </header>
 
           <div className="min-h-[320px] flex-1 space-y-5 bg-[radial-gradient(circle_at_top_right,hsl(var(--accent))_0,transparent_30%)] p-5">

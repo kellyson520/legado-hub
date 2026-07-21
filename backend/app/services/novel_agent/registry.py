@@ -72,6 +72,17 @@ class ToolRegistry:
                     'skill': skill,
                 }
 
+    def register_external_tool(self, tool_def: ToolDefinition, handler: Callable[..., Dict[str, Any]]):
+        """Attach a bounded application-service tool to this shared registry."""
+        if not isinstance(tool_def, ToolDefinition) or not callable(handler):
+            raise TypeError("external tools require a ToolDefinition and callable handler")
+        if self._is_tool_enabled(tool_def.name):
+            self._tools[tool_def.name] = {
+                'def': tool_def,
+                'skill': None,
+                'handler': handler,
+            }
+
     def _is_tool_enabled(self, tool_name: str) -> bool:
         if self.config is None:
             return True
@@ -125,7 +136,16 @@ class ToolRegistry:
                 self.memory.log_tool_call(tool_name, params, result, False, 0)
             return result
 
-        skill = self._tools[tool_name]['skill']
+        registered = self._tools[tool_name]
+        external_handler = registered.get('handler')
+        if external_handler is not None:
+            try:
+                result = external_handler(**params)
+            except TypeError:
+                result = external_handler(params)
+            return result
+
+        skill = registered['skill']
         try:
             result = skill.execute(tool_name, **params)
             success = 'error' not in result

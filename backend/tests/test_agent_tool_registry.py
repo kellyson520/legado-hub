@@ -244,3 +244,13 @@ async def test_source_joint_test_is_source_build_only_and_handler_is_bounded():
             arguments={'book_name': '斗罗大陆'},
             tenant_id='tenant-1',
         )
+
+
+def test_registry_exposes_bounded_novel_tools_for_the_novel_agent(registry):
+    chapter_search = registry.get('chapter.search')
+    reading_progress = registry.get('reading.progress')
+
+    assert chapter_search is not None
+    assert chapter_search.category == 'read'
+    assert 'novel' in chapter_search.allowed_agent_kinds
+    assert reading_progress is not None

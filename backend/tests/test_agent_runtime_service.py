@@ -67,3 +67,77 @@ def test_agent_runtime_lists_recent_runs_for_admin_queries(tmp_path, monkeypatch
 
     assert [item.id for item in runs[:2]] == [newer.id, older.id]
     assert service.get_run_admin(newer.id) is not None
+
+
+def test_agent_runtime_keeps_a_local_audit_trace_for_application_services(tmp_path, monkeypatch):
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'agent-runtime-history.sqlite3'))
+
+    from app.infrastructure.persistence.factory import build_agent_runtime_service
+
+    service = build_agent_runtime_service()
+    run = service.create_run(tenant_id='user:1', agent_kind='novel', input_payload={'book_id': 7})
+    invocation = service.record_tool_invocation(
+        run_id=run.id,
+        tenant_id='user:1',
+        tool_name='reading.progress',
+        category='read',
+        arguments={'book_id': 7},
+    )
+    service.record_tool_result(
+        invocation_id=invocation.id,
+        tenant_id='user:1',
+        status='accepted',
+        data={'percent': 0.42},
+    )
+
+    assert service.history[-1]['status'] == 'accepted'
+    assert service.history[-1]['tool_name'] == 'reading.progress'
+
+
+def test_agent_runtime_persists_novel_request_usage_without_content_payload(tmp_path, monkeypatch):
+    monkeypatch.setenv('DB_PATH', str(tmp_path / 'agent-runtime-request.sqlite3'))
+
+    from app.infrastructure.persistence.factory import build_agent_runtime_service
+
+    service = build_agent_runtime_service()
+    run = service.create_run(
+        tenant_id='user:1',
+        agent_kind='novel',
+        input_payload={'book_id': 7, 'entrypoint': 'reader'},
+    )
+    service.record_request(
+        run_id=run.id,
+        tenant_id='user:1',
+        owner_scope='user:1',
+        book_id=7,
+        chapter_id=2,
+        entrypoint='reader',
+        conversation_id='conversation-1',
+        provider='deepseek',
+        model='deepseek-chat',
+        attempts=2,
+        cache_hit=False,
+        usage={'input_tokens': 12, 'output_tokens': 8},
+        cost=0.03,
+        tool_names=['chapter.search'],
+        evidence_ids=['chapter:2'],
+    )
+
+    stored = service.get_run(run.id, tenant_id='user:1')
+
+    assert stored is not None
+    assert stored.request_metadata == {
+        'owner_scope': 'user:1',
+        'book_id': 7,
+        'chapter_id': 2,
+        'entrypoint': 'reader',
+        'conversation_id': 'conversation-1',
+        'provider': 'deepseek',
+        'model': 'deepseek-chat',
+        'attempts': 2,
+        'cache_hit': False,
+        'usage': {'input_tokens': 12, 'output_tokens': 8},
+        'cost': 0.03,
+        'tool_names': ['chapter.search'],
+        'evidence_ids': ['chapter:2'],
+    }

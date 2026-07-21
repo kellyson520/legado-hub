@@ -9,7 +9,7 @@ class AIConversationRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_conversations(self, actor_id: str) -> list[AIConversation]:
+    def list_conversations(self, actor_id: str, owner_scope: str | None = None) -> list[AIConversation]:
         raise NotImplementedError
 
     @abstractmethod
@@ -20,11 +20,12 @@ class AIConversationRepository(ABC):
         page: int = 1,
         page_size: int = 50,
         search: str = "",
+        owner_scope: str | None = None,
     ) -> tuple[list[AIConversation], int]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_conversation(self, conversation_id: str, actor_id: str) -> AIConversation | None:
+    def get_conversation(self, conversation_id: str, actor_id: str, owner_scope: str | None = None) -> AIConversation | None:
         raise NotImplementedError
 
     @abstractmethod
@@ -32,5 +33,5 @@ class AIConversationRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_messages(self, conversation_id: str) -> list[AIConversationMessage]:
+    def list_messages(self, conversation_id: str, owner_scope: str | None = None) -> list[AIConversationMessage]:
         raise NotImplementedError

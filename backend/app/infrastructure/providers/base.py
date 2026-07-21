@@ -6,3 +6,6 @@ class ProviderAdapter(Protocol):
 
     async def invoke_chat(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
+
+    async def invoke_embedding(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError

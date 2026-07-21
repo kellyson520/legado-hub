@@ -260,7 +260,12 @@ class SQLiteAuthRepository(AuthRepository):
     async def save_api_key(self, api_key: ApiKey) -> ApiKey:
         db = SessionLocal()
         try:
-            model = ApiKeyModel(name=api_key.name, key_hash=api_key.key_hash, is_enabled=api_key.is_enabled)
+            model = ApiKeyModel(
+                name=api_key.name,
+                key_hash=api_key.key_hash,
+                user_id=api_key.user_id,
+                is_enabled=api_key.is_enabled,
+            )
             db.add(model)
             db.flush()
             for permission in api_key.permissions:
@@ -271,6 +276,7 @@ class SQLiteAuthRepository(AuthRepository):
                 id=model.id,
                 name=model.name,
                 key_hash=model.key_hash,
+                user_id=model.user_id,
                 permissions=api_key.permissions,
                 is_enabled=model.is_enabled,
                 created_at=model.created_at,
@@ -293,6 +299,7 @@ class SQLiteAuthRepository(AuthRepository):
                 id=model.id,
                 name=model.name,
                 key_hash=model.key_hash,
+                user_id=model.user_id,
                 permissions=sorted(row[0] for row in permission_rows),
                 is_enabled=model.is_enabled,
                 created_at=model.created_at,
@@ -315,6 +322,7 @@ class SQLiteAuthRepository(AuthRepository):
                         id=model.id,
                         name=model.name,
                         key_hash=model.key_hash,
+                        user_id=model.user_id,
                         permissions=[row[0] for row in permission_rows],
                         is_enabled=model.is_enabled,
                         created_at=model.created_at,
@@ -345,6 +353,7 @@ class SQLiteAuthRepository(AuthRepository):
                         id=model.id,
                         name=model.name,
                         key_hash=model.key_hash,
+                        user_id=model.user_id,
                         permissions=[row[0] for row in permission_rows],
                         is_enabled=model.is_enabled,
                         created_at=model.created_at,
@@ -391,6 +400,7 @@ class SQLiteAuthRepository(AuthRepository):
                         id=model.id,
                         name=model.name,
                         key_hash=model.key_hash,
+                        user_id=model.user_id,
                         permissions=[row[0] for row in permission_rows],
                         is_enabled=model.is_enabled,
                         created_at=model.created_at,

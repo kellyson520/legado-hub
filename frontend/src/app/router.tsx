@@ -12,6 +12,8 @@ const AITasksPage = lazy(() => import('@/features/ai/AITasksPage').then(({ AITas
 const AIWorkspacePage = lazy(() => import('@/features/ai/AIWorkspacePage').then(({ AIWorkspacePage }) => ({ default: AIWorkspacePage })))
 const EngineRunsPage = lazy(() => import('@/features/engine/EngineRunsPage').then(({ EngineRunsPage }) => ({ default: EngineRunsPage })))
 const LoginPage = lazy(() => import('@/features/auth/LoginPage').then(({ LoginPage }) => ({ default: LoginPage })))
+const NovelLibraryPage = lazy(() => import('@/features/novel/NovelLibraryPage').then(({ NovelLibraryPage }) => ({ default: NovelLibraryPage })))
+const NovelReaderPage = lazy(() => import('@/features/novel/NovelReaderPage').then(({ NovelReaderPage }) => ({ default: NovelReaderPage })))
 const NovelTasksPage = lazy(() => import('@/features/novel/NovelTasksPage').then(({ NovelTasksPage }) => ({ default: NovelTasksPage })))
 const WorkAnalysisPage = lazy(() => import('@/features/novel-analysis/WorkAnalysisPage').then(({ WorkAnalysisPage }) => ({ default: WorkAnalysisPage })))
 const AgentRunsPage = lazy(() => import('@/features/operations/AgentRunsPage').then(({ AgentRunsPage }) => ({ default: AgentRunsPage })))
@@ -40,6 +42,9 @@ export const appRoutes = [
   { path: '/ai/workspace', element: <AIWorkspacePage /> },
   { path: '/translation/jobs', element: <TranslationJobsPage /> },
   { path: '/novel/tasks', element: <NovelTasksPage /> },
+  { path: '/novel/library', element: <NovelLibraryPage /> },
+  { path: '/novel/books/:bookId', element: <NovelLibraryPage /> },
+  { path: '/novel/books/:bookId/read/:chapterId', element: <NovelReaderPage /> },
   { path: '/novel-analysis/:workId', element: <WorkAnalysisPage /> },
   { path: '/operations/jobs', element: <JobsPage /> },
   { path: '/operations/agent-runs', element: <AgentRunsPage /> },
@@ -72,7 +77,12 @@ export function AppRoutes() {
           <Route path="/ai/workspace" element={<AIWorkspacePage />} />
         </Route>
         <Route element={<RequirePermission permission="translation.run" />}><Route path="/translation/jobs" element={<TranslationJobsPage />} /></Route>
-        <Route element={<RequirePermission permission="novel.manage" />}><Route path="/novel/tasks" element={<NovelTasksPage />} /></Route>
+        <Route element={<RequirePermission permission="novel.manage" />}>
+          <Route path="/novel/tasks" element={<NovelTasksPage />} />
+          <Route path="/novel/library" element={<NovelLibraryPage />} />
+          <Route path="/novel/books/:bookId" element={<NovelLibraryPage />} />
+          <Route path="/novel/books/:bookId/read/:chapterId" element={<NovelReaderPage />} />
+        </Route>
         <Route element={<RequirePermission permission="novel.manage" />}><Route path="/novel-analysis/:workId" element={<WorkAnalysisPage />} /></Route>
         <Route element={<RequirePermission permission="system.jobs.manage" />}><Route path="/operations/jobs" element={<JobsPage />} /></Route>
         <Route element={<RequirePermission permission="agent_runs.read" />}><Route path="/operations/agent-runs" element={<AgentRunsPage />} /></Route>

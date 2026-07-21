@@ -249,7 +249,7 @@ class AuthAppService:
     async def create_api_key(self, name: str, permissions: list[str], actor_id: int) -> dict:
         raw_key = generate_api_key()
         saved = await self._repo.save_api_key(
-            ApiKey(name=name, key_hash=hash_api_key(raw_key), permissions=permissions, is_enabled=True)
+            ApiKey(name=name, key_hash=hash_api_key(raw_key), user_id=actor_id, permissions=permissions, is_enabled=True)
         )
         await self._repo.record_audit(
             AuditEvent(actor_id=actor_id, action="api_key.create", resource="api_key", detail=name)

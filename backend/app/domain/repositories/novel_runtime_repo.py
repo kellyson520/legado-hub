@@ -9,11 +9,15 @@ class NovelRuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_ingestions(self) -> list[NovelIngestion]:
+    def list_ingestions(self, owner_scope: str | None = None) -> list[NovelIngestion]:
         raise NotImplementedError
 
     @abstractmethod
-    def get_ingestion(self, novel_id: str) -> NovelIngestion | None:
+    def get_ingestion(self, novel_id: str, owner_scope: str | None = None) -> NovelIngestion | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def claim_legacy_scope(self, owner_scope: str) -> dict:
         raise NotImplementedError
 
     @abstractmethod
@@ -21,5 +25,5 @@ class NovelRuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def list_tasks(self) -> list[NovelAnalysisTask]:
+    def list_tasks(self, owner_scope: str | None = None) -> list[NovelAnalysisTask]:
         raise NotImplementedError

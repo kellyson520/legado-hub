@@ -8,7 +8,7 @@ from app.core.permissions import Permission
 from app.core.response import from_paginated_result, ok
 from app.infrastructure.persistence.factory import build_ai_service, build_ai_workspace_service
 from app.infrastructure.persistence.factory import build_system_settings_service
-from app.interfaces.http.deps import require_permission
+from app.interfaces.http.deps import owner_scope_for, require_permission, require_principal_permission
 
 
 router = APIRouter()
@@ -21,6 +21,9 @@ class CharacterAnalysisRequest(BaseModel):
 
 class ConversationCreateRequest(BaseModel):
     title: str = Field(default="", max_length=200)
+    book_id: int | None = None
+    entrypoint: str = Field(default="workspace", pattern="^(workspace|book|reader)$")
+    model: str | None = Field(default=None, max_length=200)
 
 
 class ConversationMessageRequest(BaseModel):
@@ -28,6 +31,11 @@ class ConversationMessageRequest(BaseModel):
     mode: str = Field(default="chat", pattern="^(chat|character|storyline|world)$")
     tool_requests: list[dict] = Field(default_factory=list)
     source_version_id: str | None = Field(default=None, max_length=100)
+    entrypoint: str = Field(default="workspace", pattern="^(workspace|book|reader)$")
+    book_id: int | None = None
+    chapter_id: int | None = None
+    model: str | None = Field(default=None, max_length=200)
+    stream: bool = False
 
 
 class AuthorizationDecisionRequest(BaseModel):
@@ -84,13 +92,15 @@ async def list_conversations(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     search: str = Query(default="", max_length=200),
-    identity=Depends(require_permission(Permission.AI_RUN)),
+    identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
+    actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
     result = await build_ai_workspace_service().list_conversations_page(
-        str(identity.user_id),
+        actor_id,
         page=page,
         page_size=page_size,
         search=search,
+        owner_scope=owner_scope_for(identity),
     )
     return from_paginated_result(result, message="ai conversations listed")
 
@@ -98,18 +108,27 @@ async def list_conversations(
 @router.post("/conversations")
 async def create_conversation(
     payload: ConversationCreateRequest,
-    identity=Depends(require_permission(Permission.AI_RUN)),
+    identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
-    data = await build_ai_workspace_service().create_conversation(str(identity.user_id), payload.title)
+    actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
+    data = await build_ai_workspace_service().create_conversation(
+        actor_id,
+        payload.title,
+        owner_scope=owner_scope_for(identity),
+        book_id=payload.book_id,
+        entrypoint=payload.entrypoint,
+        model_ref=payload.model,
+    )
     return ok(data=data, message="ai conversation created", meta={})
 
 
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
-    identity=Depends(require_permission(Permission.AI_RUN)),
+    identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
-    data = build_ai_workspace_service().get_conversation(conversation_id, str(identity.user_id))
+    actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
+    data = build_ai_workspace_service().get_conversation(conversation_id, actor_id, owner_scope_for(identity))
     return ok(data=data, message="ai conversation loaded", meta={})
 
 
@@ -117,16 +136,23 @@ async def get_conversation(
 async def send_conversation_message(
     conversation_id: str,
     payload: ConversationMessageRequest,
-    identity=Depends(require_permission(Permission.AI_RUN)),
+    identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
+    actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
     data = await build_ai_workspace_service().send_message(
         conversation_id=conversation_id,
-        actor_id=str(identity.user_id),
+        actor_id=actor_id,
         mode=payload.mode,
         content=payload.content,
         tool_requests=payload.tool_requests,
         source_version_id=payload.source_version_id,
         allowed_tool_names=_workspace_tool_names(identity),
+        owner_scope=owner_scope_for(identity),
+        entrypoint=payload.entrypoint,
+        book_id=payload.book_id,
+        chapter_id=payload.chapter_id,
+        request_model=payload.model,
+        stream=payload.stream,
     )
     return ok(data=data, message="ai conversation message completed", meta={})
 

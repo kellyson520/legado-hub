@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   discoverProviderModels: vi.fn(),
   getProviderRoute: vi.fn(),
   updateProviderRoute: vi.fn(),
+  getNovelSettings: vi.fn(),
+  updateNovelSettings: vi.fn(),
 }))
 
 vi.mock('@/api/modules/system', () => ({
@@ -17,6 +19,8 @@ vi.mock('@/api/modules/system', () => ({
   discoverProviderModels: mocks.discoverProviderModels,
   getProviderRoute: mocks.getProviderRoute,
   updateProviderRoute: mocks.updateProviderRoute,
+  getNovelSettings: mocks.getNovelSettings,
+  updateNovelSettings: mocks.updateNovelSettings,
 }))
 
 import { ProviderRoutingSettings } from './ProviderRoutingSettings'
@@ -56,6 +60,33 @@ beforeEach(() => {
   mocks.updateProviderRoute.mockReset().mockImplementation((group: string, payload: { entries: unknown[] }) =>
     Promise.resolve(envelope({ group, entries: payload.entries })),
   )
+  mocks.getNovelSettings.mockReset().mockResolvedValue(envelope({
+    vector_backend: 'disabled',
+    embedding_model: '',
+    dimension: 0,
+    batch_size: 16,
+    threshold: 0.7,
+    concurrency: 2,
+    retries: 2,
+    cache_ttl: 3600,
+    chapter_size: 12000,
+    index_policy: 'incremental',
+    enabled_tools: ['read'],
+    cost_budget_daily: 0,
+    cost_budget_per_request: 0,
+    metrics: {
+      requests: 12,
+      cache_hits: 8,
+      cache_misses: 4,
+      input_tokens: 1200,
+      output_tokens: 420,
+      cost: 0.84,
+      evidence_count: 19,
+      providers: ['deepseek'],
+      models: { novel_chat: ['deepseek-chat'] },
+    },
+  }))
+  mocks.updateNovelSettings.mockReset().mockImplementation((payload: unknown) => Promise.resolve(envelope(payload)))
 })
 
 test('editing a channel saves a blank key safely and announces the masked configured state', async () => {
@@ -177,4 +208,30 @@ test('shows the provider credential error when model discovery is rejected', asy
   fireEvent.click(await screen.findByRole('button', { name: '获取 Primary 的模型' }))
 
   expect(await screen.findByText('Provider 身份验证失败；请更新 API Key')).toBeInTheDocument()
+})
+
+test('novel controls expose safe tool switches and persist the indexing budget', async () => {
+  render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
+
+  expect(await screen.findByRole('heading', { name: 'Novel Agent controls' })).toBeInTheDocument()
+  fireEvent.click(screen.getByLabelText('Allow proposal tools'))
+  fireEvent.change(screen.getByLabelText('Chapter size'), { target: { value: '16000' } })
+  fireEvent.change(screen.getByLabelText('Daily cost budget'), { target: { value: '1.5' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save novel controls' }))
+
+  await waitFor(() => {
+    expect(mocks.updateNovelSettings).toHaveBeenCalledWith(expect.objectContaining({
+      enabled_tools: ['propose', 'read'],
+      chapter_size: 16000,
+      cost_budget_daily: 1.5,
+    }))
+  })
+})
+
+test('novel controls show redacted usage and cache metrics', async () => {
+  render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
+
+  expect(await screen.findByText('12 requests')).toBeInTheDocument()
+  expect(screen.getByText('8 cache hits')).toBeInTheDocument()
+  expect(screen.getByText('$0.84')).toBeInTheDocument()
 })

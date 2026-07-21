@@ -8,7 +8,7 @@ NovelUnderstanding 值对象
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 from enum import Enum
 
 
@@ -18,6 +18,35 @@ class ChapterType(str, Enum):
     PROLOGUE = "P"
     EXTRA = "X"
     EPILOGUE = "E"
+
+
+@dataclass(frozen=True)
+class OwnerScope:
+    """Stable authorization/cache identity for persisted novel data."""
+
+    value: str
+    kind: Literal["user", "api_key", "legacy"] = "user"
+
+    def __post_init__(self) -> None:
+        if not self.value or (self.kind != "legacy" and ":" not in self.value):
+            raise ValueError("owner scope must contain a non-empty namespace")
+        if self.kind not in ("user", "api_key", "legacy"):
+            raise ValueError(f"unsupported owner scope kind: {self.kind}")
+
+    @classmethod
+    def user(cls, user_id: int) -> "OwnerScope":
+        return cls(f"user:{int(user_id)}", "user")
+
+    @classmethod
+    def api_key(cls, api_key_id: int) -> "OwnerScope":
+        return cls(f"api-key:{int(api_key_id)}", "api_key")
+
+    @classmethod
+    def legacy(cls) -> "OwnerScope":
+        return cls("legacy", "legacy")
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass(frozen=True)

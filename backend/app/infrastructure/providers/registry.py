@@ -28,11 +28,26 @@ class ProviderRegistry:
     def _as_selection(provider: ProviderAdapter | ProviderSelection) -> ProviderSelection:
         return provider if isinstance(provider, ProviderSelection) else ProviderSelection(provider)
 
-    def resolve_group(self, provider_group: str) -> list[ProviderSelection]:
+    def resolve_group(self, provider_group: str, capability: str | None = None) -> list[ProviderSelection]:
         providers = self._providers_by_group.get(provider_group, [])
         if not providers:
             raise LookupError(f"no providers registered for group '{provider_group}'")
+        if capability is not None:
+            filtered = [
+                selection
+                for selection in providers
+                if self._supports(selection.provider, capability)
+            ]
+            if filtered:
+                return list(filtered)
         return list(providers)
+
+    @staticmethod
+    def _supports(provider: ProviderAdapter, capability: str) -> bool:
+        capabilities = getattr(provider, "capabilities", None)
+        if capabilities is None:
+            return True
+        return capability in set(capabilities)
 
     def register_group(self, provider_group: str, providers: list[ProviderAdapter | ProviderSelection]) -> None:
         self._providers_by_group[provider_group] = [self._as_selection(provider) for provider in providers]

@@ -19,6 +19,14 @@ class WorkingProvider:
             "output": {"text": "hello"},
         }
 
+    async def invoke_embedding(self, model: str, payload: dict):
+        return {
+            "provider_name": self.name,
+            "model": model,
+            "data": [{"embedding": [1.0, 0.0], "index": 0}],
+            "usage": {"input_tokens": 2, "total_tokens": 2},
+        }
+
 
 class AllowAllQuotaLimiter:
     def assert_allowed(self, quota_scope):
@@ -64,3 +72,28 @@ async def test_platform_service_blocks_requests_after_quota_exhaustion():
             payload={},
             quota_scope=("user", "admin"),
         )
+
+
+@pytest.mark.asyncio
+async def test_platform_exposes_novel_task_routes_through_existing_provider_chain():
+    from app.application.services.provider_platform_service import PROVIDER_ROUTE_GROUPS, ProviderPlatformService
+    from app.infrastructure.providers.registry import ProviderRegistry
+
+    provider = WorkingProvider()
+    service = ProviderPlatformService(
+        registry=ProviderRegistry({"novel_chat": [provider], "novel_embedding": [provider]}),
+        quota_limiter=AllowAllQuotaLimiter(),
+    )
+
+    chat = await service.invoke_novel_chat(
+        owner_scope="user:1", model="novel-model", payload={"messages": []}, quota_scope=("user", "1")
+    )
+    embedding = await service.invoke_novel_embedding(
+        owner_scope="user:1", model="embedding-model", payload={"input": ["正文"]}, quota_scope=("user", "1")
+    )
+
+    assert chat["provider_group"] == "novel_chat"
+    assert embedding["data"][0]["embedding"] == [1.0, 0.0]
+    assert {"novel_chat", "novel_extract", "novel_summary", "novel_embedding"}.issubset(
+        set(PROVIDER_ROUTE_GROUPS)
+    )

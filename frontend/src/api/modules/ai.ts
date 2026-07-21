@@ -46,12 +46,18 @@ export interface AIConversationMessage {
   metadata?: Record<string, unknown>
   authorization_request?: AIConversationAuthorizationRequest
   created_at: string
+  entrypoint?: 'workspace' | 'book' | 'reader'
+  book_id?: number | null
+  chapter_id?: number | null
 }
 
 export interface AIConversationSummary {
   id: string
   title: string
   created_at: string
+  book_id?: number | null
+  entrypoint?: 'workspace' | 'book' | 'reader'
+  model_ref?: string | null
 }
 
 export interface AIConversation extends AIConversationSummary {
@@ -97,7 +103,12 @@ export function listAIConversations(params: AIListParams = {}): Promise<Paginate
   return apiClient.get('/ai/conversations', { params })
 }
 
-export function createAIConversation(payload: { title?: string }): Promise<ApiEnvelope<AIConversationSummary>> {
+export function createAIConversation(payload: {
+  title?: string
+  book_id?: number
+  entrypoint?: 'workspace' | 'book' | 'reader'
+  model?: string
+}): Promise<ApiEnvelope<AIConversationSummary>> {
   return apiClient.post('/ai/conversations', payload)
 }
 
@@ -112,6 +123,11 @@ export function sendAIConversationMessage(
     mode: AIWorkspaceMode
     tool_requests?: Array<{ name: string; arguments: Record<string, string> }>
     source_version_id?: string
+    entrypoint?: 'workspace' | 'book' | 'reader'
+    book_id?: number
+    chapter_id?: number
+    model?: string
+    stream?: boolean
   }
 ): Promise<ApiEnvelope<AIConversationMessage>> {
   return apiClient.post(`/ai/conversations/${conversationId}/messages`, payload)

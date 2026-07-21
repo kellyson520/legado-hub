@@ -1,1 +1,1 @@
-# NovelUnderstanding 核心引擎
+"""Compatibility package for the relocated novel understanding helpers."""

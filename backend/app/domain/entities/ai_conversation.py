@@ -8,6 +8,14 @@ class AIConversation:
     actor_id: str
     title: str
     created_at: datetime = field(default_factory=datetime.utcnow)
+    owner_scope: str = "legacy"
+    book_id: int | None = None
+    chapter_id: int | None = None
+    entrypoint: str = "workspace"
+    context_range: str = "book"
+    model_ref: str | None = None
+    knowledge_version: str = ""
+    toolset_version: str = ""
 
 
 @dataclass
@@ -21,3 +29,7 @@ class AIConversationMessage:
     tool_calls: list[dict] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
+    owner_scope: str = "legacy"
+    entrypoint: str = "workspace"
+    book_id: int | None = None
+    chapter_id: int | None = None

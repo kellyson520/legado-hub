@@ -101,6 +101,7 @@ class NovelBook:
     summary_global: str = ""
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
+    owner_scope: str = "legacy"
 
 
 @dataclass
