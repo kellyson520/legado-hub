@@ -64,6 +64,41 @@ export interface ProviderRoute {
   entries: ProviderRouteEntry[]
 }
 
+export interface NovelUsageMetrics {
+  requests: number
+  cache_hits: number
+  cache_misses: number
+  input_tokens: number
+  output_tokens: number
+  cost: number
+  evidence_count: number
+  providers: string[]
+  models: Record<string, string[]>
+}
+
+export interface NovelSettings {
+  vector_backend?: string
+  endpoint?: string
+  collection_prefix?: string
+  dimension?: number
+  embedding_model?: string
+  batch_size?: number
+  threshold?: number
+  concurrency?: number
+  retries?: number
+  cache_ttl?: number
+  enabled_tools?: string[]
+  chapter_size?: number
+  index_policy?: string
+  cost_budget_daily?: number
+  cost_budget_per_request?: number
+  credential_configured?: boolean
+  credential_masked?: string
+  route_groups?: Record<string, Array<{ provider: string; model: string; enabled: boolean }>>
+  models?: Record<string, string[]>
+  metrics?: NovelUsageMetrics
+}
+
 export async function listProviders() {
   return apiClient.get<ProviderRow[]>('/system/providers') as Promise<ApiEnvelope<ProviderRow[]>>
 }
@@ -139,4 +174,12 @@ export function updateSourceBuildAgentSettings(payload: {
   enabled: boolean
 }): Promise<ApiEnvelope<SourceBuildAgentSettings>> {
   return apiClient.put<SourceBuildAgentSettings>('/system/source-build-agent-settings', payload)
+}
+
+export function getNovelSettings(): Promise<ApiEnvelope<NovelSettings>> {
+  return apiClient.get<NovelSettings>('/system/novel-settings')
+}
+
+export function updateNovelSettings(payload: Partial<NovelSettings>): Promise<ApiEnvelope<NovelSettings>> {
+  return apiClient.put<NovelSettings>('/system/novel-settings', payload)
 }

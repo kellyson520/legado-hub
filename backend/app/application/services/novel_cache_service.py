@@ -29,6 +29,9 @@ class NovelCacheService:
         query: str,
         prompt_version: str,
         toolset_version: str,
+        chapter_id: int | None = None,
+        entrypoint: str = "",
+        conversation_id: str = "",
     ) -> str:
         payload = json.dumps(
             {
@@ -40,6 +43,9 @@ class NovelCacheService:
                 "query_hash": sha256(query.encode("utf-8")).hexdigest(),
                 "prompt_version": prompt_version,
                 "toolset_version": toolset_version,
+                "chapter_id": chapter_id,
+                "entrypoint": entrypoint,
+                "conversation_id": conversation_id,
             },
             sort_keys=True,
             separators=(",", ":"),

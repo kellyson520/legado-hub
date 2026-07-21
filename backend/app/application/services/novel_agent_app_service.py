@@ -61,6 +61,7 @@ class NovelAgentAppService:
         knowledge_version: str = "v1",
         prompt_version: str = "novel-agent-v1",
         toolset_version: str = "novel-tools-v1",
+        enabled_tool_categories: set[str] | None = None,
     ):
         self._platform = platform
         self._conversations = conversations
@@ -73,6 +74,11 @@ class NovelAgentAppService:
         self.knowledge_version = knowledge_version
         self.prompt_version = prompt_version
         self.toolset_version = toolset_version
+        self._enabled_tool_categories = (
+            set(self._TOOL_CATEGORIES.values())
+            if enabled_tool_categories is None
+            else set(enabled_tool_categories)
+        )
 
     @property
     def platform(self):
@@ -199,6 +205,7 @@ class NovelAgentAppService:
                 effective_book_id,
                 chapter_id,
                 mode,
+                entrypoint,
             )
 
         resolved_model = resolution.model if resolution else request_model
@@ -207,6 +214,9 @@ class NovelAgentAppService:
             effective_book_id,
             resolved_model,
             normalized_content,
+            chapter_id=chapter_id,
+            entrypoint=entrypoint,
+            conversation_id=conversation.id,
         )
         cached = await self._cache_get(cache_key)
         cache_hit = cached is not None
@@ -227,6 +237,17 @@ class NovelAgentAppService:
                 {"content": assistant_content, "tool_calls": tool_calls, "invocation": invocation},
             )
             await self._record_usage(invocation)
+        await self._record_request(
+            owner_scope=owner_scope,
+            book_id=effective_book_id,
+            chapter_id=chapter_id,
+            entrypoint=entrypoint,
+            conversation_id=conversation.id,
+            invocation=invocation,
+            tool_calls=tool_calls,
+            cache_hit=cache_hit,
+            resolved_model=resolved_model,
+        )
         assistant = AIConversationMessage(
             id=uuid4().hex,
             conversation_id=conversation.id,
@@ -259,14 +280,15 @@ class NovelAgentAppService:
                 "parameters": self._tool_parameters(name),
             }
             for name, category in self._TOOL_CATEGORIES.items()
-            if category != "operate"
+            if category in self._enabled_tool_categories and category != "operate"
         ]
         if self._tool_registry is not None:
             existing = self._tool_registry.list_tools()
             names = {item.get("name") for item in builtins}
             for item in existing:
                 name = item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
-                if name not in names:
+                category = item.get("category") if isinstance(item, dict) else getattr(item, "category", None)
+                if name in self._TOOL_CATEGORIES and category in self._enabled_tool_categories and name not in names:
                     builtins.append(item)
         return builtins
 
@@ -284,10 +306,13 @@ class NovelAgentAppService:
             raise AuthorizationException("tool arguments must be an object")
         category = self._TOOL_CATEGORIES.get(tool_name)
         if category is None:
+            self._runtime_reject(owner_scope, tool_name, arguments, "tool is not authorized")
             raise AuthorizationException(f"tool is not authorized: {tool_name}")
         run, invocation = self._runtime_start(owner_scope, tool_name, category, arguments)
         try:
             self._assert_scope(arguments, owner_scope)
+            if category not in self._enabled_tool_categories:
+                raise AuthorizationException("tool category is disabled")
             if category != "read" and not confirmed:
                 raise AuthorizationException("confirmation is required for this tool")
             result = await self._execute_novel_tool(
@@ -418,10 +443,14 @@ class NovelAgentAppService:
                     executed = {
                         "name": name,
                         "arguments": arguments,
-                        "category": self._TOOL_CATEGORIES.get(name, "read"),
+                        "category": self._TOOL_CATEGORIES.get(name, "unknown"),
                         "result": {"error": str(exc)[:300]},
                     }
-                calls.append(executed)
+                    if (
+                        name not in self._TOOL_CATEGORIES
+                        or self._TOOL_CATEGORIES[name] not in self._enabled_tool_categories
+                    ):
+                        self._runtime_reject(owner_scope, name, arguments, str(exc)[:300])
                 messages.append(
                     {
                         "role": "tool",
@@ -429,6 +458,15 @@ class NovelAgentAppService:
                         "content": json.dumps(executed.get("result", {}), ensure_ascii=False),
                     }
                 )
+                if (
+                    name in self._TOOL_CATEGORIES
+                    and executed.get("category") in self._enabled_tool_categories
+                    and not (
+                        isinstance(executed.get("result"), dict)
+                        and executed["result"].get("error")
+                    )
+                ):
+                    calls.append(executed)
         return "已达到工具调用上限，请基于已获取的证据继续提问。", calls, invocation
 
     async def _stream_answer(
@@ -441,6 +479,7 @@ class NovelAgentAppService:
         book_id,
         chapter_id,
         mode,
+        entrypoint,
     ) -> AsyncIterator[str]:
         content, tool_calls, invocation = await self._run_model_loop(
             owner_scope,
@@ -462,6 +501,18 @@ class NovelAgentAppService:
             chapter_id=chapter_id,
         )
         await self._conversation_call("append_message", assistant)
+        await self._record_usage(invocation)
+        await self._record_request(
+            owner_scope=owner_scope,
+            book_id=book_id,
+            chapter_id=chapter_id,
+            entrypoint=entrypoint,
+            conversation_id=conversation.id,
+            invocation=invocation,
+            tool_calls=tool_calls,
+            cache_hit=False,
+            resolved_model=resolution.model if resolution else None,
+        )
         yield content
 
     async def _invoke_provider(self, owner_scope: str, model: str | None, payload: dict) -> dict:
@@ -500,7 +551,98 @@ class NovelAgentAppService:
         if inspect.isawaitable(value):
             await value
 
-    def _answer_cache_key(self, owner_scope, book_id, model, query) -> str:
+    async def _record_request(
+        self,
+        *,
+        owner_scope: str,
+        book_id: int | None,
+        chapter_id: int | None,
+        entrypoint: str,
+        conversation_id: str,
+        invocation: dict | None,
+        tool_calls: list[dict],
+        cache_hit: bool,
+        resolved_model: str | None,
+    ) -> None:
+        if self._agent_runtime is None:
+            return
+        invocation = invocation if isinstance(invocation, dict) else {}
+        usage = invocation.get("usage") if isinstance(invocation.get("usage"), dict) else {}
+        cost = self._cost_value(invocation.get("cost"))
+        if cache_hit:
+            usage = {"input_tokens": 0, "output_tokens": 0}
+            cost = 0.0
+        recorder = getattr(self._agent_runtime, "record_request", None)
+        if not callable(recorder):
+            return
+        run = self._agent_runtime.create_run(
+            tenant_id=owner_scope,
+            agent_kind="novel",
+            input_payload={
+                "book_id": book_id,
+                "chapter_id": chapter_id,
+                "entrypoint": entrypoint,
+                "conversation_id": conversation_id,
+            },
+        )
+        evidence_ids = []
+        for call in tool_calls:
+            if not isinstance(call, dict):
+                continue
+            for evidence in call.get("evidence", []) or []:
+                if isinstance(evidence, dict):
+                    value = evidence.get("id") or evidence.get("resource_id") or evidence.get("chapter_id")
+                else:
+                    value = evidence
+                if value is not None:
+                    evidence_ids.append(str(value))
+        result = recorder(
+            run_id=run.id,
+            tenant_id=owner_scope,
+            owner_scope=owner_scope,
+            book_id=book_id,
+            chapter_id=chapter_id,
+            entrypoint=entrypoint,
+            conversation_id=conversation_id,
+            provider=str(invocation.get("provider_name") or invocation.get("provider") or ""),
+            model=str(invocation.get("model") or resolved_model or ""),
+            attempts=int(invocation.get("attempt_count") or invocation.get("attempts") or 0),
+            cache_hit=cache_hit,
+            usage={
+                "input_tokens": int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0),
+                "output_tokens": int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0),
+            },
+            cost=cost,
+            tool_names=[
+                str(call.get("name"))
+                for call in tool_calls
+                if isinstance(call, dict) and call.get("name")
+            ],
+            evidence_ids=sorted(set(evidence_ids)),
+        )
+        if inspect.isawaitable(result):
+            await result
+
+    @staticmethod
+    def _cost_value(value) -> float:
+        if isinstance(value, dict):
+            value = value.get("total", value.get("amount", 0.0))
+        try:
+            return float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _answer_cache_key(
+        self,
+        owner_scope,
+        book_id,
+        model,
+        query,
+        *,
+        chapter_id=None,
+        entrypoint="",
+        conversation_id="",
+    ) -> str:
         if self._cache is not None:
             builder = getattr(self._cache, "key", None)
             if callable(builder):
@@ -513,11 +655,19 @@ class NovelAgentAppService:
                     query=query,
                     prompt_version=self.prompt_version,
                     toolset_version=self.toolset_version,
+                    chapter_id=chapter_id,
+                    entrypoint=entrypoint,
+                    conversation_id=conversation_id,
                 )
         raw = "\0".join(
             str(item) for item in (
                 owner_scope, book_id, self.knowledge_version, model or "route-default",
-                query, self.prompt_version, self.toolset_version,
+                query,
+                chapter_id,
+                entrypoint,
+                conversation_id,
+                self.prompt_version,
+                self.toolset_version,
             )
         )
         return "novel:answer:" + sha256(raw.encode("utf-8")).hexdigest()
@@ -537,10 +687,11 @@ class NovelAgentAppService:
         setter = getattr(self._cache, "set", None)
         if not callable(setter):
             return
+        ttl = int(getattr(self._cache, "_default_ttl", 3600) or 0)
         try:
-            result = setter(key, value, ttl=3600)
+            result = setter(key, value, ttl=ttl)
         except TypeError:
-            result = setter(key, value, expire=3600)
+            result = setter(key, value, expire=ttl)
         if inspect.isawaitable(result):
             await result
 
@@ -706,7 +857,7 @@ class NovelAgentAppService:
             tenant_id=owner_scope,
             tool_name=tool_name,
             category=category,
-            arguments=arguments,
+            arguments=self._safe_audit_arguments(arguments),
         )
         return run, invocation
 
@@ -720,6 +871,39 @@ class NovelAgentAppService:
             data=data,
             error_code=error_code,
         )
+
+    def _runtime_reject(self, owner_scope: str, tool_name: str, arguments: dict, reason: str) -> None:
+        if self._agent_runtime is None:
+            return
+        recorder = getattr(self._agent_runtime, "record_rejected_tool", None)
+        if callable(recorder):
+            recorder(
+                tenant_id=owner_scope,
+                tool_name=tool_name,
+                arguments=self._safe_audit_arguments(arguments),
+                reason=reason,
+            )
+            return
+        history = getattr(self._agent_runtime, "history", None)
+        if isinstance(history, list):
+            history.append(
+                {
+                    "status": "rejected",
+                    "tenant_id": owner_scope,
+                    "tool_name": tool_name,
+                    "category": self._TOOL_CATEGORIES.get(tool_name, "unknown"),
+                    "reason": reason,
+                }
+            )
+
+    @staticmethod
+    def _safe_audit_arguments(arguments: dict) -> dict:
+        allowed = {"book_id", "chapter_id", "name", "query", "top_k", "limit", "owner_scope"}
+        return {
+            key: value
+            for key, value in arguments.items()
+            if key in allowed and not isinstance(value, (dict, list))
+        }
 
     @staticmethod
     def _assert_scope(arguments: dict, owner_scope: str) -> None:

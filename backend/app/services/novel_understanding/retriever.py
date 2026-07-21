@@ -40,11 +40,13 @@ class RAGRetriever:
         bm25_index: Optional[BM25Index] = None,
         embedding: Optional[EmbeddingAdapter] = None,
         vector_store: VectorStore | None = None,
+        similarity_threshold: float = 0.0,
     ):
         self._repo = repo
         self._bm25 = bm25_index or BM25Index()
         self._embedding = embedding or EmbeddingAdapter()
         self._vector_store = vector_store
+        self._similarity_threshold = max(0.0, min(1.0, float(similarity_threshold)))
         self._indexes: dict[tuple[str, int, str], BM25Index] = {}
         self._chapter_cache: dict[tuple[str, int, str], dict[int, Any]] = {}
 
@@ -94,6 +96,8 @@ class RAGRetriever:
                         top_k=max(1, top_k * 2),
                     )
                     for item in vector_results:
+                        if float(item.score) < self._similarity_threshold:
+                            continue
                         payload = item.payload or {}
                         chapter_id = int(payload.get("chapter_id", item.chapter_id))
                         content = str(payload.get("text") or payload.get("content") or "")[:2000]

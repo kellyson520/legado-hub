@@ -14,6 +14,7 @@ from app.infrastructure.persistence.factory import (
     build_novel_app_service,
     build_novel_runtime_repository,
     build_source_read_service,
+    build_system_settings_service,
     build_vector_store,
 )
 from app.services.novel_understanding.retriever import RAGRetriever
@@ -80,7 +81,12 @@ async def get_novel_ingestion_service():
 
 async def get_novel_agent_app_service():
     repo = await get_scoped_novel_repository()
-    retriever = RAGRetriever(repo, vector_store=build_vector_store())
+    novel_settings = build_system_settings_service().get_novel_settings()
+    retriever = RAGRetriever(
+        repo,
+        vector_store=build_vector_store(),
+        similarity_threshold=float(novel_settings.get("threshold", 0.0) or 0.0),
+    )
     return _build_novel_agent_app_service(novel_repo=repo, retriever=retriever)
 
 

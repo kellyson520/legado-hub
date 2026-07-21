@@ -21,6 +21,10 @@ class AgentRuntimeRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def update_request_metadata(self, run_id: str, tenant_id: str, metadata: dict) -> AgentRun:
+        raise NotImplementedError
+
+    @abstractmethod
     def create_invocation(self, invocation: ToolInvocation) -> ToolInvocation:
         raise NotImplementedError
 

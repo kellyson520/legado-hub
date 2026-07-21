@@ -94,6 +94,7 @@ def _serialize_agent_run(run, *, history=None) -> dict:
         'tenant_id': run.tenant_id,
         'agent_kind': run.agent_kind,
         'input_payload': run.input_payload,
+        'request_metadata': run.request_metadata,
         'status': run.status,
         'created_at': _iso(run.created_at),
         'tool_invocation_count': len(invocations),

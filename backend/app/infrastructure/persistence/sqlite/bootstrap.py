@@ -154,6 +154,42 @@ def _ensure_sqlite_novel_vector_table() -> None:
         )
 
 
+def _ensure_sqlite_agent_runtime_columns() -> None:
+    """Add request-level novel audit metadata to existing agent run tables."""
+    required_columns = {
+        "owner_scope": "VARCHAR NOT NULL DEFAULT 'legacy'",
+        "book_id": "INTEGER",
+        "chapter_id": "INTEGER",
+        "entrypoint": "VARCHAR NOT NULL DEFAULT ''",
+        "conversation_id": "VARCHAR NOT NULL DEFAULT ''",
+        "provider_name": "VARCHAR NOT NULL DEFAULT ''",
+        "model_name": "VARCHAR NOT NULL DEFAULT ''",
+        "attempt_count": "INTEGER NOT NULL DEFAULT 0",
+        "cache_hit": "BOOLEAN NOT NULL DEFAULT 0",
+        "input_tokens": "INTEGER NOT NULL DEFAULT 0",
+        "output_tokens": "INTEGER NOT NULL DEFAULT 0",
+        "cost": "FLOAT NOT NULL DEFAULT 0",
+        "tool_names": "TEXT NOT NULL DEFAULT '[]'",
+        "evidence_ids": "TEXT NOT NULL DEFAULT '[]'",
+    }
+    with engine.begin() as connection:
+        rows = connection.exec_driver_sql("PRAGMA table_info(agent_runs)").fetchall()
+        if not rows:
+            return
+        existing = {row[1] for row in rows}
+        for column, ddl in required_columns.items():
+            if column not in existing:
+                connection.exec_driver_sql(f"ALTER TABLE agent_runs ADD COLUMN {column} {ddl}")
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_tenant_created "
+            "ON agent_runs(tenant_id, created_at DESC)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_owner_book "
+            "ON agent_runs(owner_scope, book_id, created_at DESC)"
+        )
+
+
 def _ensure_default_provider_routes() -> None:
     from .provider_repo_impl import SQLiteProviderRepository
 
@@ -205,6 +241,7 @@ def bootstrap_sqlite() -> None:
     _ensure_sqlite_provider_columns()
     _ensure_sqlite_novel_columns()
     _ensure_sqlite_novel_vector_table()
+    _ensure_sqlite_agent_runtime_columns()
     _ensure_default_provider_routes()
     _ensure_sqlite_event_delivery_indexes()
     db = SessionLocal()

@@ -64,6 +64,7 @@ def _serialize_run(run, *, tool_history: list[dict] | None = None) -> dict:
         'id': run.id,
         'agent_kind': run.agent_kind,
         'input_payload': run.input_payload,
+        'request_metadata': run.request_metadata,
         'status': run.status,
         'created_at': _timestamp(run.created_at),
     }

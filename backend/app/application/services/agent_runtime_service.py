@@ -42,6 +42,77 @@ class AgentRuntimeService:
     def list_runs(self, *, tenant_id: str | None = None, limit: int = 50) -> list[AgentRun]:
         return self._repo.list_runs(tenant_id=tenant_id, limit=limit)
 
+    def record_request(
+        self,
+        *,
+        run_id: str,
+        tenant_id: str,
+        owner_scope: str,
+        book_id: int | None,
+        chapter_id: int | None,
+        entrypoint: str,
+        conversation_id: str,
+        provider: str,
+        model: str,
+        attempts: int,
+        cache_hit: bool,
+        usage: dict | None = None,
+        cost: float = 0.0,
+        tool_names: list[str] | None = None,
+        evidence_ids: list[str] | None = None,
+    ) -> AgentRun:
+        metadata = {
+            "owner_scope": owner_scope,
+            "book_id": book_id,
+            "chapter_id": chapter_id,
+            "entrypoint": entrypoint,
+            "conversation_id": conversation_id,
+            "provider": provider,
+            "model": model,
+            "attempts": max(0, int(attempts or 0)),
+            "cache_hit": bool(cache_hit),
+            "usage": {
+                "input_tokens": max(0, int((usage or {}).get("input_tokens", 0) or 0)),
+                "output_tokens": max(0, int((usage or {}).get("output_tokens", 0) or 0)),
+            },
+            "cost": max(0.0, float(cost or 0.0)),
+            "tool_names": [str(item)[:120] for item in (tool_names or [])[:50]],
+            "evidence_ids": [str(item)[:120] for item in (evidence_ids or [])[:100]],
+        }
+        updater = getattr(self._repo, "update_request_metadata", None)
+        if callable(updater):
+            run = updater(run_id, tenant_id, metadata)
+        else:
+            run = self._repo.get_run(run_id, tenant_id)
+        if run is None:
+            raise LookupError("candidate agent run not found for tenant")
+        self.history.append({"status": "request", "run_id": run_id, "tenant_id": tenant_id, **metadata})
+        return run
+
+    def record_rejected_tool(
+        self,
+        *,
+        tenant_id: str,
+        tool_name: str,
+        arguments: dict | None = None,
+        reason: str = "",
+    ) -> None:
+        safe_arguments = {
+            key: value
+            for key, value in (arguments or {}).items()
+            if key in {"book_id", "chapter_id", "name", "query", "top_k", "limit", "owner_scope"}
+            and not isinstance(value, (dict, list))
+        }
+        self.history.append(
+            {
+                "status": "rejected",
+                "tenant_id": tenant_id,
+                "tool_name": str(tool_name)[:120],
+                "arguments": safe_arguments,
+                "reason": str(reason)[:300],
+            }
+        )
+
     def record_tool_invocation(
         self,
         *,

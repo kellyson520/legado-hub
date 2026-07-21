@@ -5,11 +5,15 @@ import { ArrowDown, ArrowUp, Pencil, Plus, RefreshCw } from 'lucide-react'
 import {
   createProvider,
   discoverProviderModels,
+  getNovelSettings,
   getProviderRoute,
   listProviders,
   updateProvider,
+  updateNovelSettings,
   updateProviderRoute,
   type ProviderConfigurationInput,
+  type NovelSettings,
+  type NovelUsageMetrics,
   type ProviderRouteEntry,
   type ProviderRow,
 } from '@/api/modules/system'
@@ -22,10 +26,49 @@ const ROUTE_GROUPS = [
   { id: 'source_build', label: 'Source build Agent' },
   { id: 'translation', label: 'Translation' },
   { id: 'novel', label: 'Novel analysis' },
+  { id: 'novel_chat', label: 'Novel chat' },
+  { id: 'novel_extract', label: 'Novel extraction' },
+  { id: 'novel_summary', label: 'Novel summary' },
+  { id: 'novel_embedding', label: 'Novel embeddings' },
 ] as const
 
 type ProviderForm = ProviderConfigurationInput & { id: string | null; apiKeyMasked: string }
 type RouteDraft = { providerAccountId: string; model: string }
+type NovelControls = {
+  enabledTools: string[]
+  chapterSize: number
+  indexPolicy: string
+  cacheTtl: number
+  threshold: number
+  concurrency: number
+  retries: number
+  costBudgetDaily: number
+  costBudgetPerRequest: number
+}
+
+const emptyNovelControls: NovelControls = {
+  enabledTools: ['read'],
+  chapterSize: 12000,
+  indexPolicy: 'incremental',
+  cacheTtl: 3600,
+  threshold: 0.7,
+  concurrency: 2,
+  retries: 2,
+  costBudgetDaily: 0,
+  costBudgetPerRequest: 0,
+}
+
+const emptyNovelMetrics: NovelUsageMetrics = {
+  requests: 0,
+  cache_hits: 0,
+  cache_misses: 0,
+  input_tokens: 0,
+  output_tokens: 0,
+  cost: 0,
+  evidence_count: 0,
+  providers: [],
+  models: {},
+}
 
 const emptyProviderForm = (): ProviderForm => ({
   id: null,
@@ -87,6 +130,35 @@ function getRequestErrorMessage(error: unknown, fallback: string) {
   return typeof detail === 'string' && detail.trim() ? detail : fallback
 }
 
+function toNovelControls(settings: NovelSettings): NovelControls {
+  return {
+    enabledTools: settings.enabled_tools?.length ? [...settings.enabled_tools] : emptyNovelControls.enabledTools,
+    chapterSize: settings.chapter_size ?? emptyNovelControls.chapterSize,
+    indexPolicy: settings.index_policy ?? emptyNovelControls.indexPolicy,
+    cacheTtl: settings.cache_ttl ?? emptyNovelControls.cacheTtl,
+    threshold: settings.threshold ?? emptyNovelControls.threshold,
+    concurrency: settings.concurrency ?? emptyNovelControls.concurrency,
+    retries: settings.retries ?? emptyNovelControls.retries,
+    costBudgetDaily: settings.cost_budget_daily ?? emptyNovelControls.costBudgetDaily,
+    costBudgetPerRequest: settings.cost_budget_per_request ?? emptyNovelControls.costBudgetPerRequest,
+  }
+}
+
+function toNovelMetrics(settings: NovelSettings): NovelUsageMetrics {
+  const metrics = settings.metrics ?? emptyNovelMetrics
+  return {
+    requests: metrics.requests ?? 0,
+    cache_hits: metrics.cache_hits ?? 0,
+    cache_misses: metrics.cache_misses ?? 0,
+    input_tokens: metrics.input_tokens ?? 0,
+    output_tokens: metrics.output_tokens ?? 0,
+    cost: metrics.cost ?? 0,
+    evidence_count: metrics.evidence_count ?? 0,
+    providers: metrics.providers ?? [],
+    models: metrics.models ?? {},
+  }
+}
+
 export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: () => Promise<void> | void }) {
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [routes, setRoutes] = useState<Record<string, ProviderRouteEntry[]>>({})
@@ -99,6 +171,10 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
   const [saving, setSaving] = useState(false)
   const [savingRoute, setSavingRoute] = useState<string | null>(null)
   const [loadingModels, setLoadingModels] = useState<string | null>(null)
+  const [novelControls, setNovelControls] = useState<NovelControls>(emptyNovelControls)
+  const [novelMetrics, setNovelMetrics] = useState<NovelUsageMetrics>(emptyNovelMetrics)
+  const [savingNovelControls, setSavingNovelControls] = useState(false)
+  const [novelMessage, setNovelMessage] = useState<string | null>(null)
   const refreshVersion = useRef(0)
 
   const refresh = useCallback(async () => {
@@ -134,6 +210,17 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
       setError('Provider routes are temporarily unavailable; channel editing and model discovery remain available.')
     } else {
       setError(null)
+    }
+
+    try {
+      const novelResponse = await getNovelSettings()
+      if (requestVersion === refreshVersion.current) {
+        setNovelControls(toNovelControls(novelResponse.data))
+        setNovelMetrics(toNovelMetrics(novelResponse.data))
+      }
+    } catch {
+      // The provider editor remains useful when an older backend has no
+      // novel-settings endpoint yet.
     }
   }, [])
 
@@ -242,6 +329,38 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
       return
     }
     void saveRoute(group, entries)
+  }
+
+  function toggleNovelTool(category: string) {
+    setNovelControls((current) => {
+      const enabled = new Set(current.enabledTools)
+      if (enabled.has(category)) enabled.delete(category)
+      else enabled.add(category)
+      return { ...current, enabledTools: [...enabled].sort() }
+    })
+  }
+
+  async function handleSaveNovelControls() {
+    setSavingNovelControls(true)
+    setNovelMessage(null)
+    try {
+      await updateNovelSettings({
+        enabled_tools: [...novelControls.enabledTools].sort(),
+        chapter_size: novelControls.chapterSize,
+        index_policy: novelControls.indexPolicy,
+        cache_ttl: novelControls.cacheTtl,
+        threshold: novelControls.threshold,
+        concurrency: novelControls.concurrency,
+        retries: novelControls.retries,
+        cost_budget_daily: novelControls.costBudgetDaily,
+        cost_budget_per_request: novelControls.costBudgetPerRequest,
+      })
+      setNovelMessage('Novel controls saved')
+    } catch {
+      setError('Failed to save novel controls')
+    } finally {
+      setSavingNovelControls(false)
+    }
   }
 
   const selectedModels = form.id ? modelsByProvider[form.id] ?? [] : []
@@ -359,6 +478,109 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
               </div>
             )
           })}
+        </div>
+      </section>
+
+      <section className="border border-border bg-card p-5 shadow-sm xl:col-span-2" aria-labelledby="novel-controls-heading">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h3 id="novel-controls-heading" className="text-lg font-semibold text-foreground">Novel Agent controls</h3>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">小说正文始终作为不可信证据处理；这里仅管理工具权限、增量索引、检索缓存和成本护栏。</p>
+          </div>
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">Server-side credentials only</span>
+        </div>
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-3" aria-label="Novel Agent usage metrics">
+          <div className="rounded-lg border border-border bg-background px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Requests</p>
+            <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{novelMetrics.requests} requests</p>
+          </div>
+          <div className="rounded-lg border border-border bg-background px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Cache efficiency</p>
+            <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{novelMetrics.cache_hits} cache hits</p>
+          </div>
+          <div className="rounded-lg border border-border bg-background px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Tracked cost</p>
+            <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">${novelMetrics.cost.toFixed(2)}</p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-5 lg:grid-cols-[1.1fr_1fr_1fr]">
+          <div className="rounded-lg border border-border bg-muted/20 p-4">
+            <h4 className="text-sm font-semibold text-foreground">Tool permissions</h4>
+            <p className="mt-1 text-xs text-muted-foreground">Read is the safe default. Writes require a separate confirmation.</p>
+            <div className="mt-4 grid gap-3">
+              {[
+                ['read', 'Allow read tools'],
+                ['propose', 'Allow proposal tools'],
+                ['operate', 'Allow operation tools'],
+              ].map(([category, label]) => (
+                <label key={category} className="flex items-center gap-2 text-sm font-medium text-foreground" htmlFor={`novel-tool-${category}`}>
+                  <input
+                    id={`novel-tool-${category}`}
+                    type="checkbox"
+                    checked={novelControls.enabledTools.includes(category)}
+                    onChange={() => toggleNovelTool(category)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted/20 p-4">
+            <h4 className="text-sm font-semibold text-foreground">Index & retrieval</h4>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+              <label className="grid gap-1 text-xs font-medium text-foreground" htmlFor="novel-index-policy">
+                Index policy
+                <select id="novel-index-policy" className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={novelControls.indexPolicy} onChange={(event) => setNovelControls((current) => ({ ...current, indexPolicy: event.target.value }))}>
+                  <option value="incremental">Incremental</option>
+                  <option value="full">Full rebuild</option>
+                </select>
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-foreground" htmlFor="novel-chapter-size">
+                Chapter size
+                <Input id="novel-chapter-size" type="number" min={1000} max={100000} value={novelControls.chapterSize} onChange={(event) => setNovelControls((current) => ({ ...current, chapterSize: Number(event.target.value) }))} />
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-foreground" htmlFor="novel-cache-ttl">
+                Cache TTL (seconds)
+                <Input id="novel-cache-ttl" type="number" min={0} value={novelControls.cacheTtl} onChange={(event) => setNovelControls((current) => ({ ...current, cacheTtl: Number(event.target.value) }))} />
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-foreground" htmlFor="novel-similarity-threshold">
+                Similarity threshold
+                <Input id="novel-similarity-threshold" type="number" min={0} max={1} step={0.01} value={novelControls.threshold} onChange={(event) => setNovelControls((current) => ({ ...current, threshold: Number(event.target.value) }))} />
+              </label>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted/20 p-4">
+            <h4 className="text-sm font-semibold text-foreground">Runtime guardrails</h4>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+              <label className="grid gap-1 text-xs font-medium text-foreground" htmlFor="novel-concurrency">
+                Index concurrency
+                <Input id="novel-concurrency" type="number" min={1} max={64} value={novelControls.concurrency} onChange={(event) => setNovelControls((current) => ({ ...current, concurrency: Number(event.target.value) }))} />
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-foreground" htmlFor="novel-retries">
+                Retry count
+                <Input id="novel-retries" type="number" min={0} max={10} value={novelControls.retries} onChange={(event) => setNovelControls((current) => ({ ...current, retries: Number(event.target.value) }))} />
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-foreground" htmlFor="novel-daily-budget">
+                Daily cost budget
+                <Input id="novel-daily-budget" type="number" min={0} step={0.01} value={novelControls.costBudgetDaily} onChange={(event) => setNovelControls((current) => ({ ...current, costBudgetDaily: Number(event.target.value) }))} />
+              </label>
+              <label className="grid gap-1 text-xs font-medium text-foreground" htmlFor="novel-request-budget">
+                Per-request cost budget
+                <Input id="novel-request-budget" type="number" min={0} step={0.01} value={novelControls.costBudgetPerRequest} onChange={(event) => setNovelControls((current) => ({ ...current, costBudgetPerRequest: Number(event.target.value) }))} />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <Button type="button" onClick={() => void handleSaveNovelControls()} disabled={savingNovelControls}>
+            {savingNovelControls ? 'Saving…' : 'Save novel controls'}
+          </Button>
+          {novelMessage ? <span role="status" className="text-sm font-medium text-emerald-600 dark:text-emerald-400">{novelMessage}</span> : null}
         </div>
       </section>
     </div>

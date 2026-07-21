@@ -58,6 +58,10 @@ class NovelSettingsRequest(BaseModel):
     retries: int | None = Field(default=None, ge=0, le=10)
     cache_ttl: int | None = Field(default=None, ge=0)
     enabled_tools: list[str] | None = Field(default=None, max_length=3)
+    chapter_size: int | None = Field(default=None, ge=1000, le=100000)
+    index_policy: str | None = Field(default=None, pattern="^(incremental|full)$")
+    cost_budget_daily: float | None = Field(default=None, ge=0)
+    cost_budget_per_request: float | None = Field(default=None, ge=0)
 
 
 def _system_response(message: str, data):

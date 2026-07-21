@@ -10,6 +10,7 @@ from app.application.services.engine_service import EngineService
 from app.application.services.job_service import JobService
 from app.application.services.novel_agent_service import NovelAgentService
 from app.application.services.novel_agent_app_service import NovelAgentAppService
+from app.application.services.novel_cache_service import NovelCacheService
 from app.application.services.novel_model_selection_service import NovelModelSelectionService
 from app.application.services.novel_ingestion_service import NovelIngestionService
 from app.application.services.novel_app_service import NovelAppService
@@ -38,6 +39,7 @@ from app.application.services.work_knowledge_service import WorkKnowledgeService
 from app.core.config import settings
 from app.database import SessionLocal
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
+from app.infrastructure.cache.memory_cache import MemoryCacheProvider
 from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIRuntimeRepository
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
 from app.infrastructure.persistence.sqlite.agent_runtime_repo_impl import SQLiteAgentRuntimeRepository
@@ -68,6 +70,10 @@ from app.infrastructure.persistence.sqlite.translation_runtime_repo_impl import 
     SQLiteTranslationRuntimeRepository,
 )
 from app.infrastructure.persistence.sqlite.work_knowledge_repo_impl import SQLiteWorkKnowledgeRepository
+
+
+_NOVEL_CACHE_PROVIDER = MemoryCacheProvider()
+_NOVEL_CACHE_SERVICE: NovelCacheService | None = None
 
 
 def build_auth_repository() -> SQLiteAuthRepository:
@@ -316,6 +322,7 @@ def build_system_settings_service() -> SystemSettingsService:
     return SystemSettingsService(
         repo=build_system_settings_repository(),
         provider_registry=build_provider_registry(),
+        metrics_provider=SQLiteAgentRuntimeRepository(),
     )
 
 
@@ -334,6 +341,16 @@ def build_vector_store():
     if backend == "pgvector":
         return PgVectorStore(session_factory=SessionLocal)
     return DisabledVectorStore()
+
+
+def build_novel_cache_service() -> NovelCacheService:
+    global _NOVEL_CACHE_SERVICE
+    ttl = int(build_system_settings_service().get_novel_settings().get("cache_ttl", 3600) or 0)
+    if _NOVEL_CACHE_SERVICE is None:
+        _NOVEL_CACHE_SERVICE = NovelCacheService(_NOVEL_CACHE_PROVIDER, default_ttl=ttl)
+    else:
+        _NOVEL_CACHE_SERVICE._default_ttl = ttl
+    return _NOVEL_CACHE_SERVICE
 
 
 def build_ai_runtime_repository() -> SQLiteAIRuntimeRepository:
@@ -433,6 +450,7 @@ def build_novel_agent_app_service(
     cache=None,
     agent_runtime=None,
     tool_registry=None,
+    enabled_tool_categories=None,
 ) -> NovelAgentAppService:
     """Assemble the shared novel assistant without creating a second pipeline.
 
@@ -443,6 +461,11 @@ def build_novel_agent_app_service(
     """
     bootstrap_sqlite()
     preferences = build_novel_model_preference_repository()
+    if enabled_tool_categories is None:
+        configured = build_system_settings_service().get_novel_settings().get("agent_permissions", {})
+        enabled_tool_categories = {
+            category for category, enabled in configured.items() if enabled
+        }
     return NovelAgentAppService(
         platform=build_provider_platform_service(),
         conversations=conversations or SQLiteAIConversationRepository(),
@@ -452,9 +475,10 @@ def build_novel_agent_app_service(
             preferences=preferences,
             routes=build_provider_registry(),
         ),
-        cache=cache,
+        cache=cache or build_novel_cache_service(),
         agent_runtime=agent_runtime or build_agent_runtime_service(),
         tool_registry=tool_registry,
+        enabled_tool_categories=enabled_tool_categories,
     )
 
 
