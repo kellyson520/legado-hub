@@ -63,26 +63,43 @@ class AIWorkspaceService:
                 entrypoint=entrypoint,
                 model_ref=model_ref,
             )
+        scope = owner_scope or _owner_scope_for_actor(actor_id)
         conversation = self._conversations.create_conversation(
-            AIConversation(id=uuid4().hex, actor_id=str(actor_id), title=title.strip() or "新对话")
+            AIConversation(
+                id=uuid4().hex,
+                actor_id=str(actor_id),
+                title=title.strip() or "新对话",
+                owner_scope=scope,
+                book_id=book_id,
+                entrypoint=entrypoint,
+                context_range="chapter" if entrypoint == "reader" else "book",
+                model_ref=model_ref,
+            )
         )
         await self._audit_event(actor_id, "ai.conversation.create", conversation.id)
         return self._serialize_conversation(conversation)
 
-    async def list_conversations(self, actor_id: str) -> list[dict]:
+    async def list_conversations(self, actor_id: str, owner_scope: str | None = None) -> list[dict]:
         if self._novel_agent_app is not None:
             return await self._novel_agent_app.list_conversations(_owner_scope_for_actor(actor_id))
-        return [self._serialize_conversation(item) for item in self._conversations.list_conversations(str(actor_id))]
+        try:
+            rows = self._conversations.list_conversations(str(actor_id), owner_scope=owner_scope)
+        except TypeError:
+            rows = self._conversations.list_conversations(str(actor_id))
+        return [self._serialize_conversation(item) for item in rows]
 
-    def get_conversation(self, conversation_id: str, actor_id: str) -> dict:
+    def get_conversation(self, conversation_id: str, actor_id: str, owner_scope: str | None = None) -> dict:
         if self._novel_agent_app is not None:
-            return self._novel_agent_app.get_conversation(_owner_scope_for_actor(actor_id), conversation_id)
-        conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
+            return self._novel_agent_app.get_conversation(owner_scope or _owner_scope_for_actor(actor_id), conversation_id)
+        try:
+            conversation = self._conversations.get_conversation(conversation_id, str(actor_id), owner_scope=owner_scope)
+        except TypeError:
+            conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
         if conversation is None:
             raise NotFoundException("AI conversation not found")
         return {
             **self._serialize_conversation(conversation),
-            "messages": [self._serialize_message(item) for item in self._conversations.list_messages(conversation.id)],
+            "messages": [self._serialize_message(item) for item in self._conversations.list_messages(conversation.id, owner_scope=owner_scope)],
         }
 
     async def send_message(
@@ -117,7 +134,10 @@ class AIWorkspaceService:
             raise ValidationException("Unsupported AI mode")
         if not content.strip():
             raise ValidationException("Message content is required")
-        conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
+        try:
+            conversation = self._conversations.get_conversation(conversation_id, str(actor_id), owner_scope=owner_scope)
+        except TypeError:
+            conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
         if conversation is None:
             raise NotFoundException("AI conversation not found")
 
@@ -128,6 +148,10 @@ class AIWorkspaceService:
                 role="user",
                 mode=mode,
                 content=content.strip(),
+                owner_scope=owner_scope or _owner_scope_for_actor(actor_id),
+                entrypoint=entrypoint,
+                book_id=book_id,
+                chapter_id=chapter_id,
             )
         )
         tool_calls = await self._execute_tools(actor_id, tool_requests or [])
@@ -155,6 +179,10 @@ class AIWorkspaceService:
                     mode=mode,
                     content=assistant_content,
                     tool_calls=tool_calls,
+                    owner_scope=owner_scope or _owner_scope_for_actor(actor_id),
+                    entrypoint=entrypoint,
+                    book_id=book_id,
+                    chapter_id=chapter_id,
                 )
             )
         except Exception as exc:
@@ -336,7 +364,16 @@ class AIWorkspaceService:
 
     @staticmethod
     def _serialize_conversation(item: AIConversation) -> dict:
-        return {"id": item.id, "title": item.title, "created_at": item.created_at.isoformat()}
+        return {
+            "id": item.id,
+            "title": item.title,
+            "owner_scope": item.owner_scope,
+            "book_id": item.book_id,
+            "entrypoint": item.entrypoint,
+            "context_range": item.context_range,
+            "model_ref": item.model_ref,
+            "created_at": item.created_at.isoformat(),
+        }
 
     @staticmethod
     def _serialize_message(item: AIConversationMessage) -> dict:
@@ -347,6 +384,10 @@ class AIWorkspaceService:
             "content": item.content,
             "status": item.status,
             "tool_calls": item.tool_calls,
+            "owner_scope": item.owner_scope,
+            "entrypoint": item.entrypoint,
+            "book_id": item.book_id,
+            "chapter_id": item.chapter_id,
             "created_at": item.created_at.isoformat(),
         }
 

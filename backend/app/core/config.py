@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     SOURCE_BUILD_WORKER_ENABLED: bool = True
     SOURCE_BUILD_POLL_SECONDS: float = 5.0
     SOURCE_BUILD_BATCH_SIZE: int = 1
+    NOVEL_INDEX_WORKER_ENABLED: bool = True
+    NOVEL_INDEX_POLL_SECONDS: float = 5.0
+    NOVEL_INDEX_BATCH_SIZE: int = 10
+    NOVEL_DB_PATH: str = (BASE_DIR / "data" / "novel.db").as_posix()
 
     @field_validator("ENV")
     @classmethod

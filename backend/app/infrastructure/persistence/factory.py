@@ -11,6 +11,7 @@ from app.application.services.job_service import JobService
 from app.application.services.novel_agent_service import NovelAgentService
 from app.application.services.novel_agent_app_service import NovelAgentAppService
 from app.application.services.novel_model_selection_service import NovelModelSelectionService
+from app.application.services.novel_ingestion_service import NovelIngestionService
 from app.application.services.novel_app_service import NovelAppService
 from app.application.services.provider_platform_service import (
     PROVIDER_ROUTE_GROUPS,
@@ -404,6 +405,14 @@ def build_work_knowledge_service() -> WorkKnowledgeService:
 
 def build_novel_app_service() -> NovelAppService:
     return NovelAppService(repo=build_novel_runtime_repository())
+
+
+def build_novel_ingestion_service(*, repo, source_reader=None, runtime_repo=None) -> NovelIngestionService:
+    return NovelIngestionService(
+        repo=repo,
+        source_reader=source_reader or build_source_read_service(),
+        runtime_repo=runtime_repo or build_novel_runtime_repository(),
+    )
 
 
 def build_novel_agent_service() -> NovelAgentService:

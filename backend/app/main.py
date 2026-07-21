@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.interfaces.http.router import api_router
-from app.tasks.scheduler import run_event_delivery_job, run_source_build_job
+from app.interfaces.api.v1.novel_agent import compat_router as novel_agent_compat_router
+from app.tasks.scheduler import run_event_delivery_job, run_novel_index_job, run_source_build_job
 
 
 async def _event_delivery_worker(stop_event: asyncio.Event) -> None:
@@ -34,12 +35,26 @@ async def _source_build_worker(stop_event: asyncio.Event) -> None:
             continue
 
 
+async def _novel_index_worker(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            await run_novel_index_job(limit=settings.NOVEL_INDEX_BATCH_SIZE)
+        except Exception:
+            pass
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=settings.NOVEL_INDEX_POLL_SECONDS)
+        except asyncio.TimeoutError:
+            continue
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     worker_task = None
     stop_event = None
     source_build_worker_task = None
     source_build_stop_event = None
+    novel_index_worker_task = None
+    novel_index_stop_event = None
     if settings.ENV != 'test' and settings.EVENT_DELIVERY_WORKER_ENABLED:
         stop_event = asyncio.Event()
         worker_task = asyncio.create_task(_event_delivery_worker(stop_event))
@@ -48,6 +63,10 @@ async def lifespan(app: FastAPI):
         source_build_stop_event = asyncio.Event()
         source_build_worker_task = asyncio.create_task(_source_build_worker(source_build_stop_event))
         app.state.source_build_worker_task = source_build_worker_task
+    if settings.ENV != 'test' and settings.NOVEL_INDEX_WORKER_ENABLED:
+        novel_index_stop_event = asyncio.Event()
+        novel_index_worker_task = asyncio.create_task(_novel_index_worker(novel_index_stop_event))
+        app.state.novel_index_worker_task = novel_index_worker_task
     try:
         yield
     finally:
@@ -55,10 +74,14 @@ async def lifespan(app: FastAPI):
             stop_event.set()
         if source_build_stop_event is not None:
             source_build_stop_event.set()
+        if novel_index_stop_event is not None:
+            novel_index_stop_event.set()
         if worker_task is not None:
             await worker_task
         if source_build_worker_task is not None:
             await source_build_worker_task
+        if novel_index_worker_task is not None:
+            await novel_index_worker_task
 
 
 app = FastAPI(
@@ -70,6 +93,7 @@ app = FastAPI(
 )
 register_exception_handlers(app)
 app.include_router(api_router)
+app.include_router(novel_agent_compat_router)
 
 
 @app.get("/")

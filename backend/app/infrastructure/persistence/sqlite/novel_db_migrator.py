@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -23,6 +24,11 @@ async def migrate_novel_database(db: Any) -> int:
     """
 
     await db.execute("PRAGMA foreign_keys=OFF")
+    # SQLite normally rewrites dependent foreign keys when a table is
+    # temporarily renamed.  That would leave them pointing at
+    # ``novels_legacy`` after the copy completes.
+    await db.execute("PRAGMA legacy_alter_table=ON")
+    await _repair_legacy_foreign_keys(db)
     async with db.execute("PRAGMA user_version") as cursor:
         current_version = int((await cursor.fetchone())[0])
 
@@ -115,4 +121,39 @@ async def migrate_novel_database(db: Any) -> int:
         await db.execute("PRAGMA user_version=1")
         await db.commit()
     await db.execute("PRAGMA foreign_keys=ON")
+    await db.execute("PRAGMA legacy_alter_table=OFF")
     return max(current_version, 1)
+
+
+async def _repair_legacy_foreign_keys(db: Any) -> None:
+    """Repair databases created by the pre-owner-scope rename migration."""
+    async with db.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+    ) as cursor:
+        tables = await cursor.fetchall()
+
+    for table_name, create_sql in tables:
+        if not create_sql or "novels_legacy" not in create_sql:
+            continue
+        table = str(table_name)
+        backup = f"__novel_fk_repair_{table}"
+        quoted_table = '"' + table.replace('"', '""') + '"'
+        quoted_backup = '"' + backup.replace('"', '""') + '"'
+        await db.execute(f"ALTER TABLE {quoted_table} RENAME TO {quoted_backup}")
+        repaired_sql = create_sql.replace("novels_legacy", "novels")
+        repaired_sql = re.sub(
+            rf"(?i)(CREATE TABLE(?: IF NOT EXISTS)?\s+)(?:\"?{re.escape(table)}\"?)",
+            rf'\1"{table}"',
+            repaired_sql,
+            count=1,
+        )
+        await db.execute(repaired_sql)
+        async with db.execute(f"PRAGMA table_info({quoted_backup})") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
+        if columns:
+            column_sql = ", ".join('"' + str(column).replace('"', '""') + '"' for column in columns)
+            await db.execute(
+                f"INSERT INTO {quoted_table} ({column_sql}) SELECT {column_sql} FROM {quoted_backup}"
+            )
+        await db.execute(f"DROP TABLE {quoted_backup}")
+    await db.commit()

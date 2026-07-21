@@ -8,17 +8,24 @@ NovelAgent API v1 - 小说智能体接口
 - 书源管理
 """
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
-from ...core.response import ok, fail, paginated
-from ...core.logging import get_logger
-from ...application.services.novel_agent_service import NovelAgentAppService
+from ....core.response import ok, fail, paginated
+from ....core.logging import get_logger
+from ....application.services.novel_agent_app_service import NovelAgentAppService
+from ....infrastructure.persistence.factory import build_novel_agent_app_service
+from ....core.permissions import Permission
+from ....interfaces.http.deps import owner_scope_for, require_principal_permission
+from ....interfaces.http import novel as novel_http
 
 logger = get_logger("api.v1.novel_agent")
 
 router = APIRouter(prefix="/api/v1/novel-agent", tags=["NovelAgent"])
+compat_router = APIRouter(prefix="/api/v1/novel-agent", tags=["NovelAgent"])
 
 
 # ==================== 请求/响应模型 ====================
@@ -32,6 +39,132 @@ class ChatRequest(BaseModel):
 class ToolCallRequest(BaseModel):
     tool_name: str = Field(..., description="工具名称")
     params: Optional[Dict[str, Any]] = Field(default_factory=dict, description="工具参数")
+
+
+class CompatChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=20_000)
+    session_id: Optional[str] = Field(default=None, max_length=100)
+    book_id: Optional[int] = None
+    chapter_id: Optional[int] = None
+    entrypoint: str = Field(default="workspace", pattern="^(workspace|book|reader)$")
+    mode: str = Field(default="chat", pattern="^(chat|character|storyline|world)$")
+    model: Optional[str] = Field(default=None, max_length=200)
+    stream: bool = False
+
+
+class CompatSourceImportRequest(BaseModel):
+    source_id: int
+    book_url: str = Field(min_length=1, max_length=4000)
+    book_name: str = Field(min_length=1, max_length=300)
+    author: str = Field(default="", max_length=200)
+
+
+class CompatUrlImportRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=4000)
+    title: str = Field(default="", max_length=300)
+    author: str = Field(default="", max_length=200)
+
+
+def _compat_import_data(result) -> dict:
+    return {
+        "book_id": result.book_id,
+        "duplicate": result.duplicate,
+        "status": result.status,
+        "task_id": result.task_id,
+        "error_code": result.error_code,
+    }
+
+
+@compat_router.post("/import/upload", summary="Upload a novel")
+async def compat_import_upload(
+    file: UploadFile = File(...),
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="uploaded file is empty")
+    service = await novel_http.get_novel_ingestion_service()
+    result = await service.import_upload(
+        owner_scope_for(identity),
+        file.filename or "novel.txt",
+        file.content_type or "application/octet-stream",
+        data,
+    )
+    return ok(data=_compat_import_data(result), message="novel upload queued")
+
+
+@compat_router.post("/import/source", summary="Import a configured book source")
+async def compat_import_source(
+    payload: CompatSourceImportRequest,
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    service = await novel_http.get_novel_ingestion_service()
+    result = await service.import_source(
+        owner_scope_for(identity), payload.source_id, payload.book_url, payload.book_name, payload.author,
+    )
+    return ok(data=_compat_import_data(result), message="novel source import queued")
+
+
+@compat_router.post("/import/url", summary="Import a permitted URL")
+async def compat_import_url(
+    payload: CompatUrlImportRequest,
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    service = await novel_http.get_novel_ingestion_service()
+    result = await service.import_url(owner_scope_for(identity), payload.url, payload.title, payload.author)
+    return ok(data=_compat_import_data(result), message="novel URL import queued")
+
+
+@compat_router.post("/chat", summary="Legacy compatible novel chat")
+async def compat_chat(
+    req: CompatChatRequest,
+    identity=Depends(require_principal_permission(Permission.AI_RUN)),
+):
+    owner_scope = owner_scope_for(identity)
+    service = build_novel_agent_app_service()
+    conversation_id = req.session_id
+    if not conversation_id:
+        conversation = await service.create_conversation(
+            owner_scope,
+            title="NovelAgent",
+            book_id=req.book_id,
+            entrypoint=req.entrypoint,
+            model_ref=req.model,
+        )
+        conversation_id = conversation["id"]
+    result = await service.send_message(
+        owner_scope,
+        conversation_id,
+        req.message,
+        entrypoint=req.entrypoint,
+        book_id=req.book_id,
+        chapter_id=req.chapter_id,
+        mode=req.mode,
+        request_model=req.model,
+        stream=req.stream,
+    )
+    if req.stream:
+        from fastapi.responses import StreamingResponse
+
+        async def events():
+            yield "event: started\ndata: {}\n\n"
+            async for delta in result:
+                yield "event: delta\ndata: " + json.dumps({"text": delta}, ensure_ascii=False) + "\n\n"
+            yield "event: completed\ndata: {}\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
+    answer = result.get("content", "") if isinstance(result, dict) else str(result)
+    calls = result.get("tool_calls", []) if isinstance(result, dict) else []
+    return ok(
+        data={
+            "answer": answer,
+            "tools_used": [item.get("name") for item in calls if isinstance(item, dict)],
+            "iterations": len(calls),
+            "confidence": 1.0 if answer else 0.0,
+            "conversation_id": conversation_id,
+        },
+        message="对话完成",
+    )
 
 
 # ==================== 对话接口 ====================

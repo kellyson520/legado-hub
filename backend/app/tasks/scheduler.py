@@ -507,3 +507,28 @@ async def run_event_delivery_job(limit: int = 20) -> dict:
         ],
     }
 
+
+async def run_novel_index_job(limit: int = 10, owner_scope: str | None = None) -> dict:
+    """Consume queued novel analysis tasks through the shared index service."""
+    from ..infrastructure.persistence.factory import (
+        build_novel_runtime_repository,
+        build_provider_platform_service,
+        build_vector_store,
+    )
+    from ..interfaces.api.v1.novel import get_novel_repository
+    from ..services.novel_understanding.embedding import EmbeddingAdapter
+    from ..services.novel_understanding.index_service import NovelIndexService
+    from .novel_index_worker import NovelIndexWorker
+
+    repo = await get_novel_repository()
+    platform = build_provider_platform_service()
+    embedding = EmbeddingAdapter(provider=platform)
+    index_service = NovelIndexService(
+        repo,
+        embedding=embedding,
+        vector_store=build_vector_store(),
+    )
+    return await NovelIndexWorker(
+        index_service=index_service,
+        runtime_repo=build_novel_runtime_repository(),
+    ).run(limit=limit, owner_scope=owner_scope)

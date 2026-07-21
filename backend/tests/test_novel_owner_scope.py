@@ -89,6 +89,53 @@ async def test_old_global_url_schema_is_backfilled_and_versioned():
         await db.close()
 
 
+@pytest.mark.asyncio
+async def test_old_schema_migration_keeps_dependent_foreign_keys_on_novels():
+    db = await aiosqlite.connect(":memory:")
+    try:
+        await db.executescript(
+            """CREATE TABLE novels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_url TEXT NOT NULL UNIQUE,
+                book_name TEXT NOT NULL DEFAULT '',
+                author TEXT NOT NULL DEFAULT '',
+                source_name TEXT NOT NULL DEFAULT '',
+                total_chapters INTEGER NOT NULL DEFAULT 0,
+                total_words INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                source_type TEXT NOT NULL DEFAULT 'book_source',
+                ingest_progress REAL NOT NULL DEFAULT 0.0,
+                ingest_error_msg TEXT,
+                character_count INTEGER NOT NULL DEFAULT 0,
+                entity_count INTEGER NOT NULL DEFAULT 0,
+                event_count INTEGER NOT NULL DEFAULT 0,
+                relationship_count INTEGER NOT NULL DEFAULT 0,
+                summary_global TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE novel_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL,
+                source_entity TEXT NOT NULL DEFAULT '',
+                target_entity TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
+            );
+            INSERT INTO novels(book_url, book_name) VALUES ('https://legacy.test/rel', '旧关系');"""
+        )
+
+        await migrate_novel_database(db)
+        async with db.execute("PRAGMA foreign_key_list(novel_relationships)") as cursor:
+            foreign_keys = await cursor.fetchall()
+        assert foreign_keys[0][2] == "novels"
+        await db.execute(
+            "INSERT INTO novel_relationships(book_id, source_entity, target_entity) VALUES (1, '甲', '乙')"
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
 def test_model_preference_repository_is_scoped(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "preferences.sqlite3"))

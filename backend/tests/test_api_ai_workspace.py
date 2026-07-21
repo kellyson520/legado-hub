@@ -17,4 +17,5 @@ def test_ai_workspace_requires_permission_and_enforces_owner(tmp_path, monkeypat
     created = client.post("/api/ai/conversations", headers={"Authorization": f"Bearer {allowed}"}, json={"title": "分析"})
     assert created.status_code == 200
     conversation_id = created.json()["data"]["id"]
+    assert created.json()["data"]["owner_scope"] == "user:1"
     assert client.get(f"/api/ai/conversations/{conversation_id}", headers={"Authorization": f"Bearer {other}"}).status_code == 404

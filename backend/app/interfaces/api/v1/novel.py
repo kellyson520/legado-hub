@@ -28,35 +28,43 @@ _novel_db = None
 
 async def get_novel_service():
     """获取 NovelAppService 实例（延迟导入+单例）"""
-    global _novel_service_singleton, _novel_db
+    global _novel_service_singleton
     if _novel_service_singleton is not None:
         return _novel_service_singleton
-    
+
     from app.application.services.novel_app_service import NovelAppService
-    from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRepository
-    from app.infrastructure.persistence.sqlite.novel_db_migrator import migrate_novel_database
-    import aiosqlite
-    import os
-    from app.core.config import settings
-
-    db_path = getattr(settings, "NOVEL_DB_PATH", "data/novel.db")
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
-    _novel_db = await aiosqlite.connect(db_path)
-    await _novel_db.execute("PRAGMA journal_mode=WAL")
-    await _novel_db.execute("PRAGMA foreign_keys=ON")
-    import os as _os
-    base_dir = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
-    schema_path = _os.path.join(base_dir, "database_migrations", "novel_schema.sql")
-    if _os.path.exists(schema_path):
-        with open(schema_path) as f:
-            await _novel_db.executescript(f.read())
-        await _novel_db.commit()
-    await migrate_novel_database(_novel_db)
-    
-    repo = SqliteNovelRepository(_novel_db)
+    repo = await get_novel_repository()
     _novel_service_singleton = NovelAppService(repo)
     return _novel_service_singleton
+
+
+async def get_novel_repository():
+    """Return the shared standalone novel repository used by all API entries."""
+    global _novel_db
+    if _novel_db is None:
+        from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRepository
+        from app.infrastructure.persistence.sqlite.novel_db_migrator import migrate_novel_database
+        import aiosqlite
+        import os
+        from app.core.config import settings
+
+        db_path = getattr(settings, "NOVEL_DB_PATH", "data/novel.db")
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        _novel_db = await aiosqlite.connect(db_path)
+        await _novel_db.execute("PRAGMA journal_mode=WAL")
+        await _novel_db.execute("PRAGMA foreign_keys=ON")
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        schema_path = os.path.join(base_dir, "database_migrations", "novel_schema.sql")
+        # Migrate legacy ``novels`` before the fresh schema tries to create
+        # owner-scoped indexes; CREATE TABLE IF NOT EXISTS cannot alter it.
+        await migrate_novel_database(_novel_db)
+        if os.path.exists(schema_path):
+            with open(schema_path, encoding="utf-8") as schema:
+                await _novel_db.executescript(schema.read())
+            await _novel_db.commit()
+    from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRepository
+
+    return SqliteNovelRepository(_novel_db)
 
 
 # ==================== 书籍管理 ====================

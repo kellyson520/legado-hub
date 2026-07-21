@@ -4,6 +4,7 @@ from app.application.services.auth_service import AuthAppService
 from app.core.exceptions import AuthenticationException, AuthorizationException
 from app.core.permissions import Permission
 from app.core.security import decode_access_token, hash_api_key
+from app.domain.value_objects import OwnerScope
 from app.infrastructure.persistence.factory import build_auth_repository
 
 
@@ -45,6 +46,28 @@ async def get_api_key_identity(authorization: str | None = Header(default=None))
     if api_key is None or not api_key.is_enabled:
         raise AuthenticationException('Invalid API key')
     return ApiKeyIdentity(api_key.id, api_key.name, set(api_key.permissions))
+
+
+async def get_current_principal(authorization: str | None = Header(default=None)) -> RequestIdentity | ApiKeyIdentity:
+    """Authenticate either a user access token or a scoped application key."""
+    if authorization and authorization.startswith("Bearer lh_"):
+        return await get_api_key_identity(authorization)
+    return get_current_identity(authorization)
+
+
+def owner_scope_for(identity: RequestIdentity | ApiKeyIdentity) -> str:
+    if isinstance(identity, RequestIdentity):
+        return str(OwnerScope.user(identity.user_id))
+    return str(OwnerScope.api_key(identity.api_key_id))
+
+
+def require_principal_permission(permission: Permission):
+    async def checker(identity: RequestIdentity | ApiKeyIdentity = Depends(get_current_principal)):
+        if permission.value not in identity.permissions:
+            raise AuthorizationException(f"Permission denied: {permission.value}")
+        return identity
+
+    return checker
 
 
 def get_auth_service() -> AuthAppService:
