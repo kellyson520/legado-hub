@@ -569,6 +569,25 @@ class NovelReadingProgressModel(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class NovelVectorModel(Base):
+    """Local vector payloads; vector similarity is calculated by the adapter."""
+
+    __tablename__ = "novel_vectors"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_scope", "book_id", "chapter_id", "knowledge_version",
+            name="ux_novel_vectors_scope_book_chapter_version",
+        ),
+    )
+
+    owner_scope = Column(String, primary_key=True)
+    book_id = Column(Integer, primary_key=True)
+    chapter_id = Column(Integer, primary_key=True)
+    knowledge_version = Column(String, primary_key=True)
+    vector = Column(Text, nullable=False, default="[]")
+    payload = Column(Text, nullable=False, default="{}")
+
+
 class NovelModelPreferenceModel(Base):
     __tablename__ = "novel_model_preferences"
     __table_args__ = (

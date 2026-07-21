@@ -134,6 +134,26 @@ def _ensure_sqlite_novel_columns() -> None:
                     connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
+def _ensure_sqlite_novel_vector_table() -> None:
+    """Create the local vector table for databases created before Task 4."""
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """CREATE TABLE IF NOT EXISTS novel_vectors (
+                owner_scope VARCHAR NOT NULL,
+                book_id INTEGER NOT NULL,
+                chapter_id INTEGER NOT NULL,
+                knowledge_version VARCHAR NOT NULL,
+                vector TEXT NOT NULL DEFAULT '[]',
+                payload TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY(owner_scope, book_id, chapter_id, knowledge_version)
+            )"""
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS idx_novel_vectors_scope_book_version "
+            "ON novel_vectors(owner_scope, book_id, knowledge_version)"
+        )
+
+
 def _ensure_default_provider_routes() -> None:
     from .provider_repo_impl import SQLiteProviderRepository
 
@@ -184,6 +204,7 @@ def bootstrap_sqlite() -> None:
     _ensure_sqlite_translation_columns()
     _ensure_sqlite_provider_columns()
     _ensure_sqlite_novel_columns()
+    _ensure_sqlite_novel_vector_table()
     _ensure_default_provider_routes()
     _ensure_sqlite_event_delivery_indexes()
     db = SessionLocal()

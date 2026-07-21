@@ -63,6 +63,21 @@ CREATE TABLE IF NOT EXISTS novel_reading_progress (
     FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
 );
 
+-- Local vector backend.  Vectors and payloads are JSON because SQLite has no
+-- native vector type; the adapter computes cosine scores in Python.
+CREATE TABLE IF NOT EXISTS novel_vectors (
+    owner_scope TEXT NOT NULL,
+    book_id INTEGER NOT NULL,
+    chapter_id INTEGER NOT NULL,
+    knowledge_version TEXT NOT NULL,
+    vector TEXT NOT NULL DEFAULT '[]',
+    payload TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY(owner_scope, book_id, chapter_id, knowledge_version),
+    FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_novel_vectors_scope_book_version
+    ON novel_vectors(owner_scope, book_id, knowledge_version);
+
 CREATE TABLE IF NOT EXISTS novel_model_preferences (
     owner_scope TEXT NOT NULL,
     scope_type TEXT NOT NULL,

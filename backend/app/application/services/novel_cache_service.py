@@ -73,6 +73,21 @@ class NovelCacheService:
             self._stats["writes"] += 1
         return value, False
 
+    async def get(self, key: str):
+        value = await self._cache.get(key)
+        self._stats["hits" if value is not None else "misses"] += 1
+        return value
+
+    async def set(self, key: str, value: Any, *, ttl: int | None = None) -> bool:
+        stored = await self._cache.set(
+            key,
+            value,
+            expire=self._default_ttl if ttl is None else ttl,
+        )
+        if stored:
+            self._stats["writes"] += 1
+        return stored
+
     async def invalidate_book(self, owner_scope: str, book_id: int) -> int:
         keys = self._book_keys.pop((owner_scope, int(book_id)), set())
         for key in keys:

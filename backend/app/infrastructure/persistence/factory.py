@@ -33,6 +33,7 @@ from app.application.services.system_settings_service import SystemSettingsServi
 from app.application.services.translation_service import TranslationService
 from app.application.services.work_knowledge_service import WorkKnowledgeService
 from app.core.config import settings
+from app.database import SessionLocal
 from app.infrastructure.legado.legado_fetcher import LegadoBookSourceFetcher
 from app.infrastructure.persistence.sqlite.ai_runtime_repo_impl import SQLiteAIRuntimeRepository
 from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
@@ -46,6 +47,12 @@ from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobReposit
 from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
 from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
 from app.infrastructure.providers.registry import ProviderRegistry, ProviderSelection
+from app.infrastructure.vectorstores import (
+    DisabledVectorStore,
+    PgVectorStore,
+    QdrantVectorStore,
+    SQLiteVectorStore,
+)
 from app.infrastructure.persistence.sqlite.auth_repo_impl import SQLiteAuthRepository
 from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
 from app.infrastructure.persistence.sqlite.canonical_content_repo_impl import SQLiteCanonicalContentRepository
@@ -307,6 +314,23 @@ def build_system_settings_service() -> SystemSettingsService:
         repo=build_system_settings_repository(),
         provider_registry=build_provider_registry(),
     )
+
+
+def build_vector_store():
+    """Build the configured novel vector backend without exposing credentials."""
+    config = build_system_settings_service().get_novel_settings(include_secrets=True)
+    backend = config.get("vector_backend", "disabled")
+    if backend == "sqlite":
+        return SQLiteVectorStore(session_factory=SessionLocal)
+    if backend == "qdrant":
+        return QdrantVectorStore(
+            endpoint=config.get("endpoint", ""),
+            collection=config.get("collection_prefix", "novel"),
+            api_key=config.get("api_key", ""),
+        )
+    if backend == "pgvector":
+        return PgVectorStore(session_factory=SessionLocal)
+    return DisabledVectorStore()
 
 
 def build_ai_runtime_repository() -> SQLiteAIRuntimeRepository:
