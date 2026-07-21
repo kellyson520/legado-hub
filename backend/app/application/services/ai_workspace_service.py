@@ -37,14 +37,32 @@ class _SourceVersionArguments(BaseModel):
 
 
 class AIWorkspaceService:
-    def __init__(self, platform, conversations, sources, ai_tasks, audit):
+    def __init__(self, platform, conversations, sources, ai_tasks, audit, novel_agent_app=None):
         self._platform = platform
         self._conversations = conversations
         self._sources = sources
         self._ai_tasks = ai_tasks
         self._audit = audit
+        self._novel_agent_app = novel_agent_app
 
-    async def create_conversation(self, actor_id: str, title: str = "") -> dict:
+    async def create_conversation(
+        self,
+        actor_id: str,
+        title: str = "",
+        *,
+        owner_scope: str | None = None,
+        book_id: int | None = None,
+        entrypoint: str = "workspace",
+        model_ref: str | None = None,
+    ) -> dict:
+        if self._novel_agent_app is not None:
+            return await self._novel_agent_app.create_conversation(
+                owner_scope or _owner_scope_for_actor(actor_id),
+                title,
+                book_id=book_id,
+                entrypoint=entrypoint,
+                model_ref=model_ref,
+            )
         conversation = self._conversations.create_conversation(
             AIConversation(id=uuid4().hex, actor_id=str(actor_id), title=title.strip() or "新对话")
         )
@@ -52,9 +70,13 @@ class AIWorkspaceService:
         return self._serialize_conversation(conversation)
 
     async def list_conversations(self, actor_id: str) -> list[dict]:
+        if self._novel_agent_app is not None:
+            return await self._novel_agent_app.list_conversations(_owner_scope_for_actor(actor_id))
         return [self._serialize_conversation(item) for item in self._conversations.list_conversations(str(actor_id))]
 
     def get_conversation(self, conversation_id: str, actor_id: str) -> dict:
+        if self._novel_agent_app is not None:
+            return self._novel_agent_app.get_conversation(_owner_scope_for_actor(actor_id), conversation_id)
         conversation = self._conversations.get_conversation(conversation_id, str(actor_id))
         if conversation is None:
             raise NotFoundException("AI conversation not found")
@@ -71,7 +93,26 @@ class AIWorkspaceService:
         content: str,
         tool_requests: list[dict] | None = None,
         source_version_id: str | None = None,
+        *,
+        owner_scope: str | None = None,
+        entrypoint: str = "workspace",
+        book_id: int | None = None,
+        chapter_id: int | None = None,
+        request_model: str | None = None,
+        stream: bool = False,
     ) -> dict:
+        if self._novel_agent_app is not None:
+            return await self._novel_agent_app.send_message(
+                owner_scope or _owner_scope_for_actor(actor_id),
+                conversation_id,
+                content,
+                entrypoint=entrypoint,
+                book_id=book_id,
+                chapter_id=chapter_id,
+                mode=mode,
+                request_model=request_model,
+                stream=stream,
+            )
         if mode not in MODE_PROMPTS:
             raise ValidationException("Unsupported AI mode")
         if not content.strip():
@@ -130,6 +171,18 @@ class AIWorkspaceService:
             )
         await self._audit_event(actor_id, "ai.conversation.message", conversation.id)
         return self._serialize_message(assistant)
+
+    async def list_novel_tools(self, actor_id: str, book_id: int | None = None) -> list[dict]:
+        if self._novel_agent_app is None:
+            return []
+        return await self._novel_agent_app.list_tools(_owner_scope_for_actor(actor_id), book_id)
+
+    async def call_novel_tool(self, actor_id: str, tool_name: str, arguments: dict, **kwargs) -> dict:
+        if self._novel_agent_app is None:
+            raise ValidationException("Novel agent is not configured")
+        return await self._novel_agent_app.call_tool(
+            _owner_scope_for_actor(actor_id), tool_name, arguments, **kwargs,
+        )
 
     async def _run_model_tool_loop(self, *, actor_id: str, messages: list[dict]) -> tuple[str, list[dict]]:
         executed_calls: list[dict] = []
@@ -308,3 +361,8 @@ def _sanitize(value):
         for key, item in value.items()
         if not any(part in key.lower() for part in _SENSITIVE_KEY_PARTS)
     }
+
+
+def _owner_scope_for_actor(actor_id: str) -> str:
+    value = str(actor_id)
+    return value if ":" in value else f"user:{value}"

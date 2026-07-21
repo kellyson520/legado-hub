@@ -80,6 +80,15 @@ class AgentToolRegistry:
         for name in read_tools:
             tools[name] = AgentTool(name, 'read', frozenset({'knowledge', 'source_build'}))
 
+        novel_read_tools = (
+            'chapter.search', 'character.profile', 'character.count',
+            'character.aliases', 'character.relations', 'plot.timeline',
+            'plot.state_changes', 'world.query', 'semantic.search',
+            'evidence.get', 'chapter.summary', 'book.stats', 'reading.progress',
+        )
+        for name in novel_read_tools:
+            tools[name] = AgentTool(name, 'read', frozenset({'novel', 'knowledge'}))
+
         tools.update({
             'source.search': AgentTool('source.search', 'read', frozenset({'source_build'})),
             'source.inspect': AgentTool('source.inspect', 'operate', frozenset({'source_build'})),
@@ -89,7 +98,7 @@ class AgentToolRegistry:
             'rule.propose': AgentTool('rule.propose', 'propose', frozenset({'source_build'})),
             'rule.validate': AgentTool('rule.validate', 'operate', frozenset({'source_build'})),
             'knowledge.propose': AgentTool(
-                'knowledge.propose', 'propose', frozenset({'knowledge'}), self._propose_knowledge,
+                'knowledge.propose', 'propose', frozenset({'knowledge', 'novel'}), self._propose_knowledge,
             ),
             'translation.propose': AgentTool('translation.propose', 'propose', frozenset({'knowledge'})),
             'review.request': AgentTool('review.request', 'propose', frozenset({'knowledge', 'source_build'})),

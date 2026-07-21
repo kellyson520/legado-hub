@@ -274,3 +274,58 @@ async def test_workspace_model_can_call_a_read_only_system_tool(tmp_path, monkey
         "list_visible_sources", "get_source_rule_summary", "list_ai_analysis_results",
     }
     assert platform.calls[1]["payload"]["messages"][-1]["role"] == "tool"
+
+
+@pytest.mark.asyncio
+async def test_workspace_forwards_book_context_to_unified_novel_agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "workspace-novel-agent.sqlite3"))
+
+    from app.application.services.ai_workspace_service import AIWorkspaceService
+    from app.infrastructure.persistence.sqlite.ai_conversation_repo_impl import SQLiteAIConversationRepository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class NovelAgentStub:
+        def __init__(self):
+            self.calls = []
+
+        async def create_conversation(self, owner_scope, title="", **kwargs):
+            self.calls.append(("create", owner_scope, title, kwargs))
+            return {"id": "novel-conversation", "owner_scope": owner_scope, **kwargs}
+
+        def get_conversation(self, owner_scope, conversation_id):
+            self.calls.append(("get", owner_scope, conversation_id))
+            return {"id": conversation_id, "owner_scope": owner_scope, "messages": []}
+
+        async def send_message(self, owner_scope, conversation_id, content, **kwargs):
+            self.calls.append(("send", owner_scope, conversation_id, content, kwargs))
+            return {"content": "ok"}
+
+        async def list_tools(self, owner_scope, book_id=None):
+            self.calls.append(("tools", owner_scope, book_id))
+            return []
+
+    bootstrap_sqlite()
+    novel_agent = NovelAgentStub()
+    service = AIWorkspaceService(
+        RecordingPlatform(),
+        SQLiteAIConversationRepository(),
+        SourceRepository(),
+        TaskRepository(),
+        AuditRepository(),
+        novel_agent_app=novel_agent,
+    )
+
+    conversation = await service.create_conversation("7", "书籍助手", book_id=7, entrypoint="book")
+    reply = await service.send_message(
+        conversation["id"],
+        "7",
+        "chat",
+        "继续分析",
+        entrypoint="reader",
+        book_id=7,
+        chapter_id=2,
+    )
+
+    assert reply["content"] == "ok"
+    assert novel_agent.calls[0] == ("create", "user:7", "书籍助手", {"book_id": 7, "entrypoint": "book", "model_ref": None})
+    assert novel_agent.calls[1][-1]["entrypoint"] == "reader"

@@ -65,12 +65,13 @@ class NovelAgent:
         config: Optional[AgentConfig] = None,
         store: Optional[NovelDataStore] = None,
         memory: Optional[AgentMemory] = None,
+        registry: Optional[ToolRegistry] = None,
     ):
         self.config = config or AgentConfig()
         self.store = store or NovelDataStore(self.config)
         self.memory = memory or AgentMemory(self.config)
 
-        self.registry = ToolRegistry(self.store, self.memory, self.config)
+        self.registry = registry or ToolRegistry(self.store, self.memory, self.config)
         self._register_skills()
 
         self.iteration = 0

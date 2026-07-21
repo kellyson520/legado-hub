@@ -241,6 +241,20 @@ class TestNovelAgent:
         assert resp is not None
         assert resp.success is True
 
+    def test_agent_can_reuse_an_injected_skill_registry(self):
+        from app.services.novel_agent import AgentConfig, NovelAgent
+        from app.services.novel_agent.registry import ToolDefinition, ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register_external_tool(
+            ToolDefinition(name="chapter.search", description="search chapter", skill="novel"),
+            lambda **_params: {"items": []},
+        )
+        agent = NovelAgent(AgentConfig(), registry=registry)
+
+        assert agent.registry is registry
+        assert agent.registry.has_tool("chapter.search")
+
 
 # ==================== ToolDefinition 测试 ====================
 

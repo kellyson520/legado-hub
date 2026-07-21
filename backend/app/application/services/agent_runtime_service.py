@@ -11,9 +11,13 @@ class AgentRuntimeService:
 
     def __init__(self, repo):
         self._repo = repo
+        # A bounded in-process trace is useful to application services and
+        # tests while the durable repository remains the source of truth.
+        self.history: list[dict] = []
+        self._invocation_names: dict[str, str] = {}
 
     def create_run(self, *, tenant_id: str, agent_kind: str, input_payload: dict | None = None) -> AgentRun:
-        return self._repo.create_run(
+        run = self._repo.create_run(
             AgentRun(
                 id=uuid4().hex,
                 tenant_id=tenant_id,
@@ -21,6 +25,13 @@ class AgentRuntimeService:
                 input_payload=input_payload or {},
             )
         )
+        self.history.append({
+            'status': 'started',
+            'run_id': run.id,
+            'tenant_id': tenant_id,
+            'agent_kind': agent_kind,
+        })
+        return run
 
     def get_run(self, run_id: str, *, tenant_id: str) -> AgentRun | None:
         return self._repo.get_run(run_id, tenant_id)
@@ -42,7 +53,7 @@ class AgentRuntimeService:
     ) -> ToolInvocation:
         if category not in self._TOOL_CATEGORIES:
             raise ValueError(f'unsupported tool category: {category}')
-        return self._repo.create_invocation(
+        invocation = self._repo.create_invocation(
             ToolInvocation(
                 id=uuid4().hex,
                 agent_run_id=run_id,
@@ -52,6 +63,15 @@ class AgentRuntimeService:
                 arguments=arguments or {},
             )
         )
+        self._invocation_names[invocation.id] = tool_name
+        self.history.append({
+            'status': 'invoked',
+            'invocation_id': invocation.id,
+            'tenant_id': tenant_id,
+            'tool_name': tool_name,
+            'category': category,
+        })
+        return invocation
 
     def record_tool_result(
         self,
@@ -64,7 +84,7 @@ class AgentRuntimeService:
     ) -> ToolResult:
         if status not in self._RESULT_STATUSES:
             raise ValueError(f'unsupported tool result status: {status}')
-        return self._repo.create_result(
+        result = self._repo.create_result(
             ToolResult(
                 id=uuid4().hex,
                 tool_invocation_id=invocation_id,
@@ -74,6 +94,14 @@ class AgentRuntimeService:
                 error_code=error_code,
             )
         )
+        self.history.append({
+            'status': status,
+            'invocation_id': invocation_id,
+            'tenant_id': tenant_id,
+            'tool_name': self._invocation_names.get(invocation_id, ''),
+            'error_code': error_code,
+        })
+        return result
 
     def record_tool_evidence(
         self,
@@ -84,7 +112,7 @@ class AgentRuntimeService:
         resource_id: str,
         payload: dict | None = None,
     ) -> ToolEvidence:
-        return self._repo.create_evidence(
+        evidence = self._repo.create_evidence(
             ToolEvidence(
                 id=uuid4().hex,
                 tool_invocation_id=invocation_id,
@@ -94,6 +122,14 @@ class AgentRuntimeService:
                 payload=payload or {},
             )
         )
+        self.history.append({
+            'status': 'evidence',
+            'invocation_id': invocation_id,
+            'tenant_id': tenant_id,
+            'evidence_type': evidence_type,
+            'resource_id': resource_id,
+        })
+        return evidence
 
     def get_tool_history(self, run_id: str, *, tenant_id: str) -> list[ToolInvocation] | None:
         invocations = self._repo.list_invocations(run_id, tenant_id)

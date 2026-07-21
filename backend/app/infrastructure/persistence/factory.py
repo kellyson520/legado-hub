@@ -9,6 +9,8 @@ from app.application.services.event_delivery_service import EventDeliveryService
 from app.application.services.engine_service import EngineService
 from app.application.services.job_service import JobService
 from app.application.services.novel_agent_service import NovelAgentService
+from app.application.services.novel_agent_app_service import NovelAgentAppService
+from app.application.services.novel_model_selection_service import NovelModelSelectionService
 from app.application.services.novel_app_service import NovelAppService
 from app.application.services.provider_platform_service import (
     PROVIDER_ROUTE_GROUPS,
@@ -405,9 +407,45 @@ def build_novel_app_service() -> NovelAppService:
 
 
 def build_novel_agent_service() -> NovelAgentService:
+    app_service = build_novel_agent_app_service()
     return NovelAgentService(
         platform=build_provider_platform_service(),
         repo=build_novel_runtime_repository(),
+        app_service=app_service,
+    )
+
+
+def build_novel_agent_app_service(
+    *,
+    novel_repo=None,
+    retriever=None,
+    conversations=None,
+    model_selection=None,
+    cache=None,
+    agent_runtime=None,
+    tool_registry=None,
+) -> NovelAgentAppService:
+    """Assemble the shared novel assistant without creating a second pipeline.
+
+    The standalone novel database connection is request/lifespan-owned, so
+    callers that have it pass ``novel_repo`` and ``retriever`` explicitly.
+    The builder still provides a useful conversation/provider/runtime shell for
+    compatibility endpoints and dependency injection tests.
+    """
+    bootstrap_sqlite()
+    preferences = build_novel_model_preference_repository()
+    return NovelAgentAppService(
+        platform=build_provider_platform_service(),
+        conversations=conversations or SQLiteAIConversationRepository(),
+        novel_repo=novel_repo,
+        retriever=retriever,
+        model_selection=model_selection or NovelModelSelectionService(
+            preferences=preferences,
+            routes=build_provider_registry(),
+        ),
+        cache=cache,
+        agent_runtime=agent_runtime or build_agent_runtime_service(),
+        tool_registry=tool_registry,
     )
 
 

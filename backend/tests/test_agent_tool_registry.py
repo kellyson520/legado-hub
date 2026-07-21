@@ -187,3 +187,13 @@ def test_knowledge_proposal_with_evidence_is_accepted(registry):
     )
 
     assert result.status == 'accepted'
+
+
+def test_registry_exposes_bounded_novel_tools_for_the_novel_agent(registry):
+    chapter_search = registry.get('chapter.search')
+    reading_progress = registry.get('reading.progress')
+
+    assert chapter_search is not None
+    assert chapter_search.category == 'read'
+    assert 'novel' in chapter_search.allowed_agent_kinds
+    assert reading_progress is not None
