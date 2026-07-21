@@ -6,6 +6,8 @@ import { AITasksPage } from '@/features/ai/AITasksPage'
 import { AIWorkspacePage } from '@/features/ai/AIWorkspacePage'
 import { EngineRunsPage } from '@/features/engine/EngineRunsPage'
 import { LoginPage } from '@/features/auth/LoginPage'
+import { NovelLibraryPage } from '@/features/novel/NovelLibraryPage'
+import { NovelReaderPage } from '@/features/novel/NovelReaderPage'
 import { NovelTasksPage } from '@/features/novel/NovelTasksPage'
 import { AgentRunsPage } from '@/features/operations/AgentRunsPage'
 import { EventDeliveriesPage } from '@/features/operations/EventDeliveriesPage'
@@ -34,6 +36,9 @@ export const appRoutes = [
   { path: '/ai/workspace', element: <AIWorkspacePage /> },
   { path: '/translation/jobs', element: <TranslationJobsPage /> },
   { path: '/novel/tasks', element: <NovelTasksPage /> },
+  { path: '/novel/library', element: <NovelLibraryPage /> },
+  { path: '/novel/books/:bookId', element: <NovelLibraryPage /> },
+  { path: '/novel/books/:bookId/read/:chapterId', element: <NovelReaderPage /> },
   { path: '/operations/jobs', element: <JobsPage /> },
   { path: '/operations/agent-runs', element: <AgentRunsPage /> },
   { path: '/operations/deliveries', element: <EventDeliveriesPage /> },
@@ -61,7 +66,12 @@ export function AppRoutes() {
           <Route path="/ai/workspace" element={<AIWorkspacePage />} />
         </Route>
         <Route element={<RequirePermission permission="translation.run" />}><Route path="/translation/jobs" element={<TranslationJobsPage />} /></Route>
-        <Route element={<RequirePermission permission="novel.manage" />}><Route path="/novel/tasks" element={<NovelTasksPage />} /></Route>
+        <Route element={<RequirePermission permission="novel.manage" />}>
+          <Route path="/novel/tasks" element={<NovelTasksPage />} />
+          <Route path="/novel/library" element={<NovelLibraryPage />} />
+          <Route path="/novel/books/:bookId" element={<NovelLibraryPage />} />
+          <Route path="/novel/books/:bookId/read/:chapterId" element={<NovelReaderPage />} />
+        </Route>
         <Route element={<RequirePermission permission="system.jobs.manage" />}><Route path="/operations/jobs" element={<JobsPage />} /></Route>
         <Route element={<RequirePermission permission="agent_runs.read" />}><Route path="/operations/agent-runs" element={<AgentRunsPage />} /></Route>
         <Route element={<RequirePermission permission="system.jobs.manage" />}><Route path="/operations/deliveries" element={<EventDeliveriesPage />} /></Route>
