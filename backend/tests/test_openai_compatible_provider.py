@@ -122,6 +122,33 @@ async def test_openai_compatible_provider_invokes_chat_completion_endpoint():
     await provider.aclose()
 
 
+@pytest.mark.asyncio
+async def test_openai_compatible_provider_invokes_embedding_endpoint():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.read())
+        return httpx.Response(
+            200,
+            json={"model": "text-embedding", "data": [{"embedding": [0.1], "index": 0}], "usage": {"prompt_tokens": 2, "total_tokens": 2}},
+        )
+
+    from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider(
+        name="embedding-provider",
+        endpoint_url="https://api.example.com/v1",
+        api_key="secret-key",
+        transport=httpx.MockTransport(handler),
+    )
+    result = await provider.invoke_embedding("text-embedding", {"input": ["正文"]})
+    assert captured["url"] == "https://api.example.com/v1/embeddings"
+    assert captured["body"] == {"model": "text-embedding", "input": ["正文"]}
+    assert result["data"][0]["embedding"] == [0.1]
+    await provider.aclose()
+
+
 def test_build_provider_registry_registers_llm_provider_from_env(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "provider-registry.sqlite3"))

@@ -138,8 +138,6 @@ def _ensure_default_provider_routes() -> None:
     from .provider_repo_impl import SQLiteProviderRepository
 
     repo = SQLiteProviderRepository()
-    if repo.has_routes():
-        return
     entries = [
         {"provider_account_id": account.id, "model": account.default_model}
         for account in repo.list_configured_openai_providers()
@@ -147,8 +145,18 @@ def _ensure_default_provider_routes() -> None:
     ]
     if not entries:
         return
-    for provider_group in ("default", "ai", "source_build", "translation", "novel"):
-        repo.replace_routes(provider_group, entries)
+    existing_routes = repo.has_routes()
+    provider_groups = (
+        ("novel_chat", "novel_extract", "novel_summary", "novel_embedding")
+        if existing_routes
+        else (
+            "default", "ai", "source_build", "translation", "novel",
+            "novel_chat", "novel_extract", "novel_summary", "novel_embedding",
+        )
+    )
+    for provider_group in provider_groups:
+        if not repo.list_routes(provider_group):
+            repo.replace_routes(provider_group, entries)
 
 
 def _ensure_sqlite_event_delivery_indexes() -> None:
