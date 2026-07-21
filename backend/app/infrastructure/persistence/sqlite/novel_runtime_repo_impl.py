@@ -78,7 +78,7 @@ class SQLiteNovelRuntimeRepository(NovelRuntimeRepository):
                 result_payload=json.dumps(task.result, ensure_ascii=False),
                 usage_payload=json.dumps(task.usage, ensure_ascii=False),
             )
-            db.add(model)
+            model = db.merge(model)
             ingestion = db.query(NovelIngestionModel).filter(NovelIngestionModel.id == task.novel_id).first()
             if ingestion is not None:
                 ingestion.status = task.status

@@ -1,34 +1,34 @@
-"""
-RAG 检索器 - 三轨融合检索
+"""Owner-scoped BM25, vector and knowledge-graph retrieval."""
 
-1. BM25 检索（关键词匹配）- 权重 0.4
-2. 向量检索（语义相似）- 权重 0.3
-3. 知识图谱检索（实体/关系/事件）- 权重 0.3
+from __future__ import annotations
 
-融合策略：加权分数 + 去重 + 重排序
-"""
-
-from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
-from app.domain.repositories.novel_repo import NovelRepository
-from app.domain.entities.novel import NovelEntity, NovelRelationship, NovelEvent, NovelChapter
+from app.domain.entities.novel import NovelBook
+from app.domain.repositories.vector_store import VectorStore
+
 from .bm25_index import BM25Index
-from .embedding import EmbeddingAdapter
+from .embedding import EmbeddingAdapter, EmbeddingUnavailable
 
 
 @dataclass
 class RetrievalResult:
-    """检索结果"""
-    source: str  # "bm25" / "vector" / "kg"
-    item_type: str  # "chapter" / "entity" / "relationship" / "event"
+    source: str
+    item_type: str
     item_id: int
     score: float
-    content: str  # 文本内容
+    content: str
+    owner_scope: str = "legacy"
+    book_id: int = 0
+    chapter_num: int = 0
+    evidence: str = ""
+    confidence: float = 0.0
+    book_title: str = ""
 
 
 class RAGRetriever:
-    """RAG 三轨融合检索器"""
+    """Three-track retrieval with explicit owner/book/version boundaries."""
 
     WEIGHT_BM25 = 0.4
     WEIGHT_VECTOR = 0.3
@@ -36,212 +36,367 @@ class RAGRetriever:
 
     def __init__(
         self,
-        repo: NovelRepository,
+        repo,
         bm25_index: Optional[BM25Index] = None,
         embedding: Optional[EmbeddingAdapter] = None,
+        vector_store: VectorStore | None = None,
     ):
         self._repo = repo
         self._bm25 = bm25_index or BM25Index()
         self._embedding = embedding or EmbeddingAdapter()
+        self._vector_store = vector_store
+        self._indexes: dict[tuple[str, int, str], BM25Index] = {}
+        self._chapter_cache: dict[tuple[str, int, str], dict[int, Any]] = {}
 
     async def retrieve(
         self,
-        book_id: int,
-        query: str,
+        owner_scope: str | int | None = None,
+        book_id: int | str | None = None,
+        query: str | None = None,
         top_k: int = 10,
+        knowledge_version: str = "",
     ) -> List[RetrievalResult]:
-        """
-        三轨融合检索
+        owner_scope, book_id, query = self._normalize_retrieve_args(owner_scope, book_id, query)
+        key = (owner_scope, int(book_id), knowledge_version)
+        index = self._indexes.get(key)
+        if index is None or not index.documents:
+            await self.build_bm25_index(owner_scope, int(book_id), knowledge_version=knowledge_version)
+            index = self._indexes.get(key, self._bm25)
 
-        Returns:
-            按融合分数排序的检索结果列表
-        """
         results: Dict[str, RetrievalResult] = {}
-
-        # 1. BM25 检索
-        bm25_results = self._bm25.search(query, top_k=top_k * 2)
-        for doc_id, score in bm25_results:
-            key = f"chapter:{doc_id}"
-            results[key] = RetrievalResult(
-                source="bm25",
-                item_type="chapter",
-                item_id=doc_id,
-                score=score * self.WEIGHT_BM25,
-                content="",
+        for doc_id, score in index.search(query, top_k=max(1, top_k * 2)):
+            self._merge_result(
+                results,
+                RetrievalResult(
+                    source="bm25",
+                    item_type="chapter",
+                    item_id=int(doc_id),
+                    score=score * self.WEIGHT_BM25,
+                    content="",
+                    owner_scope=owner_scope,
+                    book_id=int(book_id),
+                    confidence=min(1.0, float(score)),
+                ),
             )
 
-        # 2. 知识图谱检索
-        kg_results = await self._retrieve_kg(book_id, query, top_k=top_k)
-        for r in kg_results:
-            key = f"{r.item_type}:{r.item_id}"
-            if key in results:
-                results[key].score += r.score * self.WEIGHT_KG
-            else:
-                results[key] = RetrievalResult(
-                    source="kg",
-                    item_type=r.item_type,
-                    item_id=r.item_id,
-                    score=r.score * self.WEIGHT_KG,
-                    content=r.content,
-                )
+        for item in await self._retrieve_kg(owner_scope, int(book_id), query, top_k=top_k):
+            self._merge_result(results, item, weight=self.WEIGHT_KG)
 
-        # 3. 按分数排序
-        sorted_results = sorted(results.values(), key=lambda x: x.score, reverse=True)
+        if self._vector_store is not None:
+            try:
+                embedding = await self._embedding.embed(query)
+                if getattr(embedding, "semantic", False):
+                    vector_results = await self._vector_store.search(
+                        owner_scope,
+                        int(book_id),
+                        knowledge_version,
+                        embedding.vector,
+                        top_k=max(1, top_k * 2),
+                    )
+                    for item in vector_results:
+                        payload = item.payload or {}
+                        chapter_id = int(payload.get("chapter_id", item.chapter_id))
+                        content = str(payload.get("text") or payload.get("content") or "")[:2000]
+                        self._merge_result(
+                            results,
+                            RetrievalResult(
+                                source="vector",
+                                item_type="chapter",
+                                item_id=chapter_id,
+                                score=float(item.score) * self.WEIGHT_VECTOR,
+                                content=content,
+                                owner_scope=owner_scope,
+                                book_id=int(book_id),
+                                chapter_num=int(payload.get("chapter_num", 0) or 0),
+                                evidence=content,
+                                confidence=max(0.0, min(1.0, float(item.score))),
+                            ),
+                        )
+            except (EmbeddingUnavailable, RuntimeError, ValueError):
+                # BM25 and structured knowledge remain useful when semantic
+                # embeddings or the external vector backend are unavailable.
+                pass
 
-        # 4. 填充内容
-        for r in sorted_results[:top_k]:
-            if r.item_type == "chapter":
-                ch = getattr(self, '_chapter_cache', {}).get(r.item_id)
-                if not ch:
-                    ch = await self._repo.get_chapter(r.item_id)
-                if ch:
-                    preview = ch.raw_text[:200] if ch.raw_text else ch.summary
-                    r.content = f"第{ch.canonical_num}章 {ch.chapter_title}\n{preview}"
-                    r.chapter_num = ch.canonical_num
-
-        return sorted_results[:top_k]
+        sorted_results = sorted(results.values(), key=lambda item: item.score, reverse=True)
+        book = await self._repo_call("get_book_by_id", owner_scope, int(book_id), legacy=(int(book_id),))
+        book_title = book.book_name if book else ""
+        chapter_cache = self._chapter_cache.get(key, {})
+        for result in sorted_results[: max(0, int(top_k))]:
+            result.book_title = book_title
+            if result.item_type == "chapter":
+                chapter = chapter_cache.get(result.item_id)
+                if chapter is None:
+                    chapter = await self._repo_call(
+                        "get_chapter_by_id",
+                        owner_scope,
+                        result.item_id,
+                        legacy=(result.item_id,),
+                    )
+                if chapter:
+                    result.book_id = chapter.book_id
+                    result.chapter_num = chapter.canonical_num
+                    preview = (chapter.raw_text or "")[:200] or chapter.summary or chapter.chapter_title
+                    result.content = result.content or f"第{chapter.canonical_num}章 {chapter.chapter_title}\n{preview}"
+                    result.evidence = result.evidence or preview[:500]
+                    result.confidence = result.confidence or 0.5
+            result.evidence = (result.evidence or result.content)[:500]
+            result.confidence = max(0.0, min(1.0, result.confidence or min(1.0, result.score)))
+        return sorted_results[: max(0, int(top_k))]
 
     async def _retrieve_kg(
         self,
+        owner_scope: str,
         book_id: int,
         query: str,
         top_k: int,
     ) -> List[RetrievalResult]:
-        """知识图谱检索：实体名匹配 + 描述模糊匹配"""
-        kg_results = []
-
-        # 实体名精确/模糊匹配
-        entities = await self._repo.search_entities(book_id, query, limit=top_k)
-        for e in entities:
-            score = 1.0 if query in e.name else 0.7
-            kg_results.append(RetrievalResult(
-                source="kg",
-                item_type="entity",
-                item_id=e.id,
-                score=score,
-                content=f"{e.name}({e.entity_type.value}): {e.description}",
-            ))
-
-        # 事件描述匹配
-        events = await self._repo.get_events(book_id, limit=top_k * 2)
-        for ev in events:
-            if query in ev.description or any(query in p for p in ev.participants):
-                score = 0.8 if query in ev.description else 0.5
-                kg_results.append(RetrievalResult(
+        kg_results: list[RetrievalResult] = []
+        entities = await self._repo_call(
+            "search_entities",
+            owner_scope,
+            book_id,
+            query,
+            limit=top_k,
+            legacy=(book_id, query),
+        )
+        for entity in entities or []:
+            score = 1.0 if query in entity.name else 0.7
+            content = f"{entity.name}({getattr(entity.entity_type, 'value', entity.entity_type)}): {entity.description}"
+            kg_results.append(
+                RetrievalResult(
                     source="kg",
-                    item_type="event",
-                    item_id=ev.id,
+                    item_type="entity",
+                    item_id=entity.id,
                     score=score,
-                    content=f"第{ev.chapter_num}章事件: {ev.description}",
-                ))
+                    content=content,
+                    owner_scope=owner_scope,
+                    book_id=book_id,
+                    chapter_num=entity.first_appearance_ch,
+                    evidence=content,
+                    confidence=score,
+                )
+            )
 
-        # 关系匹配
-        rels = await self._repo.get_relationships(book_id, limit=top_k)
-        for rel in rels:
-            if query in rel.source_entity or query in rel.target_entity or query in rel.description:
-                kg_results.append(RetrievalResult(
-                    source="kg",
-                    item_type="relationship",
-                    item_id=rel.id,
-                    score=0.6,
-                    content=f"{rel.source_entity} -{rel.relation_type.value}-> {rel.target_entity}: {rel.description}",
-                ))
+        events = await self._repo_call(
+            "get_events",
+            owner_scope,
+            book_id,
+            limit=top_k * 2,
+            legacy=(book_id,),
+        )
+        for event in events or []:
+            if query in event.description or any(query in participant for participant in event.participants):
+                score = 0.8 if query in event.description else 0.5
+                content = f"第{event.chapter_num}章事件: {event.description}"
+                kg_results.append(
+                    RetrievalResult(
+                        source="kg",
+                        item_type="event",
+                        item_id=event.id,
+                        score=score,
+                        content=content,
+                        owner_scope=owner_scope,
+                        book_id=book_id,
+                        chapter_num=event.chapter_num,
+                        evidence=content,
+                        confidence=score,
+                    )
+                )
 
-        return sorted(kg_results, key=lambda x: x.score, reverse=True)[:top_k]
+        relationships = await self._repo_call(
+            "get_relationships",
+            owner_scope,
+            book_id,
+            limit=top_k,
+            legacy=(book_id,),
+        )
+        for relationship in relationships or []:
+            if (
+                query in relationship.source_entity
+                or query in relationship.target_entity
+                or query in relationship.description
+            ):
+                content = (
+                    f"{relationship.source_entity} -"
+                    f"{getattr(relationship.relation_type, 'value', relationship.relation_type)}-> "
+                    f"{relationship.target_entity}: {relationship.description}"
+                )
+                kg_results.append(
+                    RetrievalResult(
+                        source="kg",
+                        item_type="relationship",
+                        item_id=relationship.id,
+                        score=0.6,
+                        content=content,
+                        owner_scope=owner_scope,
+                        book_id=book_id,
+                        chapter_num=relationship.since_chapter,
+                        evidence=content,
+                        confidence=0.6,
+                    )
+                )
+        return sorted(kg_results, key=lambda item: item.score, reverse=True)[:top_k]
 
-    async def build_bm25_index(self, book_id: int):
-        """为书籍构建 BM25 索引"""
-        chapters = await self._repo.get_chapters_by_book(book_id)
-        self._chapter_cache = {}
-        for ch in chapters:
-            title_part = ch.chapter_title or ""
-            summary_part = ch.summary or ""
-            events_part = " ".join(ch.key_events) if ch.key_events else ""
-            text_part = ch.raw_text or ""
-            full_text = f"{title_part} {summary_part} {events_part} {text_part}"
-            self._bm25.add_document(ch.id, full_text)
-            self._chapter_cache[ch.id] = ch
-        self._bm25.build()
+    async def build_bm25_index(
+        self,
+        owner_scope: str | int | None = None,
+        book_id: int | None = None,
+        knowledge_version: str = "",
+    ):
+        if book_id is None:
+            book_id = int(owner_scope)
+            owner_scope = "legacy"
+        owner_scope = str(owner_scope or "legacy")
+        key = (owner_scope, int(book_id), knowledge_version)
+        index = self._bm25 if len(self._indexes) == 0 and self._bm25 is not None else BM25Index()
+        index.clear()
+        chapters = await self._repo_call(
+            "get_chapters_by_book",
+            owner_scope,
+            int(book_id),
+            limit=100000,
+            legacy=(int(book_id),),
+        )
+        cache: dict[int, Any] = {}
+        for chapter in chapters or []:
+            index.add_document(chapter.id, self._chapter_index_text(chapter))
+            cache[chapter.id] = chapter
+        index.build()
+        self._indexes[key] = index
+        self._chapter_cache[key] = cache
+        self._chapter_cache = {**self._chapter_cache, key: cache}
+        return index
 
-    async def get_character_context(self, book_id: int, character_name: str) -> str:
-        """获取角色的完整上下文（用于人物关系分析）"""
+    async def get_character_context(
+        self,
+        owner_scope: str | int,
+        character_name: str,
+        book_id: int | None = None,
+    ) -> str:
+        if book_id is None:
+            book_id, owner_scope = int(owner_scope), "legacy"
         parts = []
-
-        # 实体信息
-        entity = await self._repo.get_entity_by_name(book_id, character_name)
+        entity = await self._repo_call(
+            "get_entity_by_name",
+            owner_scope,
+            book_id,
+            character_name,
+            legacy=(book_id, character_name),
+        )
         if entity:
-            parts.append(f"【角色档案】{entity.name}")
-            parts.append(f"类型: {entity.entity_type.value}")
-            parts.append(f"描述: {entity.description}")
+            parts.extend(
+                [
+                    f"【角色档案】{entity.name}",
+                    f"类型: {getattr(entity.entity_type, 'value', entity.entity_type)}",
+                    f"描述: {entity.description}",
+                ]
+            )
             if entity.aliases:
                 parts.append(f"别名: {', '.join(entity.aliases)}")
             parts.append(f"重要性: {entity.importance_score}/5")
-
-        # 关系
-        rels = await self._repo.get_relationships(book_id, entity_name=character_name)
-        if rels:
+        relationships = await self._repo_call(
+            "get_relationships",
+            owner_scope,
+            book_id,
+            entity_name=character_name,
+            legacy=(book_id,),
+        )
+        if relationships:
             parts.append("【人际关系】")
-            for rel in rels:
-                parts.append(f"  {rel.source_entity} -{rel.relation_type.value}-> {rel.target_entity}: {rel.description}")
-
-        # 状态变迁
-        state_changes = await self._repo.get_state_changes(book_id, entity_name=character_name)
+            parts.extend(
+                f"  {item.source_entity} -{getattr(item.relation_type, 'value', item.relation_type)}-> "
+                f"{item.target_entity}: {item.description}"
+                for item in relationships
+            )
+        state_changes = await self._repo_call(
+            "get_state_changes",
+            owner_scope,
+            book_id,
+            entity_name=character_name,
+            legacy=(book_id,),
+        )
         if state_changes:
             parts.append("【状态变迁】")
-            for sc in sorted(state_changes, key=lambda x: x.chapter_num):
-                parts.append(f"  第{sc.chapter_num}章: {sc.field_name.value} [{sc.before_value}] -> [{sc.after_value}]")
-
-        # 相关事件
-        events = await self._repo.get_events(book_id, limit=50)
-        char_events = [e for e in events if character_name in e.participants or character_name in e.related_entities]
-        if char_events:
+            parts.extend(
+                f"  第{item.chapter_num}章: {getattr(item.field_name, 'value', item.field_name)} "
+                f"[{item.before_value}] -> [{item.after_value}]"
+                for item in sorted(state_changes, key=lambda value: value.chapter_num)
+            )
+        events = await self._repo_call("get_events", owner_scope, book_id, limit=50, legacy=(book_id,))
+        character_events = [
+            item
+            for item in events or []
+            if character_name in item.participants or character_name in item.related_entities
+        ]
+        if character_events:
             parts.append("【参与事件】")
-            for ev in sorted(char_events, key=lambda x: x.chapter_num)[:10]:
-                parts.append(f"  第{ev.chapter_num}章: {ev.description}")
-
+            parts.extend(f"  第{item.chapter_num}章: {item.description}" for item in character_events[:10])
         return "\n".join(parts)
 
-    async def get_world_context(self, book_id: int) -> str:
-        """获取世界观上下文"""
+    async def get_world_context(self, owner_scope: str | int, book_id: int | None = None) -> str:
+        if book_id is None:
+            book_id, owner_scope = int(owner_scope), "legacy"
         parts = ["【世界观设定】"]
-
-        # 简化处理
-        entities = await self._repo.list_entities(book_id, limit=100)
-
-        locations = [e for e in entities if e.entity_type.value == "location"]
-        if locations:
-            parts.append("【地点】")
-            for loc in locations[:15]:
-                parts.append(f"  {loc.name}: {loc.description}")
-
-        factions = [e for e in entities if e.entity_type.value == "faction"]
-        if factions:
-            parts.append("【势力】")
-            for f in factions[:15]:
-                parts.append(f"  {f.name}: {f.description}")
-
-        realms = [e for e in entities if e.entity_type.value == "realm"]
-        if realms:
-            parts.append("【境界体系】")
-            for r in realms[:15]:
-                parts.append(f"  {r.name}: {r.description}")
-
-        concepts = [e for e in entities if e.entity_type.value == "concept"]
-        if concepts:
-            parts.append("【核心概念】")
-            for c in concepts[:15]:
-                parts.append(f"  {c.name}: {c.description}")
-
+        entities = await self._repo_call("list_entities", owner_scope, book_id, limit=100, legacy=(book_id,))
+        for entity_type, title in (("location", "【地点】"), ("faction", "【势力】"), ("realm", "【境界体系】"), ("concept", "【核心概念】")):
+            selected = [item for item in entities or [] if getattr(item.entity_type, "value", item.entity_type) == entity_type]
+            if selected:
+                parts.append(title)
+                parts.extend(f"  {item.name}: {item.description}" for item in selected[:15])
         return "\n".join(parts)
 
-    async def get_storyline_context(self, book_id: int) -> str:
-        """获取剧情时间线上下文"""
+    async def get_storyline_context(self, owner_scope: str | int, book_id: int | None = None) -> str:
+        if book_id is None:
+            book_id, owner_scope = int(owner_scope), "legacy"
         parts = ["【剧情时间线】"]
-
-        events = await self._repo.get_events(book_id, min_importance=3, limit=50)
-        for ev in sorted(events, key=lambda x: x.chapter_num):
-            parts.append(f"第{ev.chapter_num}章 [{ev.event_type.value}] {ev.description}")
-            if ev.participants:
-                parts.append(f"  参与者: {', '.join(ev.participants)}")
-
+        events = await self._repo_call("get_events", owner_scope, book_id, min_importance=3, limit=50, legacy=(book_id,))
+        for event in sorted(events or [], key=lambda value: value.chapter_num):
+            parts.append(f"第{event.chapter_num}章 [{getattr(event.event_type, 'value', event.event_type)}] {event.description}")
+            if event.participants:
+                parts.append(f"  参与者: {', '.join(event.participants)}")
         return "\n".join(parts)
+
+    async def _repo_call(self, name: str, *args, legacy=(), **kwargs):
+        method = getattr(self._repo, name)
+        try:
+            result = method(*args, **kwargs)
+        except TypeError:
+            result = method(*legacy)
+        if hasattr(result, "__await__"):
+            return await result
+        return result
+
+    @staticmethod
+    def _normalize_retrieve_args(owner_scope, book_id, query):
+        if owner_scope is None:
+            return "legacy", int(book_id), str(query or "")
+        if query is None and isinstance(owner_scope, int) and isinstance(book_id, str):
+            return "legacy", int(owner_scope), book_id
+        return str(owner_scope), int(book_id), str(query or "")
+
+    @staticmethod
+    def _chapter_index_text(chapter) -> str:
+        return " ".join(
+            part
+            for part in (
+                chapter.chapter_title or "",
+                chapter.summary or "",
+                " ".join(chapter.key_events or []),
+                chapter.raw_text or "",
+            )
+            if part
+        )
+
+    @staticmethod
+    def _merge_result(results: dict[str, RetrievalResult], result: RetrievalResult, weight: float = 1.0) -> None:
+        key = f"{result.item_type}:{result.item_id}"
+        result.score *= weight
+        existing = results.get(key)
+        if existing is None:
+            results[key] = result
+            return
+        existing.score += result.score
+        existing.evidence = existing.evidence or result.evidence
+        existing.content = existing.content or result.content
+        existing.chapter_num = existing.chapter_num or result.chapter_num
+        existing.confidence = max(existing.confidence, result.confidence)

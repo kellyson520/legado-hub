@@ -40,6 +40,17 @@ class BM25Index:
         for token in set(tokens):
             self.inverted_index[token].append(internal_id)
 
+    def clear(self) -> None:
+        """Reset all documents so an index can be rebuilt per book/version."""
+        self.documents.clear()
+        self.doc_tokens.clear()
+        self.doc_lengths.clear()
+        self.doc_ids.clear()
+        self.avgdl = 0.0
+        self.idf.clear()
+        self.inverted_index.clear()
+        self._built = False
+
     def build(self):
         """构建索引（计算 IDF）"""
         N = len(self.documents)
