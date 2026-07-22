@@ -155,3 +155,77 @@ class TestSqliteNovelRepository:
         results = await repo.get_state_changes(book.id, entity_name="林远", field_name=StateField.REALM)
         assert len(results) == 1
         assert results[0].before_value == "炼气期"
+
+    async def test_evidence_round_trips_for_relationship_event_and_state_change(self, repo):
+        book = await repo.save_book(
+            "user:1",
+            NovelBook(book_url="https://evidence.test", book_name="证据书", owner_scope="user:1"),
+        )
+        evidence = [{"chapter_id": 0, "start_offset": 2, "end_offset": 12, "text": "正文证据"}]
+        relationship = NovelRelationship(
+            book_id=book.id,
+            source_entity="江轩",
+            target_entity="周宁",
+            relation_type=RelationType.ALLY,
+            description="并肩作战",
+            evidence=evidence,
+        )
+        event = NovelEvent(
+            book_id=book.id,
+            chapter_id=0,
+            chapter_num=0,
+            event_type=EventType.BATTLE,
+            description="并肩作战",
+            participants=["江轩", "周宁"],
+            evidence=evidence,
+        )
+        state = NovelStateChange(
+            book_id=book.id,
+            entity_name="玄天剑",
+            chapter_id=0,
+            chapter_num=0,
+            field_name=StateField.POSSESSION,
+            before_value="",
+            after_value="江轩",
+            trigger_event="获得",
+            evidence=evidence,
+        )
+        await repo.save_relationship("user:1", relationship)
+        await repo.save_event("user:1", event)
+        await repo.save_state_change("user:1", state)
+
+        assert (await repo.get_relationships("user:1", book.id, limit=10))[0].evidence == evidence
+        assert (await repo.get_events("user:1", book.id, limit=10))[0].evidence == evidence
+        assert (await repo.get_state_changes("user:1", book.id, limit=10))[0].evidence == evidence
+
+    async def test_rebuilding_book_knowledge_from_snapshots_updates_counts(self, repo):
+        book = await repo.save_book(
+            "user:1",
+            NovelBook(book_url="https://snapshot.test", book_name="快照书", owner_scope="user:1"),
+        )
+        first = {
+            "chapter_id": 1,
+            "chapter_num": 1,
+            "entities": [{"name": "江轩", "entity_type": "character", "appearance_count": 2}],
+            "relationships": [],
+            "events": [],
+            "state_changes": [],
+        }
+        second = {
+            "chapter_id": 2,
+            "chapter_num": 2,
+            "entities": [{"name": "玄天剑", "entity_type": "item", "appearance_count": 1}],
+            "relationships": [],
+            "events": [],
+            "state_changes": [],
+        }
+
+        await repo.replace_book_knowledge("user:1", book.id, [first, second])
+        initial = await repo.get_book_by_id("user:1", book.id)
+        assert initial.character_count == 1
+        assert initial.entity_count == 2
+
+        await repo.replace_book_knowledge("user:1", book.id, [second])
+        updated = await repo.get_book_by_id("user:1", book.id)
+        assert updated.character_count == 0
+        assert updated.entity_count == 1
