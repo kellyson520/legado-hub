@@ -61,7 +61,7 @@ def test_local_extractor_does_not_create_cartesian_relationships():
     pairs = {(item.source_entity, item.target_entity) for item in relationships}
     assert ("江轩", "周宁") in pairs or ("周宁", "江轩") in pairs
     assert ("江轩", "赵明") not in pairs
-    assert all(item.evidence for item in relationships)
+    assert all(getattr(item, "evidence", []) for item in relationships)
 ~~~
 
 Add an index fixture with a chapter whose `canonical_num` is exactly `0` and assert it is processed rather than silently returned as empty.
@@ -265,7 +265,7 @@ Increment `knowledge_version` from `v1` to `v2-local-evidence` so existing stale
 
 - [ ] **Step 3: Add missing-task discovery to the worker**
 
-Before consuming queued tasks, query books in the requested owner scope and create an in-memory repair task for a book when it has chapters but no completed state, a failed state, a version mismatch, or zero statistics. Deduplicate by `(owner_scope, book_id)` against queued/running tasks. Respect the existing `limit`, preserve task status transitions, and continue after a single book failure.
+Before consuming queued tasks, query books in the requested owner scope and persist one queued repair task for a book when it has chapters but no completed state, a failed state, a version mismatch, or zero statistics. Deduplicate by `(owner_scope, book_id)` against queued/running tasks before inserting. Respect the existing `limit`, preserve task status transitions, and continue after a single book failure.
 
 - [ ] **Step 4: Run worker and ingestion tests and commit**
 
