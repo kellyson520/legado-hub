@@ -228,6 +228,7 @@ class NovelEvent:
     location: str = ""
     importance: int = 3  # 1-5
     related_entities: List[str] = field(default_factory=list)
+    evidence: List[Dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
 
 
@@ -244,6 +245,7 @@ class NovelStateChange:
     after_value: str = ""
     trigger_event: str = ""  # 触发此变更的事件描述
     confidence: float = 0.8
+    evidence: List[Dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
 
 

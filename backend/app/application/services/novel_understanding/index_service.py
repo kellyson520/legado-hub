@@ -6,6 +6,7 @@ import hashlib
 import inspect
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
 from app.domain.entities.novel import (
@@ -52,7 +53,7 @@ class NovelIndexService:
         embedding: EmbeddingAdapter | None = None,
         vector_store=None,
         bm25_index: BM25Index | None = None,
-        knowledge_version: str = "v1",
+        knowledge_version: str = "v2-local-evidence",
         prompt_version: str = "",
         toolset_version: str = "",
         embedding_model: str = "",
@@ -116,36 +117,42 @@ class NovelIndexService:
             await self.repo.save_index_state(state)
             try:
                 entities, relationships, structured = await self._extract(chapter)
-                # Deterministic extraction is durable even when a later LLM
-                # payload is malformed; this keeps local search available.
-                await self._persist_local_results(
-                    owner_scope,
-                    entities,
-                    relationships,
-                    book_id=chapter.book_id,
-                )
+                structured_status = "not_requested"
                 try:
-                    structured = await self._validate_structured(structured, chapter)
+                    if structured is not None and self.structured_extractor is not None:
+                        structured_status = "completed"
+                        structured = await self._validate_structured(structured, chapter)
+                    elif structured is None:
+                        structured_status = "not_requested"
                 except Exception as exc:
-                    state.extraction_status = "failed"
+                    # Local extraction remains usable when only the optional
+                    # structured payload is malformed.  Keep the failure in
+                    # the snapshot so a later retry can target that portion.
+                    structured = None
+                    structured_status = "failed"
                     state.failure_reason = f"structured extraction: {str(exc)[:450]}"
-                    await self.repo.save_index_state(state)
-                    result.failed_chapters += 1
-                    result.errors.append({"chapter_id": chapter.id, "error": str(exc)[:500]})
-                    continue
-                await self._persist_local_results(
-                    owner_scope,
-                    [],
-                    [],
+                    result.errors.append({"chapter_id": chapter.id, "error": str(exc)[:500], "scope": "structured"})
+
+                structured_relationships, structured_events, structured_states = self._structured_entities(
                     structured,
-                    book_id=chapter.book_id,
+                    chapter.book_id,
                     chapter_num=chapter.canonical_num,
                 )
+                snapshot = self._chapter_snapshot(
+                    chapter,
+                    entities=list(entities or []),
+                    relationships=list(relationships or []) + structured_relationships,
+                    events=structured_events,
+                    state_changes=structured_states,
+                    structured_status=structured_status,
+                )
+                state.extraction_payload = snapshot
                 state.extraction_status = "completed"
                 state.bm25_status = "completed"
                 await self._index_vector(owner_scope, chapter, state)
                 state.last_success_at = datetime.now(timezone.utc)
-                state.failure_reason = ""
+                if structured_status != "failed":
+                    state.failure_reason = ""
                 await self.repo.save_index_state(state)
                 result.processed_chapters += 1
                 result.indexed_chapters.append(int(chapter.id))
@@ -155,10 +162,11 @@ class NovelIndexService:
                 await self.repo.save_index_state(state)
                 result.failed_chapters += 1
                 result.errors.append({"chapter_id": chapter.id, "error": str(exc)[:500]})
+        await self._rebuild_knowledge(owner_scope, book_id)
         return result
 
     async def _chapters(self, owner_scope: str, book_id: int, from_chapter: int | None):
-        start = max(1, int(from_chapter or 1))
+        start = max(0, int(from_chapter if from_chapter is not None else 0))
         try:
             return await self.repo.get_chapters_by_book(
                 owner_scope,
@@ -170,16 +178,22 @@ class NovelIndexService:
             return await self.repo.get_chapters_by_book(owner_scope, book_id)
 
     async def _extract(self, chapter):
-        method = getattr(self.extractor, "extract_from_chapter", None)
+        method = getattr(self.extractor, "extract_with_evidence", None)
+        evidence_method = callable(method)
+        if not callable(method):
+            method = getattr(self.extractor, "extract_from_chapter", None)
         if not callable(method):
             method = getattr(self.extractor, "extract", None)
         if not callable(method):
             return [], [], None
         args = (chapter.book_id, chapter.canonical_num, chapter.chapter_title, chapter.raw_text or "")
         try:
-            output = method(*args)
+            if evidence_method:
+                output = method(*args, chapter_id=chapter.id)
+            else:
+                output = method(*args)
         except TypeError:
-            output = method(chapter)
+            output = method(*args) if evidence_method else method(chapter)
         if inspect.isawaitable(output):
             output = await output
         if isinstance(output, dict):
@@ -213,6 +227,73 @@ class NovelIndexService:
         if callable(parse):
             return parse(output, chapter_id=chapter.id, chapter_text=chapter.raw_text or "")
         return output
+
+    async def _rebuild_knowledge(self, owner_scope: str, book_id: int) -> None:
+        replace = getattr(self.repo, "replace_book_knowledge", None)
+        list_states = getattr(self.repo, "list_index_states", None)
+        if not callable(replace) or not callable(list_states):
+            return
+        states = list_states(owner_scope, int(book_id))
+        if inspect.isawaitable(states):
+            states = await states
+        snapshots = [
+            state.extraction_payload
+            for state in states or []
+            if state.extraction_status == "completed" and state.extraction_payload
+        ]
+        await replace(owner_scope, int(book_id), snapshots)
+
+    @classmethod
+    def _chapter_snapshot(
+        cls,
+        chapter,
+        *,
+        entities: list[Any],
+        relationships: list[Any],
+        events: list[Any],
+        state_changes: list[Any],
+        structured_status: str,
+    ) -> dict[str, Any]:
+        return {
+            "chapter_id": int(chapter.id),
+            "chapter_num": int(chapter.canonical_num),
+            "content_hash": chapter.raw_text_hash or cls._hash(chapter.raw_text or ""),
+            "algorithm_version": "local-evidence-1",
+            "structured_status": structured_status,
+            "entities": [cls._record_to_dict(item) for item in entities],
+            "relationships": [cls._record_to_dict(item) for item in relationships],
+            "events": [cls._record_to_dict(item) for item in events],
+            "state_changes": [cls._record_to_dict(item) for item in state_changes],
+        }
+
+    @classmethod
+    def _record_to_dict(cls, record: Any) -> dict[str, Any]:
+        if isinstance(record, dict):
+            data = dict(record)
+        elif hasattr(record, "model_dump"):
+            data = record.model_dump()
+        elif hasattr(record, "dict") and callable(record.dict):
+            data = record.dict()
+        else:
+            try:
+                data = dict(vars(record))
+            except TypeError:
+                return {}
+        return cls._json_safe(data)
+
+    @classmethod
+    def _json_safe(cls, value: Any) -> Any:
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {str(key): cls._json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [cls._json_safe(item) for item in value]
+        if hasattr(value, "model_dump"):
+            return cls._json_safe(value.model_dump())
+        return value
 
     async def _persist_local_results(
         self,
@@ -308,8 +389,13 @@ class NovelIndexService:
                 target_entity=item.target_entity,
                 relation_type=item.relation_type if isinstance(item.relation_type, RelationType) else RelationType(item.relation_type),
                 description=item.description,
-                since_chapter=(chapter_num or (item.evidence[0].chapter_id if item.evidence else 0)),
+                since_chapter=(
+                    chapter_num
+                    if chapter_num is not None
+                    else (item.evidence[0].chapter_id if item.evidence else 0)
+                ),
                 confidence=item.confidence,
+                evidence=[NovelIndexService._record_to_dict(evidence) for evidence in item.evidence],
             )
             for item in getattr(structured, "relationships", [])
         ]
@@ -317,13 +403,14 @@ class NovelIndexService:
             NovelEvent(
                 book_id=book_id,
                 chapter_id=item.chapter_id,
-                chapter_num=chapter_num or item.chapter_id,
+                chapter_num=chapter_num if chapter_num is not None else item.chapter_id,
                 event_type=item.event_type if isinstance(item.event_type, EventType) else EventType(item.event_type),
                 description=item.description,
                 participants=list(item.participants),
                 location=item.location,
                 importance=item.importance,
                 related_entities=list(item.participants),
+                evidence=[NovelIndexService._record_to_dict(evidence) for evidence in item.evidence],
             )
             for item in getattr(structured, "events", [])
         ]
@@ -332,12 +419,13 @@ class NovelIndexService:
                 book_id=book_id,
                 entity_name=item.entity_name,
                 chapter_id=item.chapter_id,
-                chapter_num=chapter_num or item.chapter_id,
+                chapter_num=chapter_num if chapter_num is not None else item.chapter_id,
                 field_name=item.field_name if isinstance(item.field_name, StateField) else StateField(item.field_name),
                 before_value=item.before_value,
                 after_value=item.after_value,
                 trigger_event=item.trigger_event,
                 confidence=item.confidence,
+                evidence=[NovelIndexService._record_to_dict(evidence) for evidence in item.evidence],
             )
             for item in getattr(structured, "state_changes", [])
         ]

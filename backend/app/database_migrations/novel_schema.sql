@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS novel_index_states (
     vector_status TEXT NOT NULL DEFAULT 'disabled',
     embedding_model TEXT NOT NULL DEFAULT '',
     embedding_dimension INTEGER NOT NULL DEFAULT 0,
+    extraction_payload TEXT NOT NULL DEFAULT '{}',
     last_success_at TIMESTAMP,
     failure_reason TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -190,6 +191,7 @@ CREATE TABLE IF NOT EXISTS novel_relationships (
     since_chapter INTEGER NOT NULL DEFAULT 0,
     until_chapter INTEGER,
     confidence REAL NOT NULL DEFAULT 0.8,
+    evidence TEXT NOT NULL DEFAULT '[]',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (book_id) REFERENCES novels(id) ON DELETE CASCADE
 );
@@ -207,6 +209,7 @@ CREATE TABLE IF NOT EXISTS novel_events (
     location TEXT NOT NULL DEFAULT '',
     importance INTEGER NOT NULL DEFAULT 3,
     related_entities TEXT NOT NULL DEFAULT '[]',
+    evidence TEXT NOT NULL DEFAULT '[]',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (book_id) REFERENCES novels(id) ON DELETE CASCADE
 );
@@ -225,6 +228,7 @@ CREATE TABLE IF NOT EXISTS novel_state_changes (
     after_value TEXT NOT NULL DEFAULT '',
     trigger_event TEXT NOT NULL DEFAULT '',
     confidence REAL NOT NULL DEFAULT 0.8,
+    evidence TEXT NOT NULL DEFAULT '[]',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (book_id) REFERENCES novels(id) ON DELETE CASCADE
 );

@@ -658,6 +658,7 @@ class NovelIndexStateModel(Base):
     vector_status = Column(String, nullable=False, default="disabled")
     embedding_model = Column(String, nullable=False, default="")
     embedding_dimension = Column(Integer, nullable=False, default=0)
+    extraction_payload = Column(Text, nullable=False, default="{}")
     last_success_at = Column(DateTime, nullable=True)
     failure_reason = Column(Text, nullable=False, default="")
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

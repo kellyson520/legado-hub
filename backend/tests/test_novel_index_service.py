@@ -82,6 +82,9 @@ async def test_index_includes_chapters_with_zero_canonical_number(index_service)
     result = await service.index_book("user:1", book_id=book_id)
 
     assert result.processed_chapters == 3
+    states = await service.repo.list_index_states("user:1", book_id)
+    assert len(states) == 3
+    assert all(state.extraction_payload.get("chapter_id") is not None for state in states)
 
 
 @pytest.mark.asyncio

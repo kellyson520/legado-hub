@@ -147,6 +147,78 @@ async def test_novel_index_worker_marks_book_error_when_analysis_fails():
 
 
 @pytest.mark.asyncio
+async def test_novel_index_worker_discovers_incomplete_book_and_deduplicates_repair_task():
+    from app.domain.entities.novel import NovelBook
+    from app.domain.entities.novel_runtime import NovelAnalysisTask, NovelIndexState
+    from app.tasks.novel_index_worker import NovelIndexWorker
+
+    book = NovelBook(id=7, book_url="https://repair.test", book_name="待修复书", owner_scope="user:1")
+
+    class RuntimeRepo:
+        def __init__(self):
+            self.tasks = []
+
+        def list_tasks(self, owner_scope=None):
+            return [item for item in self.tasks if owner_scope is None or item.owner_scope == owner_scope]
+
+        def save_task(self, value):
+            for index, current in enumerate(self.tasks):
+                if current.id == value.id:
+                    self.tasks[index] = value
+                    return value
+            self.tasks.append(value)
+            return value
+
+    class NovelRepo:
+        def __init__(self):
+            self.states = []
+
+        async def list_books(self, owner_scope, limit=10000):
+            return [book]
+
+        async def count_chapters(self, owner_scope, book_id):
+            return 1
+
+        async def list_index_states(self, owner_scope, book_id):
+            return self.states
+
+        async def update_book_status(self, *args, **kwargs):
+            return True
+
+    runtime = RuntimeRepo()
+    novel_repo = NovelRepo()
+
+    class IndexService:
+        knowledge_version = "v2-local-evidence"
+
+        async def index_book(self, owner_scope, book_id, from_chapter=None):
+            novel_repo.states = [
+                NovelIndexState(
+                    owner_scope=owner_scope,
+                    book_id=book_id,
+                    chapter_id=1,
+                    knowledge_version=self.knowledge_version,
+                    extraction_status="completed",
+                )
+            ]
+            return type(
+                "IndexResult",
+                (),
+                {"processed_chapters": 1, "skipped_chapters": 0, "failed_chapters": 0, "errors": []},
+            )()
+
+    worker = NovelIndexWorker(index_service=IndexService(), runtime_repo=runtime, novel_repo=novel_repo)
+
+    first = await worker.run(limit=1, owner_scope="user:1")
+    second = await worker.run(limit=1, owner_scope="user:1")
+
+    assert first["processed"] == 1
+    assert second["processed"] == 0
+    assert len(runtime.tasks) == 1
+    assert runtime.tasks[0].status == "succeeded"
+
+
+@pytest.mark.asyncio
 async def test_novel_index_loop_logs_failures_instead_of_silently_dropping_them(monkeypatch):
     from app import main
 

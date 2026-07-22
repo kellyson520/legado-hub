@@ -116,6 +116,16 @@ async def migrate_novel_database(db: Any) -> int:
                PRIMARY KEY(owner_scope, scope_type, scope_id, task_type)
            );"""
     )
+    for table, column, definition in (
+        ("novel_index_states", "extraction_payload", "TEXT NOT NULL DEFAULT '{}'"),
+        ("novel_relationships", "evidence", "TEXT NOT NULL DEFAULT '[]'"),
+        ("novel_events", "evidence", "TEXT NOT NULL DEFAULT '[]'"),
+        ("novel_state_changes", "evidence", "TEXT NOT NULL DEFAULT '[]'"),
+    ):
+        async with db.execute(f"PRAGMA table_info({table})") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        if columns and column not in columns:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
     async with db.execute("PRAGMA table_info(novel_reading_progress)") as cursor:
         progress_columns = {row[1] for row in await cursor.fetchall()}
     if progress_columns:

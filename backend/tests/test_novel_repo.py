@@ -14,6 +14,7 @@ from app.domain.entities.novel import (
     NovelBook, NovelChapter, NovelEntity, NovelRelationship, NovelEvent, NovelStateChange,
     NovelStatus, EntityType, EventType, StateField, RelationType,
 )
+from app.domain.entities.novel_runtime import NovelIndexState
 
 
 class TestNovelRepositoryInterface:
@@ -229,3 +230,28 @@ class TestSqliteNovelRepository:
         updated = await repo.get_book_by_id("user:1", book.id)
         assert updated.character_count == 0
         assert updated.entity_count == 1
+
+    async def test_index_snapshot_payload_round_trips_and_lists_by_book(self, repo):
+        book = await repo.save_book(
+            "user:1",
+            NovelBook(book_url="https://index-state.test", book_name="索引书", owner_scope="user:1"),
+        )
+        state = NovelIndexState(
+            owner_scope="user:1",
+            book_id=book.id,
+            chapter_id=0,
+            content_hash="hash-0",
+            knowledge_version="v2-local-evidence",
+            extraction_status="completed",
+            extraction_payload={"entities": [{"name": "江轩"}], "relationships": []},
+        )
+
+        await repo.save_index_state(state)
+
+        fetched = await repo.get_index_state("user:1", book.id, chapter_id=0)
+        assert fetched is not None
+        assert fetched.extraction_payload == state.extraction_payload
+        states = await repo.list_index_states("user:1", book.id)
+        assert len(states) == 1
+        assert states[0].chapter_id == 0
+        assert await repo.list_index_states("user:2", book.id) == []

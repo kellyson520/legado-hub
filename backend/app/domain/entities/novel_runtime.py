@@ -49,6 +49,7 @@ class NovelIndexState:
     vector_status: str = "disabled"
     embedding_model: str = ""
     embedding_dimension: int = 0
+    extraction_payload: dict[str, Any] = field(default_factory=dict)
     last_success_at: datetime | None = None
     failure_reason: str = ""
     updated_at: datetime = field(default_factory=utcnow)

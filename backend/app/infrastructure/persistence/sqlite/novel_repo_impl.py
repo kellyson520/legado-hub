@@ -8,7 +8,7 @@ by the original novel importer are still accepted and are treated as the
 from __future__ import annotations
 
 import json
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from app.domain.entities.novel import (
     ChapterFingerprint,
@@ -602,8 +602,8 @@ class SqliteNovelRepository(NovelRepository):
         cursor = await self._db.execute(
             """INSERT INTO novel_relationships (
                 book_id, source_entity, target_entity, relation_type, description,
-                since_chapter, until_chapter, confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                since_chapter, until_chapter, confidence, evidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 rel.book_id,
                 rel.source_entity,
@@ -613,6 +613,7 @@ class SqliteNovelRepository(NovelRepository):
                 rel.since_chapter,
                 rel.until_chapter,
                 rel.confidence,
+                json.dumps(rel.evidence, ensure_ascii=False),
             ),
         )
         await self._db.commit()
@@ -671,8 +672,8 @@ class SqliteNovelRepository(NovelRepository):
         cursor = await self._db.execute(
             """INSERT INTO novel_events (
                 book_id, chapter_id, chapter_num, event_type, description,
-                participants, location, importance, related_entities
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                participants, location, importance, related_entities, evidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 event.book_id,
                 event.chapter_id,
@@ -683,6 +684,7 @@ class SqliteNovelRepository(NovelRepository):
                 event.location,
                 event.importance,
                 json.dumps(event.related_entities, ensure_ascii=False),
+                json.dumps(event.evidence, ensure_ascii=False),
             ),
         )
         await self._db.commit()
@@ -735,8 +737,8 @@ class SqliteNovelRepository(NovelRepository):
         cursor = await self._db.execute(
             """INSERT INTO novel_state_changes (
                 book_id, entity_name, chapter_id, chapter_num, field_name,
-                before_value, after_value, trigger_event, confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                before_value, after_value, trigger_event, confidence, evidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 sc.book_id,
                 sc.entity_name,
@@ -747,6 +749,7 @@ class SqliteNovelRepository(NovelRepository):
                 sc.after_value,
                 sc.trigger_event,
                 sc.confidence,
+                json.dumps(sc.evidence, ensure_ascii=False),
             ),
         )
         await self._db.commit()
@@ -809,6 +812,7 @@ class SqliteNovelRepository(NovelRepository):
             state.vector_status,
             state.embedding_model,
             state.embedding_dimension,
+            json.dumps(state.extraction_payload, ensure_ascii=False, default=_json_default),
             state.last_success_at,
             state.failure_reason,
         )
@@ -816,7 +820,7 @@ class SqliteNovelRepository(NovelRepository):
             await self._db.execute(
                 """UPDATE novel_index_states SET content_hash=?, knowledge_version=?,
                    extraction_status=?, bm25_status=?, vector_status=?, embedding_model=?,
-                   embedding_dimension=?, last_success_at=?, failure_reason=?,
+                   embedding_dimension=?, extraction_payload=?, last_success_at=?, failure_reason=?,
                    updated_at=CURRENT_TIMESTAMP WHERE id=?""",
                 values[3:] + (existing[0],),
             )
@@ -826,8 +830,8 @@ class SqliteNovelRepository(NovelRepository):
                 """INSERT INTO novel_index_states (
                    owner_scope, book_id, chapter_id, content_hash, knowledge_version,
                    extraction_status, bm25_status, vector_status, embedding_model,
-                   embedding_dimension, last_success_at, failure_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   embedding_dimension, extraction_payload, last_success_at, failure_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 values,
             )
             state_id = cursor.lastrowid
@@ -841,7 +845,7 @@ class SqliteNovelRepository(NovelRepository):
         async with self._db.execute(
             """SELECT owner_scope, book_id, chapter_id, content_hash, knowledge_version,
                extraction_status, bm25_status, vector_status, embedding_model,
-               embedding_dimension, last_success_at, failure_reason, updated_at
+               embedding_dimension, extraction_payload, last_success_at, failure_reason, updated_at
                FROM novel_index_states WHERE owner_scope=? AND book_id=?
                AND ((chapter_id=? ) OR (chapter_id IS NULL AND ? IS NULL))""",
             (_scope(owner_scope), book_id, chapter_id, chapter_id),
@@ -849,21 +853,349 @@ class SqliteNovelRepository(NovelRepository):
             row = await cursor.fetchone()
         if not row:
             return None
-        return NovelIndexState(
-            owner_scope=row[0],
-            book_id=row[1],
-            chapter_id=row[2],
-            content_hash=row[3],
-            knowledge_version=row[4],
-            extraction_status=row[5],
-            bm25_status=row[6],
-            vector_status=row[7],
-            embedding_model=row[8],
-            embedding_dimension=row[9],
-            last_success_at=row[10],
-            failure_reason=row[11],
-            updated_at=row[12],
+        return self._row_to_index_state(row)
+
+    async def list_index_states(self, owner_scope: str, book_id: int) -> List[NovelIndexState]:
+        """Return every checkpoint for a book in stable chapter order."""
+        async with self._db.execute(
+            """SELECT owner_scope, book_id, chapter_id, content_hash, knowledge_version,
+               extraction_status, bm25_status, vector_status, embedding_model,
+               embedding_dimension, extraction_payload, last_success_at,
+               failure_reason, updated_at
+               FROM novel_index_states
+               WHERE owner_scope=? AND book_id=?
+               ORDER BY chapter_id IS NOT NULL, chapter_id, id""",
+            (_scope(owner_scope), int(book_id)),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [self._row_to_index_state(row) for row in rows]
+
+    async def replace_book_knowledge(
+        self,
+        owner_scope: str,
+        book_id: int,
+        snapshots: List[dict[str, Any]],
+    ) -> dict[str, int]:
+        """Replace the deterministic knowledge projection from chapter snapshots.
+
+        Chapter extraction is intentionally stored separately in
+        ``novel_index_states``.  This method rebuilds the graph projection in
+        one SQLite transaction, so a retry cannot leave old chapter facts
+        mixed with new ones or inflate book statistics.
+        """
+        scope = _scope(owner_scope)
+        book_id = int(book_id)
+        await self._require_book(scope, book_id)
+
+        entities: dict[str, dict[str, Any]] = {}
+        relationships: dict[tuple, dict[str, Any]] = {}
+        events: dict[tuple, dict[str, Any]] = {}
+        state_changes: dict[tuple, dict[str, Any]] = {}
+
+        for snapshot in snapshots or []:
+            if not isinstance(snapshot, dict):
+                continue
+            snapshot_chapter_id = _int_or_zero(snapshot.get("chapter_id"))
+            snapshot_chapter_num = _int_or_zero(
+                snapshot.get("chapter_num", snapshot.get("canonical_num", snapshot_chapter_id))
+            )
+
+            for raw_entity in snapshot.get("entities") or []:
+                data = _mapping(raw_entity)
+                name = str(data.get("name") or "").strip()
+                if not name:
+                    continue
+                entity_type = _enum_value(data.get("entity_type"), EntityType.CHARACTER.value)
+                attributes = dict(data.get("attributes") or {})
+                evidence = _list_of_dicts(data.get("evidence") or attributes.get("evidence"))
+                if evidence:
+                    attributes["evidence"] = evidence
+                key = name.casefold()
+                current = entities.get(key)
+                if current is None:
+                    entities[key] = {
+                        "name": name,
+                        "aliases": set(_string_list(data.get("aliases"))),
+                        "entity_type": entity_type,
+                        "description": str(data.get("description") or ""),
+                        "first_appearance_ch": _int_or_default(
+                            data.get("first_appearance_ch"), snapshot_chapter_num
+                        ),
+                        "last_appearance_ch": _int_or_default(
+                            data.get("last_appearance_ch"), snapshot_chapter_num
+                        ),
+                        "appearance_count": max(
+                            0,
+                            _int_or_zero(
+                                data.get("appearance_count", data.get("mentions", data.get("mention_count", 0)))
+                            ),
+                        ),
+                        "importance_score": max(1, min(5, _int_or_default(data.get("importance_score"), 3))),
+                        "attributes": attributes,
+                    }
+                    continue
+                current["aliases"].update(_string_list(data.get("aliases")))
+                description = str(data.get("description") or "")
+                if len(description) > len(current["description"]):
+                    current["description"] = description
+                current["entity_type"] = current["entity_type"] or entity_type
+                current["first_appearance_ch"] = min(
+                    current["first_appearance_ch"],
+                    _int_or_default(data.get("first_appearance_ch"), snapshot_chapter_num),
+                )
+                current["last_appearance_ch"] = max(
+                    current["last_appearance_ch"],
+                    _int_or_default(data.get("last_appearance_ch"), snapshot_chapter_num),
+                )
+                current["appearance_count"] += max(
+                    0,
+                    _int_or_zero(
+                        data.get("appearance_count", data.get("mentions", data.get("mention_count", 0)))
+                    ),
+                )
+                current["importance_score"] = max(
+                    current["importance_score"],
+                    max(1, min(5, _int_or_default(data.get("importance_score"), 3))),
+                )
+                current["attributes"].update(attributes)
+
+            for raw_relationship in snapshot.get("relationships") or []:
+                data = _mapping(raw_relationship)
+                source = str(data.get("source_entity") or data.get("source") or "").strip()
+                target = str(data.get("target_entity") or data.get("target") or "").strip()
+                if not source or not target:
+                    continue
+                relation_type = _enum_value(data.get("relation_type"), RelationType.CUSTOM.value)
+                description = str(data.get("description") or "")
+                since_chapter = _int_or_default(data.get("since_chapter"), snapshot_chapter_num)
+                key = (source.casefold(), target.casefold(), relation_type, description.casefold())
+                current = relationships.get(key)
+                if current is None:
+                    relationships[key] = {
+                        "source_entity": source,
+                        "target_entity": target,
+                        "relation_type": relation_type,
+                        "description": description,
+                        "since_chapter": since_chapter,
+                        "until_chapter": data.get("until_chapter"),
+                        "confidence": _bounded_confidence(data.get("confidence"), 0.8),
+                        "evidence": _list_of_dicts(data.get("evidence")),
+                    }
+                else:
+                    current["since_chapter"] = min(current["since_chapter"], since_chapter)
+                    current["confidence"] = max(
+                        current["confidence"], _bounded_confidence(data.get("confidence"), 0.8)
+                    )
+                    current["evidence"] = _merge_json_items(current["evidence"], _list_of_dicts(data.get("evidence")))
+
+            for raw_event in snapshot.get("events") or []:
+                data = _mapping(raw_event)
+                chapter_id = _int_or_default(data.get("chapter_id"), snapshot_chapter_id)
+                chapter_num = _int_or_default(data.get("chapter_num"), snapshot_chapter_num)
+                event_type = _enum_value(data.get("event_type"), EventType.CUSTOM.value)
+                description = str(data.get("description") or "")
+                participants = _string_list(data.get("participants"))
+                key = (
+                    chapter_id,
+                    chapter_num,
+                    event_type,
+                    description.casefold(),
+                    tuple(sorted(item.casefold() for item in participants)),
+                )
+                current = events.get(key)
+                if current is None:
+                    events[key] = {
+                        "chapter_id": chapter_id,
+                        "chapter_num": chapter_num,
+                        "event_type": event_type,
+                        "description": description,
+                        "participants": participants,
+                        "location": str(data.get("location") or ""),
+                        "importance": max(1, min(5, _int_or_default(data.get("importance"), 3))),
+                        "related_entities": _string_list(data.get("related_entities")) or participants,
+                        "evidence": _list_of_dicts(data.get("evidence")),
+                    }
+                else:
+                    current["importance"] = max(
+                        current["importance"], max(1, min(5, _int_or_default(data.get("importance"), 3)))
+                    )
+                    current["participants"] = _merge_strings(current["participants"], participants)
+                    current["related_entities"] = _merge_strings(
+                        current["related_entities"], _string_list(data.get("related_entities"))
+                    )
+                    current["evidence"] = _merge_json_items(current["evidence"], _list_of_dicts(data.get("evidence")))
+
+            for raw_state in snapshot.get("state_changes") or snapshot.get("states") or []:
+                data = _mapping(raw_state)
+                entity_name = str(data.get("entity_name") or "").strip()
+                if not entity_name:
+                    continue
+                chapter_id = _int_or_default(data.get("chapter_id"), snapshot_chapter_id)
+                chapter_num = _int_or_default(data.get("chapter_num"), snapshot_chapter_num)
+                field_name = _enum_value(data.get("field_name"), StateField.CUSTOM.value)
+                before_value = str(data.get("before_value") or "")
+                after_value = str(data.get("after_value") or "")
+                trigger_event = str(data.get("trigger_event") or "")
+                key = (
+                    entity_name.casefold(),
+                    chapter_id,
+                    chapter_num,
+                    field_name,
+                    before_value,
+                    after_value,
+                    trigger_event,
+                )
+                current = state_changes.get(key)
+                if current is None:
+                    state_changes[key] = {
+                        "entity_name": entity_name,
+                        "chapter_id": chapter_id,
+                        "chapter_num": chapter_num,
+                        "field_name": field_name,
+                        "before_value": before_value,
+                        "after_value": after_value,
+                        "trigger_event": trigger_event,
+                        "confidence": _bounded_confidence(data.get("confidence"), 0.8),
+                        "evidence": _list_of_dicts(data.get("evidence")),
+                    }
+                else:
+                    current["confidence"] = max(
+                        current["confidence"], _bounded_confidence(data.get("confidence"), 0.8)
+                    )
+                    current["evidence"] = _merge_json_items(current["evidence"], _list_of_dicts(data.get("evidence")))
+
+        counts = {
+            "character_count": sum(1 for item in entities.values() if item["entity_type"] == EntityType.CHARACTER.value),
+            "entity_count": len(entities),
+            "event_count": len(events),
+            "relationship_count": len(relationships),
+        }
+
+        try:
+            await self._db.execute("BEGIN")
+            # These tables are the materialized extraction projection.  The
+            # chapter snapshots remain the source of truth for rebuilding it.
+            for table in (
+                "novel_entities",
+                "novel_relationships",
+                "novel_events",
+                "novel_state_changes",
+            ):
+                await self._db.execute(f"DELETE FROM {table} WHERE book_id=?", (book_id,))
+
+            for item in entities.values():
+                await self._db.execute(
+                    """INSERT INTO novel_entities (
+                       book_id, name, aliases, entity_type, description,
+                       first_appearance_ch, last_appearance_ch, appearance_count,
+                       importance_score, attributes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        book_id,
+                        item["name"],
+                        json.dumps(sorted(item["aliases"]), ensure_ascii=False),
+                        item["entity_type"],
+                        item["description"],
+                        item["first_appearance_ch"],
+                        item["last_appearance_ch"],
+                        item["appearance_count"],
+                        item["importance_score"],
+                        json.dumps(item["attributes"], ensure_ascii=False, default=_json_default),
+                    ),
+                )
+            for item in relationships.values():
+                await self._db.execute(
+                    """INSERT INTO novel_relationships (
+                       book_id, source_entity, target_entity, relation_type, description,
+                       since_chapter, until_chapter, confidence, evidence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        book_id,
+                        item["source_entity"],
+                        item["target_entity"],
+                        item["relation_type"],
+                        item["description"],
+                        item["since_chapter"],
+                        item["until_chapter"],
+                        item["confidence"],
+                        json.dumps(item["evidence"], ensure_ascii=False, default=_json_default),
+                    ),
+                )
+            for item in events.values():
+                await self._db.execute(
+                    """INSERT INTO novel_events (
+                       book_id, chapter_id, chapter_num, event_type, description,
+                       participants, location, importance, related_entities, evidence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        book_id,
+                        item["chapter_id"],
+                        item["chapter_num"],
+                        item["event_type"],
+                        item["description"],
+                        json.dumps(item["participants"], ensure_ascii=False),
+                        item["location"],
+                        item["importance"],
+                        json.dumps(item["related_entities"], ensure_ascii=False),
+                        json.dumps(item["evidence"], ensure_ascii=False, default=_json_default),
+                    ),
+                )
+            for item in state_changes.values():
+                await self._db.execute(
+                    """INSERT INTO novel_state_changes (
+                       book_id, entity_name, chapter_id, chapter_num, field_name,
+                       before_value, after_value, trigger_event, confidence, evidence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        book_id,
+                        item["entity_name"],
+                        item["chapter_id"],
+                        item["chapter_num"],
+                        item["field_name"],
+                        item["before_value"],
+                        item["after_value"],
+                        item["trigger_event"],
+                        item["confidence"],
+                        json.dumps(item["evidence"], ensure_ascii=False, default=_json_default),
+                    ),
+                )
+            await self._db.execute(
+                """UPDATE novels SET character_count=?, entity_count=?, event_count=?,
+                   relationship_count=?, updated_at=CURRENT_TIMESTAMP
+                   WHERE owner_scope=? AND id=?""",
+                (
+                    counts["character_count"],
+                    counts["entity_count"],
+                    counts["event_count"],
+                    counts["relationship_count"],
+                    scope,
+                    book_id,
+                ),
+            )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
+        return counts
+
+    async def update_book_statistics(self, owner_scope: str, book_id: int, counts: dict[str, int]) -> bool:
+        await self._require_book(owner_scope, int(book_id))
+        allowed = {
+            "character_count",
+            "entity_count",
+            "event_count",
+            "relationship_count",
+        }
+        values = {key: max(0, int(value)) for key, value in counts.items() if key in allowed}
+        if not values:
+            return False
+        fields = ", ".join(f"{key}=?" for key in values)
+        cursor = await self._db.execute(
+            f"UPDATE novels SET {fields}, updated_at=CURRENT_TIMESTAMP WHERE owner_scope=? AND id=?",
+            (*values.values(), _scope(owner_scope), int(book_id)),
         )
+        await self._db.commit()
+        return cursor.rowcount > 0
 
     async def save_reading_progress(self, progress: NovelReadingProgress) -> NovelReadingProgress:
         await self._require_book(progress.owner_scope, progress.book_id)
@@ -926,6 +1258,25 @@ class SqliteNovelRepository(NovelRepository):
         )
 
     # --- Row converters --------------------------------------------------
+    @staticmethod
+    def _row_to_index_state(row) -> NovelIndexState:
+        return NovelIndexState(
+            owner_scope=row[0],
+            book_id=row[1],
+            chapter_id=row[2],
+            content_hash=row[3],
+            knowledge_version=row[4],
+            extraction_status=row[5],
+            bm25_status=row[6],
+            vector_status=row[7],
+            embedding_model=row[8],
+            embedding_dimension=row[9],
+            extraction_payload=_json_dict(row[10]),
+            last_success_at=row[11],
+            failure_reason=row[12],
+            updated_at=row[13],
+        )
+
     def _row_to_book(self, row) -> NovelBook:
         owner_scope = row[18] if len(row) >= 19 else LEGACY_SCOPE
         return NovelBook(
@@ -1004,7 +1355,8 @@ class SqliteNovelRepository(NovelRepository):
             since_chapter=row[6],
             until_chapter=row[7],
             confidence=row[8],
-            created_at=row[9],
+            evidence=_json_list_of_dicts(row[9]),
+            created_at=row[10],
         )
 
     def _row_to_event(self, row) -> NovelEvent:
@@ -1019,7 +1371,8 @@ class SqliteNovelRepository(NovelRepository):
             location=row[7],
             importance=row[8],
             related_entities=_json_list(row[9]),
-            created_at=row[10],
+            evidence=_json_list_of_dicts(row[10]),
+            created_at=row[11],
         )
 
     def _row_to_state_change(self, row) -> NovelStateChange:
@@ -1034,7 +1387,8 @@ class SqliteNovelRepository(NovelRepository):
             after_value=row[7],
             trigger_event=row[8],
             confidence=row[9],
-            created_at=row[10],
+            evidence=_json_list_of_dicts(row[10]),
+            created_at=row[11],
         )
 
 
@@ -1056,6 +1410,88 @@ def _json_dict(value) -> dict:
     except (TypeError, json.JSONDecodeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list_of_dicts(value) -> list[dict[str, Any]]:
+    return [item for item in _json_list(value) if isinstance(item, dict)]
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        return dict(vars(value))
+    except TypeError:
+        return {}
+
+
+def _enum_value(value: Any, default: str) -> str:
+    if value is None:
+        return default
+    return str(getattr(value, "value", value))
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    if value is None or value == "":
+        return int(default)
+    return _int_or_zero(value)
+
+
+def _bounded_confidence(value: Any, default: float) -> float:
+    try:
+        number = float(default if value is None or value == "" else value)
+    except (TypeError, ValueError):
+        number = default
+    return max(0.0, min(1.0, number))
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _merge_strings(first: list[str], second: list[str]) -> list[str]:
+    result = list(first)
+    seen = {item.casefold() for item in result}
+    for item in second:
+        if item.casefold() not in seen:
+            result.append(item)
+            seen.add(item.casefold())
+    return result
+
+
+def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in value:
+        mapped = _mapping(item)
+        if mapped:
+            result.append(mapped)
+    return result
+
+
+def _merge_json_items(first: list[dict[str, Any]], second: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result = list(first)
+    seen = {json.dumps(item, ensure_ascii=False, sort_keys=True, default=_json_default) for item in result}
+    for item in second:
+        marker = json.dumps(item, ensure_ascii=False, sort_keys=True, default=_json_default)
+        if marker not in seen:
+            result.append(item)
+            seen.add(marker)
+    return result
+
+
+def _json_default(value: Any) -> Any:
+    return getattr(value, "value", str(value))
 
 
 def _hash_text(value: str) -> str:
