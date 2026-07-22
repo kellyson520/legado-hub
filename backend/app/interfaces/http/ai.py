@@ -6,7 +6,11 @@ from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
 from app.core.response import from_paginated_result, ok
-from app.infrastructure.persistence.factory import build_ai_service, build_ai_workspace_service
+from app.infrastructure.persistence.factory import (
+    build_ai_service,
+    build_ai_workspace_service,
+    build_scoped_novel_agent_app_service,
+)
 from app.infrastructure.persistence.factory import build_system_settings_service
 from app.interfaces.http.deps import owner_scope_for, require_permission, require_principal_permission
 
@@ -139,7 +143,13 @@ async def send_conversation_message(
     identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
     actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
-    data = await build_ai_workspace_service().send_message(
+    if payload.book_id is None:
+        workspace = build_ai_workspace_service()
+    else:
+        workspace = build_ai_workspace_service(
+            novel_agent_app=await build_scoped_novel_agent_app_service(),
+        )
+    data = await workspace.send_message(
         conversation_id=conversation_id,
         actor_id=actor_id,
         mode=payload.mode,

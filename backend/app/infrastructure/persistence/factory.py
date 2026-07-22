@@ -52,6 +52,7 @@ from app.application.services.translation_service import TranslationService
 from app.application.services.work_knowledge_service import WorkKnowledgeService
 from app.application.services.work_ingestion_service import WorkIngestionService
 from app.application.services.novel_analysis_tool_executor import NovelAnalysisToolExecutor
+from app.application.services.novel_understanding.retriever import RAGRetriever
 from app.core.config import settings
 from app.infrastructure.cache.memory_cache import MemoryCacheProvider
 from app.infrastructure.browser.playwright_driver import PlaywrightBrowserDriver
@@ -632,7 +633,7 @@ def build_ai_service() -> AIService:
     )
 
 
-def build_ai_workspace_service() -> AIWorkspaceService:
+def build_ai_workspace_service(*, novel_agent_app=None) -> AIWorkspaceService:
     ensure_sqlite_bootstrap()
     authorization = AIConversationAuthorizationService(
         repo=build_ai_authorization_repository(),
@@ -648,6 +649,7 @@ def build_ai_workspace_service() -> AIWorkspaceService:
         novel_tool_executor=build_novel_analysis_tool_executor(),
         source_joint_test_executor=build_source_joint_test_tool_executor(),
         authorization_service=authorization,
+        novel_agent_app=novel_agent_app,
     )
 
 
@@ -729,3 +731,15 @@ def build_novel_agent_app_service(
         tool_registry=tool_registry,
         enabled_tool_categories=enabled_tool_categories,
     )
+
+
+async def build_scoped_novel_agent_app_service() -> NovelAgentAppService:
+    """Build the novel assistant with the shared owner-scoped novel context."""
+    repo = await build_novel_repository()
+    novel_settings = build_system_settings_service().get_novel_settings()
+    retriever = RAGRetriever(
+        repo,
+        vector_store=build_vector_store(),
+        similarity_threshold=float(novel_settings.get("threshold", 0.0) or 0.0),
+    )
+    return build_novel_agent_app_service(novel_repo=repo, retriever=retriever)

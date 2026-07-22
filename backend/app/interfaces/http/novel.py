@@ -10,16 +10,13 @@ from app.core.permissions import Permission
 from app.core.response import from_paginated_result, ok
 from app.application.services.novel_ingestion_service import NovelIngestionService
 from app.infrastructure.persistence.factory import (
-    build_novel_agent_app_service as _build_novel_agent_app_service,
     build_novel_agent_service,
     build_novel_repository,
     build_novel_runtime_repository,
     build_source_read_service,
-    build_system_settings_service,
-    build_vector_store,
+    build_scoped_novel_agent_app_service,
 )
 from app.infrastructure.novel_ingestion.url_security import NovelUrlPolicy
-from app.application.services.novel_understanding.retriever import RAGRetriever
 from app.interfaces.http.deps import (
     owner_scope_for,
     require_principal_permission,
@@ -83,14 +80,7 @@ async def get_novel_ingestion_service():
 
 
 async def get_novel_agent_app_service():
-    repo = await get_scoped_novel_repository()
-    novel_settings = build_system_settings_service().get_novel_settings()
-    retriever = RAGRetriever(
-        repo,
-        vector_store=build_vector_store(),
-        similarity_threshold=float(novel_settings.get("threshold", 0.0) or 0.0),
-    )
-    return _build_novel_agent_app_service(novel_repo=repo, retriever=retriever)
+    return await build_scoped_novel_agent_app_service()
 
 
 def _serialize(value):
