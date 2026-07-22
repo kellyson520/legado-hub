@@ -62,6 +62,125 @@ class NovelRepository:
             return {"chapter_id": 2, "percent": 0.42, "offset_chars": 12}
         return None
 
+    async def get_entity_by_name(self, owner_scope, book_id, name):
+        if owner_scope != "user:1" or book_id != 7 or name not in {"林远", "玄天剑"}:
+            return None
+        return type(
+            "Entity",
+            (),
+            {
+                "id": 11 if name == "林远" else 12,
+                "book_id": book_id,
+                "name": name,
+                "aliases": ["林兄"] if name == "林远" else [],
+                "entity_type": "character" if name == "林远" else "item",
+                "description": "主角" if name == "林远" else "佩剑",
+                "first_appearance_ch": 1,
+                "last_appearance_ch": 2,
+                "appearance_count": 3,
+                "attributes": {
+                    "confidence": 0.92,
+                    "evidence": [{"chapter_id": 2, "chapter_num": 2, "text": f"第2章提到{name}"}],
+                },
+            },
+        )()
+
+    async def search_entities(self, owner_scope, book_id, keyword, entity_type=None, limit=20):
+        entity = await self.get_entity_by_name(owner_scope, book_id, "林远")
+        return [entity] if entity and keyword in entity.name else []
+
+    async def list_entities(self, owner_scope, book_id, entity_type=None, limit=50, offset=0):
+        entities = [
+            await self.get_entity_by_name(owner_scope, book_id, "林远"),
+            await self.get_entity_by_name(owner_scope, book_id, "玄天剑"),
+        ]
+        return [entity for entity in entities if entity is not None][:limit]
+
+    async def count_entities(self, owner_scope, book_id, entity_type=None):
+        return 2
+
+    async def count_chapters(self, owner_scope, book_id):
+        return 2
+
+    async def get_relationships_by_entity(self, owner_scope, book_id, entity_name, limit=50):
+        if owner_scope != "user:1" or entity_name != "林远":
+            return []
+        return [
+            type(
+                "Relation",
+                (),
+                {
+                    "source_entity": "林远",
+                    "target_entity": "周宁",
+                    "relation_type": "ally",
+                    "description": "并肩作战",
+                    "since_chapter": 2,
+                    "confidence": 0.9,
+                    "evidence": [{"chapter_id": 2, "chapter_num": 2, "text": "林远与周宁并肩作战"}],
+                },
+            )()
+        ]
+
+    async def get_events(self, owner_scope, book_id, chapter_num=None, event_type=None, min_importance=1, limit=50):
+        return [
+            type(
+                "Event",
+                (),
+                {
+                    "id": 21,
+                    "book_id": book_id,
+                    "chapter_id": 2,
+                    "chapter_num": 2,
+                    "event_type": "battle",
+                    "description": "城门冲突",
+                    "participants": ["林远", "周宁"],
+                    "importance": 4,
+                    "evidence": [{"chapter_id": 2, "chapter_num": 2, "text": "城门冲突"}],
+                },
+            )()
+        ][:limit]
+
+    async def get_state_changes(self, owner_scope, book_id, entity_name=None, field_name=None, limit=50):
+        if entity_name != "玄天剑":
+            return []
+        return [
+            type(
+                "State",
+                (),
+                {
+                    "entity_name": "玄天剑",
+                    "chapter_id": 2,
+                    "chapter_num": 2,
+                    "field_name": "possession",
+                    "before_value": "",
+                    "after_value": "林远",
+                    "confidence": 0.88,
+                    "evidence": [{"chapter_id": 2, "chapter_num": 2, "text": "林远获得玄天剑"}],
+                },
+            )()
+        ][:limit]
+
+    async def get_chapters_by_book(self, owner_scope, book_id, start_num=0, end_num=None, limit=100, offset=0):
+        return [Chapter(id=2)]
+
+    async def list_index_states(self, owner_scope, book_id):
+        return [
+            type(
+                "IndexState",
+                (),
+                {
+                    "chapter_id": 2,
+                    "content_hash": "hash",
+                    "knowledge_version": "v1",
+                    "extraction_status": "completed",
+                    "bm25_status": "completed",
+                    "vector_status": "disabled",
+                    "failure_reason": "",
+                    "updated_at": "2026-07-22T00:00:00+00:00",
+                },
+            )()
+        ]
+
 
 class Platform:
     def __init__(self):
@@ -155,6 +274,21 @@ async def test_same_conversation_continues_from_workspace_book_page_and_reader(s
 
 
 @pytest.mark.asyncio
+async def test_novel_agent_uses_bounded_recent_message_query(service):
+    conversation = await service.create_conversation("user:1", title="最近消息")
+    recent_calls = []
+
+    def list_recent_messages(conversation_id, owner_scope=None, limit=12):
+        recent_calls.append((conversation_id, owner_scope, limit))
+        return service._conversations.messages[conversation_id][-limit:]
+
+    service._conversations.list_recent_messages = list_recent_messages
+    await service.send_message("user:1", conversation["id"], "测试最近消息", entrypoint="workspace")
+
+    assert recent_calls == [(conversation["id"], "user:1", 12)]
+
+
+@pytest.mark.asyncio
 async def test_reader_conversation_reuses_its_initial_chapter_when_message_omits_it(service):
     conversation = await service.create_conversation(
         "user:1", book_id=7, chapter_id=2, entrypoint="reader"
@@ -227,6 +361,97 @@ async def test_read_tool_is_scoped_and_runtime_records_accepted_result(service):
     assert result["category"] == "read"
     assert result["result"]["percent"] == 0.42
     assert service._agent_runtime.history[-1]["status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_novel_read_tools_expose_evidence_and_knowledge_version(service):
+    expected = {
+        "novel.search_memory",
+        "novel.get_entity_profile",
+        "novel.get_mentions",
+        "novel.get_relations",
+        "novel.timeline",
+        "novel.get_item_state",
+        "novel.compare_entities",
+        "novel.get_chapter_evidence",
+        "novel.index_status",
+    }
+    tools = await service.list_tools("user:1", 7)
+    assert expected <= {item["name"] for item in tools}
+
+    profile = await service.call_tool("user:1", "novel.get_entity_profile", {"book_id": 7, "name": "林远"}, book_id=7)
+    mentions = await service.call_tool("user:1", "novel.get_mentions", {"book_id": 7, "name": "林远"}, book_id=7)
+    relations = await service.call_tool("user:1", "novel.get_relations", {"book_id": 7, "name": "林远"}, book_id=7)
+    timeline = await service.call_tool("user:1", "novel.timeline", {"book_id": 7}, book_id=7)
+    item_state = await service.call_tool("user:1", "novel.get_item_state", {"book_id": 7, "name": "玄天剑"}, book_id=7)
+    comparison = await service.call_tool("user:1", "novel.compare_entities", {"book_id": 7, "left": "林远", "right": "玄天剑"}, book_id=7)
+    evidence = await service.call_tool("user:1", "novel.get_chapter_evidence", {"book_id": 7, "chapter_id": 2}, book_id=7, chapter_id=2)
+    status = await service.call_tool("user:1", "novel.index_status", {"book_id": 7}, book_id=7)
+
+    assert profile["result"]["knowledge_version"] == service.knowledge_version
+    assert profile["result"]["evidence"]
+    assert mentions["result"][0]["chapter_id"] == 2
+    assert relations["result"][0]["evidence"]
+    assert timeline["result"][0]["chapter_num"] == 2
+    assert item_state["result"][0]["evidence"]
+    assert comparison["result"]["left"]["name"] == "林远"
+    assert evidence["result"]["chapter_id"] == 2
+    assert status["result"]["states"][0]["knowledge_version"] == "v1"
+
+
+@pytest.mark.asyncio
+async def test_novel_search_memory_passes_shared_version_and_requested_limit(service):
+    class VersionedRetriever:
+        def __init__(self):
+            self.calls = []
+
+        async def retrieve(self, owner_scope, book_id, query, *, top_k, knowledge_version):
+            self.calls.append((owner_scope, book_id, query, top_k, knowledge_version))
+            return []
+
+    retriever = VersionedRetriever()
+    service._retriever = retriever
+
+    result = await service.call_tool(
+        "user:1",
+        "novel.search_memory",
+        {"book_id": 7, "query": "玄天剑", "top_k": 9},
+        book_id=7,
+    )
+
+    assert result["result"] == []
+    assert retriever.calls == [("user:1", 7, "玄天剑", 9, service.knowledge_version)]
+
+
+@pytest.mark.asyncio
+async def test_novel_timeline_is_chronological_and_relation_limit_is_forwarded(service):
+    async def events(_owner_scope, _book_id, chapter_num=None, event_type=None, min_importance=1, limit=50):
+        del chapter_num, event_type, min_importance
+        values = [
+            type("Event", (), {"id": 3, "chapter_id": 3, "chapter_num": 3, "event_type": "battle", "description": "后续", "participants": [], "evidence": []})(),
+            type("Event", (), {"id": 1, "chapter_id": 1, "chapter_num": 1, "event_type": "battle", "description": "开端", "participants": [], "evidence": []})(),
+        ]
+        return values[:limit]
+
+    relation_calls = []
+
+    async def relations(_owner_scope, _book_id, entity_name, limit=50):
+        relation_calls.append(limit)
+        return []
+
+    service._novel_repo.get_events = events
+    service._novel_repo.get_relationships_by_entity = relations
+
+    timeline = await service.call_tool("user:1", "novel.timeline", {"book_id": 7}, book_id=7)
+    await service.call_tool(
+        "user:1",
+        "novel.get_relations",
+        {"book_id": 7, "name": "林远", "limit": 1},
+        book_id=7,
+    )
+
+    assert timeline["result"][0]["chapter_num"] == 1
+    assert relation_calls == [1]
 
 
 @pytest.mark.asyncio

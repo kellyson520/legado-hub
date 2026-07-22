@@ -92,6 +92,55 @@ async def migrate_novel_database(db: Any) -> int:
            );
            CREATE INDEX IF NOT EXISTS idx_novel_index_states_owner_book
                ON novel_index_states(owner_scope, book_id, chapter_id);
+           CREATE TABLE IF NOT EXISTS novel_adjudication_candidates (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               owner_scope TEXT NOT NULL,
+               book_id INTEGER NOT NULL,
+               chapter_id INTEGER,
+               candidate_key TEXT NOT NULL,
+               content_hash TEXT NOT NULL DEFAULT '',
+               candidate_payload TEXT NOT NULL DEFAULT '{}',
+               evidence_payload TEXT NOT NULL DEFAULT '[]',
+               status TEXT NOT NULL DEFAULT 'pending',
+               decision_payload TEXT NOT NULL DEFAULT '{}',
+               attempts INTEGER NOT NULL DEFAULT 0,
+               created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE,
+               UNIQUE(owner_scope, book_id, chapter_id, candidate_key)
+           );
+           CREATE INDEX IF NOT EXISTS idx_novel_adjudication_scope_status
+               ON novel_adjudication_candidates(owner_scope, book_id, status, updated_at DESC);
+           CREATE TABLE IF NOT EXISTS evolution_feedbacks (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               book_id INTEGER NOT NULL,
+               feedback_type TEXT NOT NULL,
+               target_type TEXT NOT NULL,
+               target_id INTEGER NOT NULL,
+               original_value TEXT NOT NULL DEFAULT '',
+               corrected_value TEXT NOT NULL DEFAULT '',
+               reason TEXT NOT NULL DEFAULT '',
+               user_id INTEGER,
+               confidence REAL NOT NULL DEFAULT 1.0,
+               applied BOOLEAN NOT NULL DEFAULT 0,
+               created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+           );
+           CREATE INDEX IF NOT EXISTS idx_feedback_book ON evolution_feedbacks(book_id, target_type);
+           CREATE TABLE IF NOT EXISTS evolution_rules (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               book_id INTEGER NOT NULL DEFAULT 0,
+               rule_type TEXT NOT NULL,
+               pattern TEXT NOT NULL,
+               replacement TEXT NOT NULL DEFAULT '',
+               condition TEXT NOT NULL DEFAULT '{}',
+               hit_count INTEGER NOT NULL DEFAULT 0,
+               success_count INTEGER NOT NULL DEFAULT 0,
+               failure_count INTEGER NOT NULL DEFAULT 0,
+               active BOOLEAN NOT NULL DEFAULT 1,
+               created_from_feedback_id INTEGER,
+               created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+           );
+           CREATE INDEX IF NOT EXISTS idx_rules_book ON evolution_rules(book_id, rule_type, active);
            CREATE TABLE IF NOT EXISTS novel_reading_progress (
                owner_scope TEXT NOT NULL,
                book_id INTEGER NOT NULL,

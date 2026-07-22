@@ -52,6 +52,9 @@ class NovelIndexService:
         *,
         extractor: AutoExtractor | None = None,
         structured_extractor=None,
+        adjudicator=None,
+        adaptive_learning=None,
+        learning_service=None,
         embedding: EmbeddingAdapter | None = None,
         vector_store=None,
         bm25_index: BM25Index | None = None,
@@ -62,8 +65,11 @@ class NovelIndexService:
         embedding_dimension: int = 0,
     ):
         self.repo = repo
+        self._owns_extractor = extractor is None
         self.extractor = extractor or AutoExtractor()
         self.structured_extractor = structured_extractor
+        self.adjudicator = adjudicator
+        self.adaptive_learning = adaptive_learning or learning_service
         self.embedding = embedding
         self.vector_store = vector_store
         self.bm25_index = bm25_index
@@ -84,8 +90,11 @@ class NovelIndexService:
         from_chapter: int | None = None,
     ) -> IndexResult:
         result = IndexResult(owner_scope=owner_scope, book_id=int(book_id))
+        learning_profile = await self._load_learning_profile(owner_scope, book_id)
+        learning_profile_version = str(learning_profile.get("profile_version") or "")
         chapters = await self._chapters(owner_scope, book_id, from_chapter)
         if not chapters:
+            await self._rebuild_knowledge(owner_scope, book_id)
             return result
 
         bm25 = self.bm25_index or self._bm25_indexes.setdefault(
@@ -100,10 +109,12 @@ class NovelIndexService:
             content = chapter.raw_text or ""
             content_hash = chapter.raw_text_hash or self._hash(content)
             state = await self.repo.get_index_state(owner_scope, book_id, chapter.id)
-            if self._can_skip(state, content_hash):
+            if self._can_skip(state, content_hash, learning_profile_version):
                 result.skipped_chapters += 1
                 continue
 
+            previous_payload = dict(getattr(state, "extraction_payload", {}) or {}) if state else {}
+            previous_success_at = getattr(state, "last_success_at", None) if state else None
             state = NovelIndexState(
                 owner_scope=owner_scope,
                 book_id=int(book_id),
@@ -115,10 +126,18 @@ class NovelIndexService:
                 vector_status="disabled",
                 embedding_model=self.embedding_model,
                 embedding_dimension=self.embedding_dimension,
+                extraction_payload=previous_payload,
+                last_success_at=previous_success_at,
             )
             await self.repo.save_index_state(state)
             try:
                 entities, relationships, structured = await self._extract(chapter)
+                entities = await self._adjudicate_entities(
+                    owner_scope,
+                    chapter.book_id,
+                    entities,
+                    content_hash=content_hash,
+                )
                 structured_status = "not_requested"
                 try:
                     if structured is not None and self.structured_extractor is not None:
@@ -147,6 +166,7 @@ class NovelIndexService:
                     events=structured_events,
                     state_changes=structured_states,
                     structured_status=structured_status,
+                    learning_profile_version=learning_profile_version,
                 )
                 state.extraction_payload = snapshot
                 state.extraction_status = "completed"
@@ -166,6 +186,27 @@ class NovelIndexService:
                 result.errors.append({"chapter_id": chapter.id, "error": str(exc)[:500]})
         await self._rebuild_knowledge(owner_scope, book_id)
         return result
+
+    async def _load_learning_profile(self, owner_scope: str, book_id: int) -> dict[str, Any]:
+        profile: dict[str, Any] = {}
+        service = self.adaptive_learning
+        getter = getattr(service, "get_profile", None) if service is not None else None
+        if callable(getter):
+            try:
+                value = getter(owner_scope, int(book_id))
+                if inspect.isawaitable(value):
+                    value = await value
+                if isinstance(value, dict):
+                    profile = dict(value)
+            except Exception:
+                profile = {}
+
+        setter = getattr(self.extractor, "set_learning_profile", None)
+        if callable(setter):
+            setter(profile)
+        elif self._owns_extractor and profile:
+            self.extractor = AutoExtractor(profile)
+        return profile
 
     async def _chapters(self, owner_scope: str, book_id: int, from_chapter: int | None):
         start = max(0, int(from_chapter if from_chapter is not None else 0))
@@ -230,6 +271,94 @@ class NovelIndexService:
             return parse(output, chapter_id=chapter.id, chapter_text=chapter.raw_text or "")
         return output
 
+    async def _adjudicate_entities(
+        self,
+        owner_scope: str,
+        book_id: int,
+        entities: list[Any],
+        *,
+        content_hash: str = "",
+    ) -> list[Any]:
+        if self.adjudicator is None:
+            return list(entities or [])
+        candidates = []
+        for entity in entities or []:
+            attributes = dict(getattr(entity, "attributes", {}) or {})
+            status = str(attributes.get("extraction_status") or "confirmed")
+            if status not in {"candidate", "conflict"}:
+                continue
+            candidates.append(
+                {
+                    "name": entity.name,
+                    "entity_type": getattr(entity.entity_type, "value", entity.entity_type),
+                    "score": float(attributes.get("confidence", 0.0) or 0.0),
+                    "mentions": int(attributes.get("mention_count", entity.appearance_count) or 0),
+                    "aliases": list(entity.aliases or []),
+                    "subtype": str(attributes.get("subtype") or ""),
+                    "status": status,
+                    "evidence": list(attributes.get("evidence") or []),
+                    "content_hash": str(attributes.get("content_hash") or content_hash or ""),
+                }
+            )
+        if not candidates:
+            return list(entities or [])
+        try:
+            decisions = self.adjudicator.adjudicate(owner_scope, int(book_id), candidates)
+            if inspect.isawaitable(decisions):
+                decisions = await decisions
+        except Exception:
+            return list(entities or [])
+        by_name = {
+            str(item.get("name") or "").strip(): item
+            for item in decisions or []
+            if isinstance(item, dict) and item.get("name")
+        }
+        await self._learn_adjudication(owner_scope, int(book_id), candidates, by_name)
+        accepted = []
+        for entity in entities or []:
+            decision = by_name.get(entity.name)
+            if decision is None:
+                accepted.append(entity)
+                continue
+            attributes = dict(getattr(entity, "attributes", {}) or {})
+            verdict = str(decision.get("verdict") or "pending")
+            attributes["adjudication"] = {
+                "verdict": verdict,
+                "source": decision.get("source", "agent"),
+                "reason": decision.get("reason", ""),
+                "evidence_ids": list(decision.get("evidence_ids") or []),
+            }
+            if verdict == "reject":
+                continue
+            attributes["extraction_status"] = "confirmed" if verdict in {"accept", "merge", "split"} else "pending"
+            entity.attributes = attributes
+            accepted.append(entity)
+        return accepted
+
+    async def _learn_adjudication(
+        self,
+        owner_scope: str,
+        book_id: int,
+        candidates: list[dict[str, Any]],
+        decisions: dict[str, dict[str, Any]],
+    ) -> None:
+        learner = self.adaptive_learning
+        method = getattr(learner, "learn_from_adjudication", None) if learner is not None else None
+        if not callable(method):
+            return
+        for candidate in candidates:
+            decision = decisions.get(str(candidate.get("name") or "").strip())
+            if not isinstance(decision, dict) or str(decision.get("verdict") or "pending") not in {"accept", "reject", "merge"}:
+                continue
+            try:
+                result = method(owner_scope, int(book_id), candidate, decision)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                # Learning is a recovery/optimization side effect.  A failed
+                # rule update must not discard the chapter snapshot.
+                continue
+
     async def _rebuild_knowledge(self, owner_scope: str, book_id: int) -> None:
         replace = getattr(self.repo, "replace_book_knowledge", None)
         list_states = getattr(self.repo, "list_index_states", None)
@@ -241,7 +370,11 @@ class NovelIndexService:
         snapshots = [
             state.extraction_payload
             for state in states or []
-            if state.extraction_status == "completed" and state.extraction_payload
+            if state.extraction_payload
+            and (
+                state.extraction_status == "completed"
+                or state.extraction_status in {"failed", "running"}
+            )
         ]
         await replace(owner_scope, int(book_id), snapshots)
 
@@ -255,12 +388,14 @@ class NovelIndexService:
         events: list[Any],
         state_changes: list[Any],
         structured_status: str,
+        learning_profile_version: str = "",
     ) -> dict[str, Any]:
         return {
             "chapter_id": int(chapter.id),
             "chapter_num": int(chapter.canonical_num),
             "content_hash": chapter.raw_text_hash or cls._hash(chapter.raw_text or ""),
             "algorithm_version": "local-evidence-1",
+            "learning_profile_version": learning_profile_version,
             "structured_status": structured_status,
             "entities": [cls._record_to_dict(item) for item in entities],
             "relationships": [cls._record_to_dict(item) for item in relationships],
@@ -452,6 +587,20 @@ class NovelIndexService:
         if not health.get("enabled"):
             state.vector_status = "disabled"
             return
+        delete_chapter = getattr(self.vector_store, "delete_chapter", None)
+        if callable(delete_chapter):
+            try:
+                deleted = delete_chapter(
+                    owner_scope,
+                    int(chapter.book_id),
+                    int(chapter.id),
+                    self.knowledge_version,
+                )
+                if inspect.isawaitable(deleted):
+                    await deleted
+            except Exception:
+                state.vector_status = "failed"
+                return
         snapshot = snapshot or {}
         texts = [chapter.raw_text or ""]
         metadata = [
@@ -556,14 +705,28 @@ class NovelIndexService:
             return
         state.vector_status = "completed"
 
-    def _can_skip(self, state: NovelIndexState | None, content_hash: str) -> bool:
+    def _can_skip(self, state: NovelIndexState | None, content_hash: str, learning_profile_version: str = "") -> bool:
         return bool(
             state
             and state.content_hash == content_hash
             and state.knowledge_version == self.knowledge_version
             and state.extraction_status == "completed"
+            and (state.extraction_payload or {}).get("learning_profile_version", "") == learning_profile_version
+            and (state.extraction_payload or {}).get("structured_status") != "failed"
+            and not self._vector_needs_retry(state)
             and state.embedding_model == self.embedding_model
             and state.embedding_dimension == self.embedding_dimension
+        )
+
+    def _vector_needs_retry(self, state: NovelIndexState) -> bool:
+        if state.vector_status == "failed":
+            return True
+        if state.vector_status != "disabled":
+            return False
+        return bool(
+            self.vector_store is not None
+            and self.embedding is not None
+            and getattr(self.vector_store, "retry_disabled", True)
         )
 
     @staticmethod

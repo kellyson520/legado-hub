@@ -56,6 +56,25 @@ class NovelIndexState:
 
 
 @dataclass
+class NovelAdjudicationCandidate:
+    """Durable queue record for one bounded ambiguous extraction candidate."""
+
+    id: int = 0
+    owner_scope: str = "legacy"
+    book_id: int = 0
+    chapter_id: int | None = None
+    candidate_key: str = ""
+    content_hash: str = ""
+    candidate_payload: dict[str, Any] = field(default_factory=dict)
+    evidence_payload: list[dict[str, Any]] = field(default_factory=list)
+    status: str = "pending"
+    decision: dict[str, Any] = field(default_factory=dict)
+    attempts: int = 0
+    created_at: datetime = field(default_factory=utcnow)
+    updated_at: datetime = field(default_factory=utcnow)
+
+
+@dataclass
 class NovelReadingProgress:
     owner_scope: str
     book_id: int

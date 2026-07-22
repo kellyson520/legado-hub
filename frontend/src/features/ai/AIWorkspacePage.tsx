@@ -20,11 +20,14 @@ import { listNovelBooks, listNovelModels, type NovelBook, type NovelModelOption 
 import { useLanguage } from '@/app/providers/LanguageProvider'
 import { PaginatedListControls } from '@/components/data/PaginatedListControls'
 import { StatusMessage } from '@/components/data/StatusMessage'
+import { MarkdownMessage } from '@/components/ai/MarkdownMessage'
+import { ToolResultRenderer } from '@/components/ai/ToolResultRenderer'
 import { FormActions } from '@/components/form/FormActions'
 import { FormField } from '@/components/form/FormField'
 import { ConsolePageShell } from '@/components/layout/ConsolePageShell'
 import { Button } from '@/components/ui/button'
 import { useServerPagination } from '@/hooks/useServerPagination'
+import { formatFullTime, formatRelativeTime } from '@/lib/time'
 
 const modes: Array<{ value: AIWorkspaceMode; label: string; description: string }> = [
   { value: 'chat', label: '通用问答', description: '围绕阅读、书源和小说提出问题' },
@@ -47,17 +50,15 @@ const authorizationToolLabels: Record<string, { zh: string; en: string }> = {
 
 const modeLabel: Record<AIWorkspaceMode, string> = Object.fromEntries(modes.map((mode) => [mode.value, mode.label])) as Record<AIWorkspaceMode, string>
 
-function formatTime(value: string, locale: 'zh-CN' | 'en-US') {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? (locale === 'en-US' ? 'Just now' : '刚刚') : date.toLocaleString(locale, { hour: '2-digit', minute: '2-digit' })
-}
-
-function formatToolResult(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return '工具结果无法显示'
-  }
+function MessageTime({ value, locale, compact = false }: { value: string; locale: 'zh-CN' | 'en-US'; compact?: boolean }) {
+  const full = formatFullTime(value, locale)
+  const relative = formatRelativeTime(value, locale)
+  return (
+    <time dateTime={value} title={full} className={compact ? 'text-right' : 'text-right'}>
+      <span className="block">{relative}</span>
+      <span className="block text-[10px] opacity-70">{full}</span>
+    </time>
+  )
 }
 
 export function AIWorkspacePage() {
@@ -318,8 +319,8 @@ export function AIWorkspacePage() {
       title="小说分析对话"
       description="以受控、只读工具辅助人物介绍、剧情解析与世界观提炼。工具结果会作为引用附在回答中，敏感数据不会进入对话。"
     >
-      <div className="grid min-h-[680px] overflow-hidden rounded-xl border border-border bg-card shadow-sm lg:grid-cols-[290px_minmax(0,1fr)]">
-        <aside className="border-b border-border bg-muted/25 lg:border-b-0 lg:border-r">
+      <div className="grid min-h-[680px] overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_20px_60px_-35px_hsl(var(--foreground)/0.45)] lg:grid-cols-[290px_minmax(0,1fr)]">
+        <aside className="border-b border-border bg-[linear-gradient(160deg,hsl(var(--muted)/0.52),hsl(var(--background)/0.82))] lg:border-b-0 lg:border-r">
           <div className="border-b border-border p-4">
             <Button className="w-full" onClick={() => void createConversation()} disabled={sending}>新建对话</Button>
           </div>
@@ -340,7 +341,7 @@ export function AIWorkspacePage() {
                   className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${item.id === activeConversationId ? 'border-primary/40 bg-primary text-primary-foreground shadow-sm' : 'border-transparent hover:border-border hover:bg-accent'}`}
                 >
                   <span className="block truncate text-sm font-semibold">{item.title}</span>
-                  <span className={`mt-1 block text-xs ${item.id === activeConversationId ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}>{formatTime(item.created_at, locale)}</span>
+                  <span className={`mt-1 block text-xs ${item.id === activeConversationId ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}><MessageTime value={item.created_at} locale={locale} compact /></span>
                 </button>
               ))}
             </PaginatedListControls>
@@ -352,9 +353,9 @@ export function AIWorkspacePage() {
         </aside>
 
         <section className="flex min-w-0 flex-col">
-          <header className="border-b border-border px-5 py-4">
-            <p className="text-xs font-semibold text-primary">受控 Agent 对话</p>
-            <h2 className="mt-1 text-lg font-semibold">{conversation?.title ?? '选择或新建一个对话'}</h2>
+          <header className="border-b border-border bg-card/90 px-5 py-4 backdrop-blur">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">受控 Agent 对话</p>
+            <h2 className="mt-1 font-serif text-xl font-semibold tracking-tight">{conversation?.title ?? '选择或新建一个对话'}</h2>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
               <label className="text-xs font-medium text-muted-foreground">选择书籍
                 <select aria-label="选择书籍" value={selectedBookId} onChange={(event) => setSelectedBookId(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring">
@@ -371,7 +372,7 @@ export function AIWorkspacePage() {
             </div>
           </header>
 
-          <div className="min-h-[320px] flex-1 space-y-5 bg-[radial-gradient(circle_at_top_right,hsl(var(--accent))_0,transparent_30%)] p-5">
+          <div className="min-h-[320px] flex-1 space-y-5 bg-[radial-gradient(circle_at_top_right,hsl(var(--accent)/0.8)_0,transparent_32%),linear-gradient(180deg,hsl(var(--background)/0.5),hsl(var(--muted)/0.2))] p-5">
             <StatusMessage tone="error" message={error} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2" />
             {authorizationGrants.length > 0 ? (
               <div className="space-y-2">
@@ -379,7 +380,7 @@ export function AIWorkspacePage() {
                   <div key={grant.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-400/35 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
                     <div>
                       <p>{grant.scope === 'conversation' ? t('ai.authorization.activeConversation') : t('ai.authorization.remembered')}</p>
-                      <p className="mt-1 text-xs text-amber-50/70">{t('ai.authorization.expires')}: {formatTime(grant.expires_at, locale)}</p>
+                      <p className="mt-1 text-xs text-amber-50/70">{t('ai.authorization.expires')}: <MessageTime value={grant.expires_at} locale={locale} compact /></p>
                     </div>
                     <Button size="sm" variant="outline" onClick={() => void revokeGrant(grant)} disabled={authorizationBusy === grant.id} aria-label={t('ai.authorization.revoke')}>{t('ai.authorization.revoke')}</Button>
                   </div>
@@ -391,10 +392,10 @@ export function AIWorkspacePage() {
               <article key={message.id} className={`max-w-3xl ${message.role === 'user' ? 'ml-auto' : ''}`}>
                 <div className={`rounded-xl border px-4 py-3 shadow-sm ${message.role === 'user' ? 'border-primary bg-primary text-primary-foreground' : message.status === 'failed' ? 'border-destructive/40 bg-destructive/5' : 'border-border bg-card'}`}>
                   <div className={`mb-2 flex items-center justify-between gap-3 text-xs ${message.role === 'user' ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
-                    <span>{message.role === 'user' ? t('你') : `${t('AI')} · ${t(modeLabel[message.mode])}`}</span>
-                    <span>{formatTime(message.created_at, locale)}</span>
+                    <span className="font-medium">{message.role === 'user' ? t('你') : `${t('AI')} · ${t(modeLabel[message.mode])}`}</span>
+                    <MessageTime value={message.created_at} locale={locale} />
                   </div>
-                  <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
+                  <MarkdownMessage content={message.content} className={message.role === 'user' ? 'prose-invert text-primary-foreground prose-a:text-primary-foreground' : ''} />
                   {message.authorization_request && message.status === 'authorization_required' && message.authorization_request.status === 'pending' ? (
                     <div className="mt-4 overflow-hidden rounded-lg border border-amber-400/35 bg-amber-400/10 p-4 text-amber-50 shadow-inner">
                       <div className="flex items-start gap-3">
@@ -427,7 +428,7 @@ export function AIWorkspacePage() {
                     {message.tool_calls.map((tool, toolIndex) => (
                       <details key={`${tool.name}-${toolIndex}`} className="rounded border border-border bg-card px-3 py-2">
                         <summary className="cursor-pointer text-sm font-medium">{toolOptions.find((item) => item.name === tool.name)?.label ?? tool.name}</summary>
-                        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">{formatToolResult(tool.result)}</pre>
+                        <div className="mt-2 max-h-72 overflow-auto"><ToolResultRenderer value={tool.result} /></div>
                       </details>
                     ))}
                   </div>

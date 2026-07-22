@@ -95,6 +95,8 @@ test('工作台按中文模式发送消息并显示工具引用', async () => {
 
   expect((await screen.findAllByText('书源助手')).length).toBeGreaterThan(0)
   expect(await screen.findByText('引用的工具结果')).toBeInTheDocument()
+  expect(screen.getByRole('table')).toBeInTheDocument()
+  expect(screen.getAllByText(/2026/).length).toBeGreaterThan(0)
   expect(statusMocks.ListStatus.mock.calls.some(([props]) => props.loading === false && props.empty === false)).toBe(true)
 
   fireEvent.click(screen.getByRole('button', { name: '人物介绍' }))

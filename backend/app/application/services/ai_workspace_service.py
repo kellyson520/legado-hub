@@ -6,6 +6,7 @@ from uuid import uuid4
 from app.core.pagination import paginated_result
 from app.core.redaction import sanitize_error, sanitize_for_boundary
 from app.core.exceptions import AuthorizationException, ConflictException, NotFoundException, ValidationException
+from app.core.time import to_utc_iso
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 from app.domain.entities.auth import AuditEvent
 
@@ -1202,7 +1203,7 @@ class AIWorkspaceService:
                 "grade": latest.grade,
                 "step_results": latest.step_results,
                 "diagnostics": latest.diagnostics,
-                "created_at": latest.created_at.isoformat() if latest.created_at else None,
+                "created_at": to_utc_iso(latest.created_at),
             },
         }
 
@@ -1239,7 +1240,7 @@ class AIWorkspaceService:
             "entrypoint": item.entrypoint,
             "context_range": item.context_range,
             "model_ref": item.model_ref,
-            "created_at": item.created_at.isoformat(),
+            "created_at": to_utc_iso(item.created_at),
         }
 
     @staticmethod
@@ -1262,7 +1263,7 @@ class AIWorkspaceService:
             "entrypoint": item.entrypoint,
             "book_id": item.book_id,
             "chapter_id": item.chapter_id,
-            "created_at": item.created_at.isoformat(),
+            "created_at": to_utc_iso(item.created_at),
         }
         if safe_metadata.get("authorization_request") is not None:
             payload["authorization_request"] = safe_metadata["authorization_request"]

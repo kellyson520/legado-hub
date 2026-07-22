@@ -254,3 +254,25 @@ def test_registry_exposes_bounded_novel_tools_for_the_novel_agent(registry):
     assert chapter_search.category == 'read'
     assert 'novel' in chapter_search.allowed_agent_kinds
     assert reading_progress is not None
+
+
+@pytest.mark.asyncio
+async def test_registry_can_bind_new_novel_memory_read_tools():
+    from app.application.services.agent_tool_registry import AgentToolRegistry
+    from app.domain.entities.agent_runtime import ToolResult
+
+    registry = AgentToolRegistry(
+        novel_analysis_handlers={
+            'novel.search_memory': lambda arguments: ToolResult(status='accepted', data=arguments),
+        }
+    )
+
+    result = await registry.ainvoke(
+        agent_kind='novel',
+        tool_name='novel.search_memory',
+        arguments={'book_id': 7, 'query': '玄天剑'},
+        tenant_id='user:1',
+    )
+
+    assert result.status == 'accepted'
+    assert registry.get('novel.search_memory').category == 'read'

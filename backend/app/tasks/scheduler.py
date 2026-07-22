@@ -628,11 +628,13 @@ async def run_novel_index_job(limit: int = 10, owner_scope: str | None = None) -
     """Consume queued novel analysis tasks through the shared index service."""
     from ..infrastructure.persistence.factory import (
         build_novel_repository,
+        build_novel_adaptive_learning_service,
         build_novel_runtime_repository,
         build_provider_platform_service,
         build_vector_store,
     )
     from ..application.services.novel_understanding.embedding import EmbeddingAdapter
+    from ..application.services.novel_understanding.adjudicator import NovelAdjudicator
     from ..application.services.novel_understanding.index_service import NovelIndexService
     from .novel_index_worker import NovelIndexWorker
 
@@ -641,6 +643,8 @@ async def run_novel_index_job(limit: int = 10, owner_scope: str | None = None) -
     embedding = EmbeddingAdapter(provider=platform)
     index_service = NovelIndexService(
         repo,
+        adaptive_learning=build_novel_adaptive_learning_service(repo),
+        adjudicator=NovelAdjudicator(provider=platform, repo=repo),
         embedding=embedding,
         vector_store=build_vector_store(),
     )

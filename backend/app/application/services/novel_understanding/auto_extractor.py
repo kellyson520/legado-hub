@@ -23,6 +23,9 @@ class AutoExtractor:
         self._entity_mentions = defaultdict(list)
         self._candidate_extractor = CandidateExtractor(learning_profile)
 
+    def set_learning_profile(self, learning_profile: dict | None = None) -> None:
+        self._candidate_extractor.set_learning_profile(learning_profile)
+
     def extract_from_chapter(
         self,
         book_id: int,

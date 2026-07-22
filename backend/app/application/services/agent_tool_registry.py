@@ -32,6 +32,9 @@ class AgentToolRegistry:
         allowed_novel_handlers = frozenset({
             'source.search', 'book.resolve', 'toc.get', 'chapter.fetch',
             'evidence.search', 'evidence.get',
+            'novel.search_memory', 'novel.get_entity_profile', 'novel.get_mentions',
+            'novel.get_relations', 'novel.timeline', 'novel.get_item_state',
+            'novel.compare_entities', 'novel.get_chapter_evidence', 'novel.index_status',
         })
         for name, handler in (novel_analysis_handlers or {}).items():
             if name not in allowed_novel_handlers or name not in tools or not callable(handler):
@@ -97,6 +100,9 @@ class AgentToolRegistry:
             'character.aliases', 'character.relations', 'plot.timeline',
             'plot.state_changes', 'world.query', 'semantic.search',
             'evidence.get', 'chapter.summary', 'book.stats', 'reading.progress',
+            'novel.search_memory', 'novel.get_entity_profile', 'novel.get_mentions',
+            'novel.get_relations', 'novel.timeline', 'novel.get_item_state',
+            'novel.compare_entities', 'novel.get_chapter_evidence', 'novel.index_status',
         )
         for name in novel_read_tools:
             tools[name] = AgentTool(name, 'read', frozenset({'novel', 'knowledge'}))

@@ -116,6 +116,29 @@ class QdrantVectorStore(VectorStore):
             raise VectorStoreUnavailable(f"Qdrant delete failed: HTTP {response.status_code}")
         return 1
 
+    async def delete_chapter(
+        self,
+        owner_scope: str,
+        book_id: int,
+        chapter_id: int,
+        knowledge_version: str | None = None,
+    ) -> int:
+        must = [
+            {"key": "owner_scope", "match": {"value": owner_scope}},
+            {"key": "book_id", "match": {"value": book_id}},
+            {"key": "chapter_id", "match": {"value": chapter_id}},
+        ]
+        if knowledge_version is not None:
+            must.append({"key": "knowledge_version", "match": {"value": knowledge_version}})
+        response = await self._client.post(
+            f"{self._endpoint}/collections/{self._collection}/points/delete",
+            headers=self._headers(),
+            json={"filter": {"must": must}},
+        )
+        if response.status_code >= 400:
+            raise VectorStoreUnavailable(f"Qdrant chapter delete failed: HTTP {response.status_code}")
+        return 1
+
     async def health(self) -> dict[str, Any]:
         try:
             response = await self._client.get(

@@ -12,7 +12,11 @@ from ..entities.novel import (
     NovelBook, NovelChapter, NovelEntity, NovelRelationship,
     NovelEvent, NovelStateChange, NovelStatus, EntityType, EventType, StateField
 )
-from ..entities.novel_runtime import NovelIndexState, NovelReadingProgress
+from ..entities.novel_runtime import (
+    NovelAdjudicationCandidate,
+    NovelIndexState,
+    NovelReadingProgress,
+)
 
 
 class NovelRepository(ABC):
@@ -31,7 +35,7 @@ class NovelRepository(ABC):
     async def claim_legacy_scope(self, owner_scope: str) -> dict: ...
 
     @abstractmethod
-    async def list_books(self, owner_scope: str, status: Optional[NovelStatus] = None, limit: int = 20, offset: int = 0) -> List[NovelBook]: ...
+    async def list_books(self, owner_scope: str | None, status: Optional[NovelStatus] = None, limit: int = 20, offset: int = 0) -> List[NovelBook]: ...
 
     @abstractmethod
     async def count_books(self, owner_scope: str, status: Optional[NovelStatus] = None) -> int: ...
@@ -56,7 +60,7 @@ class NovelRepository(ABC):
     async def get_chapter_by_id(self, owner_scope: str, chapter_id: int) -> Optional[NovelChapter]: ...
 
     @abstractmethod
-    async def get_chapters_by_book(self, owner_scope: str, book_id: int, start_num: int = 1, end_num: Optional[int] = None, limit: int = 100, offset: int = 0) -> List[NovelChapter]: ...
+    async def get_chapters_by_book(self, owner_scope: str, book_id: int, start_num: int = 0, end_num: Optional[int] = None, limit: int = 100, offset: int = 0) -> List[NovelChapter]: ...
 
     @abstractmethod
     async def count_chapters(self, owner_scope: str, book_id: int) -> int: ...
@@ -139,6 +143,30 @@ class NovelRepository(ABC):
 
     @abstractmethod
     async def update_book_statistics(self, owner_scope: str, book_id: int, counts: dict[str, int]) -> bool: ...
+
+    @abstractmethod
+    async def upsert_adjudication_candidate(self, candidate: NovelAdjudicationCandidate) -> NovelAdjudicationCandidate: ...
+
+    @abstractmethod
+    async def list_adjudication_candidates(self, owner_scope: str, book_id: int, status: str | None = None, limit: int = 100) -> List[NovelAdjudicationCandidate]: ...
+
+    @abstractmethod
+    async def update_adjudication_candidate(self, owner_scope: str, candidate_id: int, *, status: str | None = None, decision: dict | None = None, attempts: int | None = None) -> bool: ...
+
+    @abstractmethod
+    async def save_evolution_feedback(self, owner_scope: str, feedback) -> object: ...
+
+    @abstractmethod
+    async def list_evolution_feedback(self, owner_scope: str, book_id: int, applied: bool | None = None, limit: int = 100, offset: int = 0) -> list: ...
+
+    @abstractmethod
+    async def list_evolution_rules(self, owner_scope: str, book_id: int, rule_type: str | None = None, active: bool | None = None, limit: int = 100) -> list: ...
+
+    @abstractmethod
+    async def list_active_evolution_rules(self, owner_scope: str, book_id: int, rule_types: list[str] | None = None, limit: int = 100) -> list: ...
+
+    @abstractmethod
+    async def apply_evolution_update(self, owner_scope: str, book_id: int, feedback, rule) -> object: ...
 
     @abstractmethod
     async def save_reading_progress(self, progress: NovelReadingProgress) -> NovelReadingProgress: ...

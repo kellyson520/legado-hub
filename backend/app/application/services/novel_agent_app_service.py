@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator
 from uuid import uuid4
 
 from app.core.exceptions import AuthorizationException, NotFoundException, ValidationException
+from app.core.time import to_utc_iso
 from app.domain.entities.ai_conversation import AIConversation, AIConversationMessage
 
 
@@ -43,6 +44,15 @@ class NovelAgentAppService:
         "chapter.summary": "read",
         "book.stats": "read",
         "reading.progress": "read",
+        "novel.search_memory": "read",
+        "novel.get_entity_profile": "read",
+        "novel.get_mentions": "read",
+        "novel.get_relations": "read",
+        "novel.timeline": "read",
+        "novel.get_item_state": "read",
+        "novel.compare_entities": "read",
+        "novel.get_chapter_evidence": "read",
+        "novel.index_status": "read",
         "knowledge.propose": "propose",
         "knowledge.operate": "operate",
     }
@@ -58,7 +68,7 @@ class NovelAgentAppService:
         agent_runtime=None,
         tool_registry=None,
         *,
-        knowledge_version: str = "v1",
+        knowledge_version: str = "v2-local-evidence",
         prompt_version: str = "novel-agent-v1",
         toolset_version: str = "novel-tools-v1",
         enabled_tool_categories: set[str] | None = None,
@@ -363,7 +373,7 @@ class NovelAgentAppService:
             else None
         )
         evidence = await self._retrieve(owner_scope, book_id, question)
-        recent = self._conversation_messages(owner_scope, conversation.id)[-MAX_RECENT_MESSAGES:]
+        recent = self._conversation_recent_messages(owner_scope, conversation.id, MAX_RECENT_MESSAGES)
         book_summary = str(getattr(book, "summary_global", "") or "")
         system = (
             "你是 LegadoHub 的小说阅读助手。使用中文回答。"
@@ -712,6 +722,159 @@ class NovelAgentAppService:
                 raise ValidationException("chapter_id requires book_id")
             await self._require_chapter(owner_scope, int(selected_book), int(selected_chapter))
 
+        if tool_name.startswith("novel.") and selected_book is None:
+            raise ValidationException(f"{tool_name} requires book_id")
+        if tool_name == "novel.search_memory":
+            query = str(arguments.get("query") or arguments.get("keyword") or "").strip()
+            results = await self._retrieve(
+                owner_scope,
+                int(selected_book),
+                query,
+                top_k=max(1, min(int(arguments.get("top_k", 5)), 20)),
+            )
+            return [
+                self._knowledge_public(
+                    item,
+                    chapter_id=getattr(item, "chapter_id", None),
+                    chapter_num=getattr(item, "chapter_num", None),
+                    confidence=getattr(item, "confidence", None),
+                )
+                for item in (results or [])[: max(1, min(int(arguments.get("top_k", 5)), 20))]
+            ]
+        if tool_name == "novel.get_entity_profile":
+            name = str(arguments.get("name") or arguments.get("entity") or "").strip()
+            entity = await self._repo_call("get_entity_by_name", owner_scope, int(selected_book), name)
+            if entity is None:
+                return {}
+            attributes = getattr(entity, "attributes", {}) or {}
+            return self._knowledge_public(
+                entity,
+                chapter_num=getattr(entity, "first_appearance_ch", None),
+                evidence=attributes.get("evidence") if isinstance(attributes, dict) else None,
+                confidence=attributes.get("confidence") if isinstance(attributes, dict) else None,
+            )
+        if tool_name == "novel.get_mentions":
+            name = str(arguments.get("name") or arguments.get("entity") or "").strip()
+            entity = await self._repo_call("get_entity_by_name", owner_scope, int(selected_book), name)
+            if entity is None:
+                return []
+            attributes = getattr(entity, "attributes", {}) or {}
+            evidence = attributes.get("evidence", []) if isinstance(attributes, dict) else []
+            return [
+                self._knowledge_public(
+                    item,
+                    chapter_id=item.get("chapter_id"),
+                    chapter_num=item.get("chapter_num"),
+                    evidence=[item],
+                    confidence=attributes.get("confidence") if isinstance(attributes, dict) else None,
+                )
+                for item in evidence
+                if isinstance(item, dict)
+            ][: max(1, min(int(arguments.get("limit", 50)), 200))]
+        if tool_name == "novel.get_relations":
+            name = str(arguments.get("name") or arguments.get("entity") or "").strip()
+            rows = await self._relations(
+                owner_scope,
+                int(selected_book),
+                name,
+                limit=arguments.get("limit", 50),
+            )
+            return [self._knowledge_public(item, chapter_num=item.get("since_chapter")) for item in rows]
+        if tool_name == "novel.timeline":
+            events = await self._repo_call(
+                "get_events",
+                owner_scope,
+                int(selected_book),
+                chapter_num=arguments.get("chapter_num"),
+                limit=max(1, min(int(arguments.get("limit", 50)), 200)),
+            )
+            ordered_events = sorted(
+                events or [],
+                key=lambda item: (
+                    int(getattr(item, "chapter_num", 0) or 0),
+                    int(getattr(item, "chapter_id", 0) or 0),
+                ),
+            )
+            return [
+                self._knowledge_public(
+                    item,
+                    chapter_id=getattr(item, "chapter_id", None),
+                    chapter_num=getattr(item, "chapter_num", None),
+                    evidence=getattr(item, "evidence", None),
+                )
+                for item in ordered_events
+            ]
+        if tool_name == "novel.get_item_state":
+            name = str(arguments.get("name") or arguments.get("item") or "").strip()
+            states = await self._repo_call(
+                "get_state_changes",
+                owner_scope,
+                int(selected_book),
+                entity_name=name,
+                limit=max(1, min(int(arguments.get("limit", 50)), 200)),
+            )
+            return [
+                self._knowledge_public(
+                    item,
+                    chapter_id=getattr(item, "chapter_id", None),
+                    chapter_num=getattr(item, "chapter_num", None),
+                    evidence=getattr(item, "evidence", None),
+                    confidence=getattr(item, "confidence", None),
+                )
+                for item in states or []
+            ]
+        if tool_name == "novel.compare_entities":
+            left_name = str(arguments.get("left") or arguments.get("left_name") or "").strip()
+            right_name = str(arguments.get("right") or arguments.get("right_name") or "").strip()
+            left = await self._repo_call("get_entity_by_name", owner_scope, int(selected_book), left_name)
+            right = await self._repo_call("get_entity_by_name", owner_scope, int(selected_book), right_name)
+            if left is None or right is None:
+                return {"left": self._knowledge_public(left), "right": self._knowledge_public(right), "relations": []}
+            relations = await self._relations(owner_scope, int(selected_book), left_name)
+            relations += [
+                item for item in await self._relations(owner_scope, int(selected_book), right_name)
+                if item not in relations
+            ]
+            return {
+                "knowledge_version": self.knowledge_version,
+                "left": self._knowledge_public(left),
+                "right": self._knowledge_public(right),
+                "relations": [self._knowledge_public(item) for item in relations],
+            }
+        if tool_name == "novel.get_chapter_evidence":
+            if selected_chapter is None:
+                raise ValidationException("chapter_id is required")
+            chapter = await self._repo_call("get_chapter_by_id", owner_scope, int(selected_chapter))
+            if chapter is None:
+                return {}
+            text = str(getattr(chapter, "raw_text", "") or "")[:2000]
+            return self._knowledge_public(
+                {
+                    "chapter_id": int(chapter.id),
+                    "chapter_num": int(getattr(chapter, "canonical_num", 0) or 0),
+                    "title": getattr(chapter, "chapter_title", ""),
+                    "content": text,
+                    "evidence": [{"chapter_id": int(chapter.id), "chapter_num": int(getattr(chapter, "canonical_num", 0) or 0), "text": text[:MAX_EVIDENCE_CHARS]}],
+                },
+                chapter_id=int(chapter.id),
+                chapter_num=int(getattr(chapter, "canonical_num", 0) or 0),
+            )
+        if tool_name == "novel.index_status":
+            states = await self._repo_call("list_index_states", owner_scope, int(selected_book)) or []
+            book_stats = await self._book_stats(owner_scope, int(selected_book))
+            return {
+                "knowledge_version": self.knowledge_version,
+                "book": book_stats,
+                "states": [
+                    self._knowledge_public(
+                        item,
+                        chapter_id=getattr(item, "chapter_id", None),
+                        evidence=self._snapshot_evidence(getattr(item, "extraction_payload", {})),
+                    )
+                    for item in states
+                ],
+            }
+
         if tool_name in {"chapter.search", "semantic.search"}:
             if self._retriever is None or selected_book is None:
                 return []
@@ -769,24 +932,85 @@ class NovelAgentAppService:
                 stats[key] = await self._repo_call(method, owner_scope, book_id)
         return stats
 
-    async def _relations(self, owner_scope: str, book_id: int, name: str) -> list[dict]:
+    def _knowledge_public(
+        self,
+        value,
+        *,
+        chapter_id: int | None = None,
+        chapter_num: int | None = None,
+        evidence=None,
+        confidence: float | None = None,
+    ) -> dict:
+        output = self._safe_public(value)
+        if output is None:
+            output = {}
+        if not isinstance(output, dict):
+            output = {"value": output}
+        output.setdefault("knowledge_version", self.knowledge_version)
+        if chapter_id is not None:
+            output.setdefault("chapter_id", int(chapter_id))
+        if chapter_num is not None:
+            output.setdefault("chapter_num", int(chapter_num))
+        if evidence is None:
+            evidence = output.get("evidence")
+            attributes = output.get("attributes")
+            if not evidence and isinstance(attributes, dict):
+                evidence = attributes.get("evidence")
+        output["evidence"] = evidence or []
+        if confidence is not None:
+            try:
+                output["confidence"] = max(0.0, min(1.0, float(confidence)))
+            except (TypeError, ValueError):
+                pass
+        return output
+
+    async def _relations(self, owner_scope: str, book_id: int, name: str, *, limit: int = 50) -> list[dict]:
+        bounded_limit = max(1, min(int(limit), 200))
         method = getattr(self._novel_repo, "get_relationships_by_entity", None)
         if callable(method):
-            rows = await self._repo_call("get_relationships_by_entity", owner_scope, book_id, name, limit=50)
+            rows = await self._repo_call(
+                "get_relationships_by_entity", owner_scope, book_id, name, limit=bounded_limit
+            )
         else:
-            rows = await self._repo_call("get_relationships", owner_scope, book_id, entity_name=name, limit=50)
+            rows = await self._repo_call(
+                "get_relationships", owner_scope, book_id, entity_name=name, limit=bounded_limit
+            )
         return [self._safe_public(item) for item in rows or []]
 
-    async def _retrieve(self, owner_scope: str, book_id: int | None, query: str) -> list[Any]:
+    @staticmethod
+    def _snapshot_evidence(payload) -> list[dict]:
+        if not isinstance(payload, dict):
+            return []
+        direct = payload.get("evidence")
+        if isinstance(direct, list) and direct:
+            return [item for item in direct if isinstance(item, dict)][:20]
+        evidence = []
+        for section in ("entities", "relationships", "events", "state_changes"):
+            for record in payload.get(section) or []:
+                if not isinstance(record, dict):
+                    continue
+                attributes = record.get("attributes") if isinstance(record.get("attributes"), dict) else {}
+                values = attributes.get("evidence") or record.get("evidence") or []
+                evidence.extend(item for item in values if isinstance(item, dict))
+        return evidence[:20]
+
+    async def _retrieve(self, owner_scope: str, book_id: int | None, query: str, *, top_k: int = 5) -> list[Any]:
         if self._retriever is None or book_id is None:
             return []
         method = getattr(self._retriever, "retrieve", None)
         if not callable(method):
             return []
+        bounded_top_k = max(1, min(int(top_k), 20))
         try:
-            result = method(owner_scope, book_id, query, top_k=5)
+            result = method(
+                owner_scope,
+                book_id,
+                query,
+                top_k=bounded_top_k,
+                knowledge_version=self.knowledge_version,
+            )
         except TypeError:
-            result = method(book_id, query, top_k=5)
+            result = method(book_id, query, top_k=bounded_top_k)
         return await result if inspect.isawaitable(result) else result
 
     async def _require_book(self, owner_scope: str, book_id: int) -> Any:
@@ -850,6 +1074,20 @@ class NovelAgentAppService:
             except TypeError:
                 continue
         return []
+
+    def _conversation_recent_messages(self, owner_scope: str, conversation_id: str, limit: int) -> list[Any]:
+        method = getattr(self._conversations, "list_recent_messages", None)
+        if callable(method):
+            for attempt in (
+                lambda: method(conversation_id, owner_scope=owner_scope, limit=limit),
+                lambda: method(conversation_id, limit=limit),
+                lambda: method(conversation_id, owner_scope=owner_scope),
+            ):
+                try:
+                    return list(attempt() or [])[-limit:]
+                except TypeError:
+                    continue
+        return self._conversation_messages(owner_scope, conversation_id)[-limit:]
 
     def _runtime_start(self, owner_scope, tool_name, category, arguments):
         if self._agent_runtime is None:
@@ -981,11 +1219,18 @@ class NovelAgentAppService:
         if isinstance(value, Enum):
             return value.value
         if isinstance(value, datetime):
-            return value.isoformat()
+            return to_utc_iso(value)
         if is_dataclass(value):
             value = asdict(value)
         elif hasattr(value, "__dict__") and not isinstance(value, type):
+            original_type = type(value)
             value = {key: item for key, item in vars(value).items() if not key.startswith("_")}
+            if not value:
+                value = {
+                    key: item
+                    for key, item in vars(original_type).items()
+                    if not key.startswith("_") and not callable(item)
+                }
         if isinstance(value, dict):
             output = {}
             for key, item in value.items():
@@ -1013,7 +1258,7 @@ class NovelAgentAppService:
             "model_ref": conversation.model_ref,
             "knowledge_version": conversation.knowledge_version,
             "toolset_version": conversation.toolset_version,
-            "created_at": conversation.created_at.isoformat(),
+            "created_at": to_utc_iso(conversation.created_at),
             "messages": [NovelAgentAppService._serialize_message(item) for item in messages],
         }
 
@@ -1030,7 +1275,7 @@ class NovelAgentAppService:
             "entrypoint": message.entrypoint,
             "book_id": message.book_id,
             "chapter_id": message.chapter_id,
-            "created_at": message.created_at.isoformat(),
+            "created_at": to_utc_iso(message.created_at),
         }
 
     @classmethod
@@ -1049,6 +1294,15 @@ class NovelAgentAppService:
             "chapter.summary": "Read a chapter summary.",
             "book.stats": "Read book statistics.",
             "reading.progress": "Read reading progress.",
+            "novel.search_memory": "Search the bounded novel memory index and return evidence citations.",
+            "novel.get_entity_profile": "Read one entity profile with aliases, confidence and evidence.",
+            "novel.get_mentions": "Read bounded evidence mentions for one entity.",
+            "novel.get_relations": "Read evidence-backed relationships for one entity.",
+            "novel.timeline": "Read the chronological event timeline with citations.",
+            "novel.get_item_state": "Read an item's possession and state-change timeline.",
+            "novel.compare_entities": "Compare two book entities and their known relationships.",
+            "novel.get_chapter_evidence": "Read a bounded chapter evidence excerpt.",
+            "novel.index_status": "Read novel indexing status and knowledge version.",
         }.get(name, name)
 
     @staticmethod
@@ -1057,6 +1311,18 @@ class NovelAgentAppService:
             return {"type": "object", "properties": {"query": {"type": "string"}, "top_k": {"type": "integer"}}, "required": ["query"], "additionalProperties": False}
         if name in {"character.profile", "character.count", "character.aliases", "character.relations"}:
             return {"type": "object", "properties": {"name": {"type": "string"}, "book_id": {"type": "integer"}}, "required": ["name"], "additionalProperties": False}
+        if name == "novel.search_memory":
+            return {"type": "object", "properties": {"query": {"type": "string"}, "top_k": {"type": "integer"}, "book_id": {"type": "integer"}}, "required": ["query"], "additionalProperties": False}
+        if name in {"novel.get_entity_profile", "novel.get_mentions", "novel.get_relations", "novel.get_item_state"}:
+            return {"type": "object", "properties": {"name": {"type": "string"}, "limit": {"type": "integer"}, "book_id": {"type": "integer"}}, "required": ["name"], "additionalProperties": False}
+        if name == "novel.compare_entities":
+            return {"type": "object", "properties": {"left": {"type": "string"}, "right": {"type": "string"}, "book_id": {"type": "integer"}}, "required": ["left", "right"], "additionalProperties": False}
+        if name == "novel.get_chapter_evidence":
+            return {"type": "object", "properties": {"book_id": {"type": "integer"}, "chapter_id": {"type": "integer"}}, "required": ["chapter_id"], "additionalProperties": False}
+        if name == "novel.timeline":
+            return {"type": "object", "properties": {"book_id": {"type": "integer"}, "chapter_num": {"type": "integer"}, "limit": {"type": "integer"}}, "additionalProperties": False}
+        if name == "novel.index_status":
+            return {"type": "object", "properties": {"book_id": {"type": "integer"}}, "required": ["book_id"], "additionalProperties": False}
         return {"type": "object", "properties": {"book_id": {"type": "integer"}, "chapter_id": {"type": "integer"}}, "additionalProperties": False}
 
     @staticmethod

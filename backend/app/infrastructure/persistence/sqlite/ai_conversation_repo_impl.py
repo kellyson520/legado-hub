@@ -140,6 +140,32 @@ class SQLiteAIConversationRepository(AIConversationRepository):
         finally:
             self._close(db)
 
+    def list_recent_messages(
+        self,
+        conversation_id: str,
+        owner_scope: str | None = None,
+        limit: int = 12,
+    ) -> list[AIConversationMessage]:
+        db = self._db()
+        try:
+            query = db.query(AIConversationMessageModel).filter(
+                AIConversationMessageModel.conversation_id == conversation_id
+            )
+            if owner_scope is not None:
+                query = query.filter(AIConversationMessageModel.owner_scope == owner_scope)
+            rows = (
+                query.order_by(
+                    AIConversationMessageModel.created_at.desc(),
+                    AIConversationMessageModel.id.desc(),
+                )
+                .limit(max(1, min(int(limit), 100)))
+                .all()
+            )
+            rows.reverse()
+            return [self._message(row) for row in rows]
+        finally:
+            self._close(db)
+
     @staticmethod
     def _conversation(model: AIConversationModel) -> AIConversation:
         return AIConversation(

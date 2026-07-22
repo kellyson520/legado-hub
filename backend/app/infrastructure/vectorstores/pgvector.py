@@ -32,6 +32,16 @@ class PgVectorStore(VectorStore):
         self._require_session()
         raise VectorStoreUnavailable("pgvector adapter requires an explicit SQLAlchemy vector extension")
 
+    async def delete_chapter(
+        self,
+        owner_scope: str,
+        book_id: int,
+        chapter_id: int,
+        knowledge_version: str | None = None,
+    ) -> int:
+        self._require_session()
+        raise VectorStoreUnavailable("pgvector adapter requires an explicit SQLAlchemy vector extension")
+
     async def health(self) -> dict[str, Any]:
         if self._session is None and self._session_factory is None:
             return {"enabled": False, "backend": "pgvector", "reason": "driver unavailable"}

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -7,7 +7,7 @@ class AIConversation:
     id: str
     actor_id: str
     title: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     owner_scope: str = "legacy"
     book_id: int | None = None
     chapter_id: int | None = None
@@ -28,7 +28,7 @@ class AIConversationMessage:
     status: str = "succeeded"
     tool_calls: list[dict] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     owner_scope: str = "legacy"
     entrypoint: str = "workspace"
     book_id: int | None = None

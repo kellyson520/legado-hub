@@ -46,5 +46,15 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def delete_chapter(
+        self,
+        owner_scope: str,
+        book_id: int,
+        chapter_id: int,
+        knowledge_version: str | None = None,
+    ) -> int:
+        raise NotImplementedError
+
+    @abstractmethod
     async def health(self) -> dict[str, Any]:
         raise NotImplementedError

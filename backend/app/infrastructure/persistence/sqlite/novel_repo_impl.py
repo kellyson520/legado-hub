@@ -19,6 +19,8 @@ from app.domain.entities.novel import (
     NovelChapter,
     NovelChapterMirror,
     NovelEntity,
+    EvolutionFeedback,
+    EvolutionRule,
     NovelEvent,
     NovelRelationship,
     NovelSourceMirror,
@@ -27,7 +29,11 @@ from app.domain.entities.novel import (
     RelationType,
     StateField,
 )
-from app.domain.entities.novel_runtime import NovelIndexState, NovelReadingProgress
+from app.domain.entities.novel_runtime import (
+    NovelAdjudicationCandidate,
+    NovelIndexState,
+    NovelReadingProgress,
+)
 from app.domain.repositories.novel_repo import NovelRepository
 from app.domain.value_objects import OwnerScope
 
@@ -39,6 +45,23 @@ def _scope(value: str | OwnerScope | None) -> str:
     if value is None:
         return LEGACY_SCOPE
     return str(value)
+
+
+_RELATIONSHIP_COLUMNS = """
+    r.id, r.book_id, r.source_entity, r.target_entity, r.relation_type,
+    r.description, r.since_chapter, r.until_chapter, r.confidence,
+    r.evidence, r.created_at
+"""
+_EVENT_COLUMNS = """
+    e.id, e.book_id, e.chapter_id, e.chapter_num, e.event_type,
+    e.description, e.participants, e.location, e.importance,
+    e.related_entities, e.evidence, e.created_at
+"""
+_STATE_CHANGE_COLUMNS = """
+    s.id, s.book_id, s.entity_name, s.chapter_id, s.chapter_num,
+    s.field_name, s.before_value, s.after_value, s.trigger_event,
+    s.confidence, s.evidence, s.created_at
+"""
 
 
 class SqliteNovelRepository(NovelRepository):
@@ -181,6 +204,7 @@ class SqliteNovelRepository(NovelRepository):
                 "novel_reading_progress",
                 "novel_vectors",
                 "novel_model_preferences",
+                "novel_adjudication_candidates",
             ):
                 cursor = await self._db.execute(
                     f"UPDATE {table} SET owner_scope=? WHERE owner_scope=?",
@@ -207,14 +231,18 @@ class SqliteNovelRepository(NovelRepository):
             legacy_limit = status if isinstance(status, int) else 20
             legacy_offset = limit if isinstance(limit, int) and not isinstance(limit, bool) else 0
             owner_scope, status, limit, offset = LEGACY_SCOPE, legacy_status, legacy_limit, legacy_offset
-        conditions = ["owner_scope=?"]
-        params: list[object] = [_scope(owner_scope)]
+        conditions: list[str] = []
+        params: list[object] = []
+        if owner_scope is not None:
+            conditions.append("owner_scope=?")
+            params.append(_scope(owner_scope))
         if status is not None:
             conditions.append("status=?")
             params.append(status.value)
         params.extend([limit, offset])
+        where = f"WHERE {' AND '.join(conditions)} " if conditions else ""
         async with self._db.execute(
-            f"SELECT * FROM novels WHERE {' AND '.join(conditions)} "
+            f"SELECT * FROM novels {where}"
             "ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             params,
         ) as cursor:
@@ -355,7 +383,7 @@ class SqliteNovelRepository(NovelRepository):
         self,
         owner_scope: str | int,
         book_id: int | None = None,
-        start_num: int = 1,
+        start_num: int = 0,
         end_num: Optional[int] = None,
         limit: int = 100,
         offset: int = 0,
@@ -369,7 +397,7 @@ class SqliteNovelRepository(NovelRepository):
         params.extend([limit, offset])
         async with self._db.execute(
             f"SELECT c.* FROM novel_chapters c JOIN novels n ON n.id=c.book_id "
-            f"WHERE {' AND '.join(conditions)} ORDER BY c.canonical_num LIMIT ? OFFSET ?",
+            f"WHERE {' AND '.join(conditions)} ORDER BY c.canonical_num, c.id LIMIT ? OFFSET ?",
             params,
         ) as cursor:
             rows = await cursor.fetchall()
@@ -634,7 +662,7 @@ class SqliteNovelRepository(NovelRepository):
     ) -> List[NovelRelationship]:
         scope, book_id = self._scope_and_id(owner_scope, book_id)
         async with self._db.execute(
-            """SELECT r.* FROM novel_relationships r JOIN novels n ON n.id=r.book_id
+            f"""SELECT {_RELATIONSHIP_COLUMNS} FROM novel_relationships r JOIN novels n ON n.id=r.book_id
                WHERE n.owner_scope=? AND r.book_id=? LIMIT ?""",
             (scope, book_id, limit),
         ) as cursor:
@@ -647,7 +675,7 @@ class SqliteNovelRepository(NovelRepository):
         if entity_name is None:
             entity_name, book_id, owner_scope = str(book_id), int(owner_scope), LEGACY_SCOPE
         async with self._db.execute(
-            """SELECT r.* FROM novel_relationships r JOIN novels n ON n.id=r.book_id
+            f"""SELECT {_RELATIONSHIP_COLUMNS} FROM novel_relationships r JOIN novels n ON n.id=r.book_id
                WHERE n.owner_scope=? AND r.book_id=?
                AND (r.source_entity=? OR r.target_entity=?) LIMIT ?""",
             (_scope(owner_scope), int(book_id), entity_name, entity_name, limit),
@@ -720,7 +748,7 @@ class SqliteNovelRepository(NovelRepository):
             params.append(event_type.value)
         params.append(limit)
         async with self._db.execute(
-            f"SELECT e.* FROM novel_events e JOIN novels n ON n.id=e.book_id WHERE {' AND '.join(conditions)} "
+            f"SELECT {_EVENT_COLUMNS} FROM novel_events e JOIN novels n ON n.id=e.book_id WHERE {' AND '.join(conditions)} "
             "ORDER BY e.importance DESC LIMIT ?",
             params,
         ) as cursor:
@@ -784,7 +812,7 @@ class SqliteNovelRepository(NovelRepository):
             params.append(field_name.value)
         params.append(limit)
         async with self._db.execute(
-            f"SELECT s.* FROM novel_state_changes s JOIN novels n ON n.id=s.book_id WHERE {' AND '.join(conditions)} "
+            f"SELECT {_STATE_CHANGE_COLUMNS} FROM novel_state_changes s JOIN novels n ON n.id=s.book_id WHERE {' AND '.join(conditions)} "
             "ORDER BY s.chapter_num DESC LIMIT ?",
             params,
         ) as cursor:
@@ -957,7 +985,7 @@ class SqliteNovelRepository(NovelRepository):
                     current["importance_score"],
                     max(1, min(5, _int_or_default(data.get("importance_score"), 3))),
                 )
-                current["attributes"].update(attributes)
+                current["attributes"] = _merge_attributes(current["attributes"], attributes)
 
             for raw_relationship in snapshot.get("relationships") or []:
                 data = _mapping(raw_relationship)
@@ -1197,6 +1225,257 @@ class SqliteNovelRepository(NovelRepository):
         await self._db.commit()
         return cursor.rowcount > 0
 
+    async def upsert_adjudication_candidate(
+        self, candidate: NovelAdjudicationCandidate
+    ) -> NovelAdjudicationCandidate:
+        await self._require_book(candidate.owner_scope, int(candidate.book_id))
+        await self._db.execute(
+            """INSERT INTO novel_adjudication_candidates (
+               owner_scope, book_id, chapter_id, candidate_key, content_hash,
+               candidate_payload, evidence_payload, status, decision_payload, attempts
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(owner_scope, book_id, chapter_id, candidate_key) DO UPDATE SET
+               content_hash=excluded.content_hash,
+               candidate_payload=excluded.candidate_payload,
+               evidence_payload=excluded.evidence_payload,
+               updated_at=CURRENT_TIMESTAMP""",
+            (
+                candidate.owner_scope,
+                int(candidate.book_id),
+                candidate.chapter_id,
+                candidate.candidate_key,
+                candidate.content_hash,
+                json.dumps(candidate.candidate_payload, ensure_ascii=False, default=_json_default),
+                json.dumps(candidate.evidence_payload, ensure_ascii=False, default=_json_default),
+                candidate.status,
+                json.dumps(candidate.decision, ensure_ascii=False, default=_json_default),
+                max(0, int(candidate.attempts)),
+            ),
+        )
+        await self._db.commit()
+        async with self._db.execute(
+            """SELECT id, owner_scope, book_id, chapter_id, candidate_key, content_hash,
+               candidate_payload, evidence_payload, status, decision_payload, attempts,
+               created_at, updated_at
+               FROM novel_adjudication_candidates
+               WHERE owner_scope=? AND book_id=? AND ((chapter_id=? ) OR (chapter_id IS NULL AND ? IS NULL))
+                 AND candidate_key=?""",
+            (candidate.owner_scope, int(candidate.book_id), candidate.chapter_id, candidate.chapter_id, candidate.candidate_key),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            raise RuntimeError("adjudication candidate was not persisted")
+        saved = self._row_to_adjudication_candidate(row)
+        candidate.__dict__.update(saved.__dict__)
+        return candidate
+
+    async def list_adjudication_candidates(
+        self, owner_scope: str, book_id: int, status: str | None = None, limit: int = 100
+    ) -> List[NovelAdjudicationCandidate]:
+        conditions = ["owner_scope=?", "book_id=?"]
+        params: list[object] = [_scope(owner_scope), int(book_id)]
+        if status:
+            conditions.append("status=?")
+            params.append(str(status))
+        params.append(max(1, min(int(limit), 1000)))
+        async with self._db.execute(
+            f"""SELECT id, owner_scope, book_id, chapter_id, candidate_key, content_hash,
+               candidate_payload, evidence_payload, status, decision_payload, attempts,
+               created_at, updated_at
+               FROM novel_adjudication_candidates
+               WHERE {' AND '.join(conditions)}
+               ORDER BY updated_at DESC, id DESC LIMIT ?""",
+            params,
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [self._row_to_adjudication_candidate(row) for row in rows]
+
+    async def update_adjudication_candidate(
+        self,
+        owner_scope: str,
+        candidate_id: int,
+        *,
+        status: str | None = None,
+        decision: dict | None = None,
+        attempts: int | None = None,
+    ) -> bool:
+        fields: list[str] = []
+        params: list[object] = []
+        if status is not None:
+            fields.append("status=?")
+            params.append(str(status))
+        if decision is not None:
+            fields.append("decision_payload=?")
+            params.append(json.dumps(decision, ensure_ascii=False, default=_json_default))
+        if attempts is not None:
+            fields.append("attempts=?")
+            params.append(max(0, int(attempts)))
+        if not fields:
+            return False
+        fields.append("updated_at=CURRENT_TIMESTAMP")
+        params.extend([_scope(owner_scope), int(candidate_id)])
+        cursor = await self._db.execute(
+            f"UPDATE novel_adjudication_candidates SET {', '.join(fields)} WHERE owner_scope=? AND id=?",
+            params,
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def save_evolution_feedback(
+        self, owner_scope: str, feedback: EvolutionFeedback
+    ) -> EvolutionFeedback:
+        await self._require_book(owner_scope, int(feedback.book_id))
+        cursor = await self._db.execute(
+            """INSERT INTO evolution_feedbacks (
+               book_id, feedback_type, target_type, target_id, original_value,
+               corrected_value, reason, user_id, confidence, applied
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                int(feedback.book_id),
+                feedback.feedback_type,
+                feedback.target_type,
+                int(feedback.target_id),
+                feedback.original_value,
+                feedback.corrected_value,
+                feedback.reason,
+                feedback.user_id,
+                max(0.0, min(1.0, float(feedback.confidence))),
+                bool(feedback.applied),
+            ),
+        )
+        await self._db.commit()
+        feedback.id = cursor.lastrowid
+        return feedback
+
+    async def list_evolution_feedback(
+        self,
+        owner_scope: str,
+        book_id: int,
+        applied: bool | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[EvolutionFeedback]:
+        conditions = ["n.owner_scope=?", "f.book_id=?"]
+        params: list[object] = [_scope(owner_scope), int(book_id)]
+        if applied is not None:
+            conditions.append("f.applied=?")
+            params.append(1 if applied else 0)
+        params.extend([max(0, int(limit)), max(0, int(offset))])
+        async with self._db.execute(
+            f"""SELECT f.id, f.book_id, f.feedback_type, f.target_type, f.target_id,
+               f.original_value, f.corrected_value, f.reason, f.user_id,
+               f.confidence, f.applied, f.created_at
+               FROM evolution_feedbacks f JOIN novels n ON n.id=f.book_id
+               WHERE {' AND '.join(conditions)}
+               ORDER BY f.created_at DESC, f.id DESC LIMIT ? OFFSET ?""",
+            params,
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [self._row_to_evolution_feedback(row) for row in rows]
+
+    async def list_evolution_rules(
+        self,
+        owner_scope: str,
+        book_id: int,
+        rule_type: str | None = None,
+        active: bool | None = None,
+        limit: int = 100,
+    ) -> List[EvolutionRule]:
+        conditions = ["n.owner_scope=?", "r.book_id=?"]
+        params: list[object] = [_scope(owner_scope), int(book_id)]
+        if rule_type:
+            conditions.append("r.rule_type=?")
+            params.append(str(rule_type))
+        if active is not None:
+            conditions.append("r.active=?")
+            params.append(1 if active else 0)
+        params.append(max(1, min(int(limit), 1000)))
+        async with self._db.execute(
+            f"""SELECT r.id, r.book_id, r.rule_type, r.pattern, r.replacement,
+               r.condition, r.hit_count, r.success_count, r.failure_count,
+               r.active, r.created_from_feedback_id, r.created_at
+               FROM evolution_rules r JOIN novels n ON n.id=r.book_id
+               WHERE {' AND '.join(conditions)}
+               ORDER BY r.created_at DESC, r.id DESC LIMIT ?""",
+            params,
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [self._row_to_evolution_rule(row) for row in rows]
+
+    async def list_active_evolution_rules(
+        self, owner_scope: str, book_id: int, rule_types: list[str] | None = None, limit: int = 100
+    ) -> List[EvolutionRule]:
+        if not rule_types:
+            return await self.list_evolution_rules(owner_scope, book_id, active=True, limit=limit)
+        rules: list[EvolutionRule] = []
+        for rule_type in rule_types:
+            rules.extend(await self.list_evolution_rules(owner_scope, book_id, rule_type=rule_type, active=True, limit=limit))
+        return rules[: max(1, min(int(limit), 1000))]
+
+    async def apply_evolution_update(
+        self,
+        owner_scope: str,
+        book_id: int,
+        feedback: EvolutionFeedback,
+        rule: EvolutionRule,
+    ) -> EvolutionRule:
+        await self._require_book(owner_scope, int(book_id))
+        feedback.book_id = int(book_id)
+        rule.book_id = int(book_id)
+        try:
+            await self._db.execute("BEGIN")
+            feedback_cursor = await self._db.execute(
+                """INSERT INTO evolution_feedbacks (
+                   book_id, feedback_type, target_type, target_id, original_value,
+                   corrected_value, reason, user_id, confidence, applied
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                (
+                    int(book_id), feedback.feedback_type, feedback.target_type, int(feedback.target_id),
+                    feedback.original_value, feedback.corrected_value, feedback.reason,
+                    feedback.user_id, max(0.0, min(1.0, float(feedback.confidence))),
+                ),
+            )
+            feedback.id = feedback_cursor.lastrowid
+            async with self._db.execute(
+                """SELECT id FROM evolution_rules
+                   WHERE book_id=? AND rule_type=? AND pattern=?""",
+                (int(book_id), rule.rule_type, rule.pattern),
+            ) as cursor:
+                existing = await cursor.fetchone()
+            condition = rule.condition or "{}"
+            if existing:
+                rule.id = existing[0]
+                await self._db.execute(
+                    """UPDATE evolution_rules SET replacement=?, condition=?,
+                       hit_count=?, success_count=?, failure_count=?, active=?,
+                       created_from_feedback_id=?
+                       WHERE id=? AND book_id=?""",
+                    (
+                        rule.replacement, condition, int(rule.hit_count), int(rule.success_count),
+                        int(rule.failure_count), bool(rule.active), feedback.id, rule.id, int(book_id),
+                    ),
+                )
+            else:
+                rule_cursor = await self._db.execute(
+                    """INSERT INTO evolution_rules (
+                       book_id, rule_type, pattern, replacement, condition,
+                       hit_count, success_count, failure_count, active, created_from_feedback_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        int(book_id), rule.rule_type, rule.pattern, rule.replacement, condition,
+                        int(rule.hit_count), int(rule.success_count), int(rule.failure_count),
+                        bool(rule.active), feedback.id,
+                    ),
+                )
+                rule.id = rule_cursor.lastrowid
+            await self._db.execute("UPDATE evolution_feedbacks SET applied=1 WHERE id=?", (feedback.id,))
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
+        feedback.applied = True
+        return rule
+
     async def save_reading_progress(self, progress: NovelReadingProgress) -> NovelReadingProgress:
         await self._require_book(progress.owner_scope, progress.book_id)
         if not await self._book_exists_for_chapter(progress.owner_scope, progress.chapter_id):
@@ -1275,6 +1554,58 @@ class SqliteNovelRepository(NovelRepository):
             last_success_at=row[11],
             failure_reason=row[12],
             updated_at=row[13],
+        )
+
+    @staticmethod
+    def _row_to_adjudication_candidate(row) -> NovelAdjudicationCandidate:
+        return NovelAdjudicationCandidate(
+            id=row[0],
+            owner_scope=row[1],
+            book_id=row[2],
+            chapter_id=row[3],
+            candidate_key=row[4],
+            content_hash=row[5],
+            candidate_payload=_json_dict(row[6]),
+            evidence_payload=_json_list_of_dicts(row[7]),
+            status=row[8],
+            decision=_json_dict(row[9]),
+            attempts=row[10],
+            created_at=row[11],
+            updated_at=row[12],
+        )
+
+    @staticmethod
+    def _row_to_evolution_feedback(row) -> EvolutionFeedback:
+        return EvolutionFeedback(
+            id=row[0],
+            book_id=row[1],
+            feedback_type=row[2],
+            target_type=row[3],
+            target_id=row[4],
+            original_value=row[5],
+            corrected_value=row[6],
+            reason=row[7],
+            user_id=row[8],
+            confidence=row[9],
+            applied=bool(row[10]),
+            created_at=row[11],
+        )
+
+    @staticmethod
+    def _row_to_evolution_rule(row) -> EvolutionRule:
+        return EvolutionRule(
+            id=row[0],
+            book_id=row[1],
+            rule_type=row[2],
+            pattern=row[3],
+            replacement=row[4],
+            condition=row[5],
+            hit_count=row[6],
+            success_count=row[7],
+            failure_count=row[8],
+            active=bool(row[9]),
+            created_from_feedback_id=row[10],
+            created_at=row[11],
         )
 
     def _row_to_book(self, row) -> NovelBook:
@@ -1465,6 +1796,31 @@ def _merge_strings(first: list[str], second: list[str]) -> list[str]:
         if item.casefold() not in seen:
             result.append(item)
             seen.add(item.casefold())
+    return result
+
+
+def _merge_attributes(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """Merge extraction attributes without discarding earlier evidence."""
+    result = dict(first or {})
+    for key, value in (second or {}).items():
+        if key not in result:
+            result[key] = value
+            continue
+        existing = result[key]
+        if key == "evidence":
+            result[key] = _merge_json_items(_list_of_dicts(existing), _list_of_dicts(value))
+        elif isinstance(existing, dict) and isinstance(value, dict):
+            result[key] = _merge_attributes(existing, value)
+        elif isinstance(existing, list) and isinstance(value, list):
+            combined = [*existing, *value]
+            if all(isinstance(item, str) for item in combined):
+                result[key] = _merge_strings(existing, value)
+            else:
+                result[key] = _merge_json_items(_list_of_dicts(existing), _list_of_dicts(value))
+        elif existing in (None, "", [], {}):
+            result[key] = value
+        else:
+            result[key] = value
     return result
 
 

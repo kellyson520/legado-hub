@@ -4,6 +4,8 @@ from app.domain.repositories.vector_store import VectorRecord, VectorStore
 
 
 class DisabledVectorStore(VectorStore):
+    retry_disabled = False
+
     async def ensure_collection(self, name: str, dimension: int) -> None:
         return None
 
@@ -14,6 +16,15 @@ class DisabledVectorStore(VectorStore):
         return []
 
     async def delete_book(self, owner_scope: str, book_id: int, knowledge_version: str | None = None) -> int:
+        return 0
+
+    async def delete_chapter(
+        self,
+        owner_scope: str,
+        book_id: int,
+        chapter_id: int,
+        knowledge_version: str | None = None,
+    ) -> int:
         return 0
 
     async def health(self) -> dict[str, Any]:

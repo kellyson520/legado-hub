@@ -48,11 +48,27 @@ class CandidateExtractor:
     PERSON_STOPWORDS = {
         "之后", "之前", "时候", "地方", "东西", "事情", "世界", "开始", "结束", "已经",
         "正在", "突然", "慢慢", "渐渐", "有些", "很多", "周围", "其中", "这个", "那个",
-        "自己", "因为", "所以", "无法", "可能", "强烈", "周边", "附近",
+        "自己", "因为", "所以", "无法", "可能", "强烈", "周边", "附近", "毕竟", "麻烦",
+        "成长", "安全", "危险", "平地", "平常", "平日里", "方才", "何处", "无异", "明天",
+        "高呼", "高深", "凌乱", "水灵", "清丽", "屈辱", "高潮",
+        "任由", "常识", "强制",
     }
     TITLE_WORDS = {
         "姑娘", "公子", "小姐", "少爷", "师兄", "师姐", "师弟", "师妹", "殿下", "前辈",
         "大人", "掌门", "长老", "夫人", "先生", "老祖", "道友", "将军", "圣女", "圣子",
+    }
+    GENERIC_PERSON_TERMS = TITLE_WORDS | {
+        "郎君", "孩子", "儿子", "女儿", "子嗣", "少年", "少女", "女子", "男人", "女人",
+        "女帝", "圣上", "太子", "世子", "王上", "小娘子", "胖子", "刺客", "侍女", "主人",
+    }
+    NAME_PREFIXES = set("与和及向对把将为让在从由给被同陪随替见看望")
+    NAME_TAIL_STOPWORDS = set("很便是算赶冲问说道看望正在已经的了着与和在向其他她并")
+    NAME_AFTER_PARTICLES = set("也的了着就便是在向和与及")
+    ADDRESS_SUFFIXES = set("兄姐哥妹弟叔姨爷")
+    TITLE_PHRASES = {
+        "姑娘", "小姐", "公子", "元帅", "神女", "仙子", "师兄", "师姐", "师弟", "师妹",
+        "殿下", "前辈", "大人", "掌门", "长老", "夫人", "先生", "老祖", "道友", "将军",
+        "圣女", "圣子",
     }
     ITEM_ACTIONS = {
         "取出", "拿出", "掏出", "获得", "得到", "捡到", "握住", "拿着", "佩戴", "戴上",
@@ -73,18 +89,55 @@ class CandidateExtractor:
     SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;\n]?", re.UNICODE)
 
     def __init__(self, learning_profile: dict[str, Any] | None = None):
-        self.learning_profile = learning_profile or {}
+        self.set_learning_profile(learning_profile)
         self._surname_chars = "".join(sorted(self.COMMON_SURNAMES))
         context = "|".join(sorted(self.PERSON_CONTEXT, key=len, reverse=True))
-        self._person_pattern = re.compile(
-            rf"(?P<name>[{re.escape(self._surname_chars)}][\u4e00-\u9fff]{{1,2}})(?=(?:{context})|[，。！？!?；;、：:\s]|$)"
-        )
+        self._person_pattern = re.compile(rf"(?P<name>[{re.escape(self._surname_chars)}][\u4e00-\u9fff]{{1,2}})")
         self._explicit_person_pattern = re.compile(
-            r"(?:叫作|名叫|名字叫|名为|原名|自称|又称|姓)(?P<name>[\u4e00-\u9fff]{2,6})"
+            r"(?:叫作|名叫|名字叫|名为|原名|自称|又称|本名|取名|名作|称作)(?P<name>[\u4e00-\u9fff]{2,6})"
+        )
+        self._explicit_surname_pattern = re.compile(
+            r"(?:(?:^|[，。！？!?；;、：:\s])姓|(?:他|她|我|你|其|父|母|随父|随母)姓)"
+            r"(?P<name>[\u4e00-\u9fff]{2,4})(?=[，。！？!?；;、：:\s的]|$)"
         )
         action = "|".join(sorted(self.ITEM_ACTIONS, key=len, reverse=True))
         self._item_action_pattern = re.compile(rf"(?:{action})(?:了|着|一把|一柄|一枚|的)?(?P<tail>[\u4e00-\u9fff]{{2,12}})")
-        self._nickname_pattern = re.compile(r"(?P<name>[\u4e00-\u9fff]{1,3}(?:子|哥|姐|儿|爷))(?=[，。！？!?；;、：:\s]|$)")
+        self._nickname_pattern = re.compile(r"(?P<name>[\u4e00-\u9fff]{1,3}(?:哥|姐|儿|爷))(?=[，。！？!?；;、：:\s]|$)")
+
+    def set_learning_profile(self, learning_profile: dict[str, Any] | None = None) -> None:
+        """Install a bounded, book-scoped profile for the next extraction run."""
+        profile = dict(learning_profile or {})
+        aliases = {}
+        for raw_alias, raw_canonical in dict(profile.get("aliases") or {}).items():
+            alias = str(raw_alias or "").strip()
+            canonical = str(raw_canonical or "").strip()
+            if alias and canonical and alias != canonical:
+                aliases[alias] = canonical
+
+        negative_terms = sorted(
+            {
+                str(term or "").strip()
+                for term in profile.get("negative_terms") or []
+                if str(term or "").strip()
+            }
+        )
+        feature_weights = {}
+        for raw_feature, raw_weight in dict(profile.get("feature_weights") or {}).items():
+            feature = str(raw_feature or "").strip()
+            if not feature:
+                continue
+            try:
+                weight = float(raw_weight)
+            except (TypeError, ValueError):
+                continue
+            feature_weights[feature] = max(0.5, min(1.5, weight))
+
+        self.learning_profile = {
+            "profile_version": str(profile.get("profile_version") or "").strip(),
+            "aliases": aliases,
+            "negative_terms": negative_terms,
+            "feature_weights": feature_weights,
+        }
 
     def extract(
         self,
@@ -102,24 +155,42 @@ class CandidateExtractor:
         self._extract_characters(candidates, normalized, sentences, book_id, chapter_id, chapter_num)
         self._extract_items(candidates, normalized, sentences, book_id, chapter_id, chapter_num)
         self._extract_suffix_entities(candidates, normalized, sentences, book_id, chapter_id, chapter_num)
+        relationships = self._extract_relationships(book_id, chapter_id, chapter_num, sentences, candidates)
+        relation_names = {
+            name
+            for relationship in relationships
+            for name in (relationship.source_entity, relationship.target_entity)
+        }
+        self._finalize_candidates(candidates, relation_names)
         entities = [self._to_entity(book_id, chapter_num, candidate) for candidate in candidates.values() if candidate.status != "rejected"]
-        relations = self._extract_relationships(book_id, chapter_num, sentences, candidates)
-        return entities, relations
+        relationships = [
+            relationship
+            for relationship in relationships
+            if self._candidate_is_eligible(candidates, relationship.source_entity)
+            and self._candidate_is_eligible(candidates, relationship.target_entity)
+        ]
+        return entities, relationships
 
     def _extract_characters(self, candidates, content, sentences, book_id, chapter_id, chapter_num):
+        repeated_long_names: dict[str, list[CandidateEvidence]] = defaultdict(list)
         for start, end, sentence in sentences:
             for match in self._person_pattern.finditer(sentence):
-                name = self._clean_name(match.group("name"))
-                if not self._valid_person(name):
+                name, name_start, name_length = self._select_person_span(sentence, match.start())
+                if not name or not self._valid_person(name) or not self._person_boundary(sentence, name_start, len(name)):
                     continue
-                absolute_start = start + match.start("name")
-                self._add_candidate(
-                    candidates,
-                    name,
-                    EntityType.CHARACTER,
-                    self._evidence(chapter_id, chapter_num, content, absolute_start, absolute_start + len(name), ("surname", "context")),
-                    score_hint=0.45,
+                absolute_start = start + name_start
+                evidence = self._evidence(
+                    chapter_id,
+                    chapter_num,
+                    content,
+                    absolute_start,
+                    absolute_start + len(name),
+                    ("surname", "context"),
                 )
+                if name_length >= 3:
+                    repeated_long_names[name].append(evidence)
+                else:
+                    self._add_candidate(candidates, name, EntityType.CHARACTER, evidence, score_hint=0.45)
             for match in self._explicit_person_pattern.finditer(sentence):
                 name = self._clean_name(match.group("name"))
                 if self._valid_person(name) and not self._looks_like_item(name):
@@ -129,11 +200,29 @@ class CandidateExtractor:
                         name,
                         EntityType.CHARACTER,
                         self._evidence(chapter_id, chapter_num, content, absolute_start, absolute_start + len(name), ("explicit_name",)),
-                        score_hint=0.7,
+                        score_hint=0.8,
+                    )
+            for match in self._explicit_surname_pattern.finditer(sentence):
+                name = self._clean_name(match.group("name"))
+                if self._valid_person(name) and not self._looks_like_item(name):
+                    absolute_start = start + match.start("name")
+                    self._add_candidate(
+                        candidates,
+                        name,
+                        EntityType.CHARACTER,
+                        self._evidence(
+                            chapter_id,
+                            chapter_num,
+                            content,
+                            absolute_start,
+                            absolute_start + len(name),
+                            ("explicit_surname",),
+                        ),
+                        score_hint=0.8,
                     )
             for match in self._nickname_pattern.finditer(sentence):
                 name = self._clean_name(match.group("name"))
-                if name not in {"孩子", "儿子", "女儿", "孙子", "孙女", "外甥"}:
+                if self._valid_nickname(sentence, match.start("name"), name):
                     absolute_start = start + match.start("name")
                     self._add_candidate(
                         candidates,
@@ -142,6 +231,33 @@ class CandidateExtractor:
                         self._evidence(chapter_id, chapter_num, content, absolute_start, absolute_start + len(name), ("nickname",)),
                         score_hint=0.4,
                     )
+        variants_by_prefix: dict[str, set[str]] = defaultdict(set)
+        for name in repeated_long_names:
+            variants_by_prefix[name[:2]].add(name)
+        for name, evidence_items in repeated_long_names.items():
+            if len(evidence_items) < 2:
+                continue
+            short_name = name[:2]
+            if short_name in self.PERSON_STOPWORDS or short_name in self.GENERIC_PERSON_TERMS:
+                continue
+            if len(variants_by_prefix[short_name]) > 1:
+                for evidence in evidence_items:
+                    self._add_candidate(
+                        candidates,
+                        short_name,
+                        EntityType.CHARACTER,
+                        evidence,
+                        score_hint=0.45,
+                    )
+                continue
+            for evidence in evidence_items:
+                self._add_candidate(
+                    candidates,
+                    name,
+                    EntityType.CHARACTER,
+                    evidence,
+                    score_hint=0.58,
+                )
 
     def _extract_items(self, candidates, content, sentences, book_id, chapter_id, chapter_num):
         for start, end, sentence in sentences:
@@ -189,20 +305,24 @@ class CandidateExtractor:
                         score_hint=0.38,
                     )
 
-    def _extract_relationships(self, book_id, chapter_num, sentences, candidates):
+    def _extract_relationships(self, book_id, chapter_id, chapter_num, sentences, candidates):
         characters = [candidate for (name, entity_type), candidate in candidates.items() if entity_type == EntityType.CHARACTER and candidate.status != "rejected"]
         factions = [candidate for (name, entity_type), candidate in candidates.items() if entity_type == EntityType.FACTION and candidate.status != "rejected"]
         relationships: dict[tuple[str, str, RelationType], NovelRelationship] = {}
         for start, end, sentence in sentences:
-            local_chars = [candidate for candidate in characters if candidate.name in sentence]
+            local_chars = [candidate for candidate in characters if self._candidate_position(candidate, sentence) >= 0]
             for left, right in combinations(local_chars, 2):
-                left_pos = sentence.find(left.name)
-                right_pos = sentence.find(right.name)
+                left_pos = self._candidate_position(left, sentence)
+                right_pos = self._candidate_position(right, sentence)
                 if left_pos < 0 or right_pos < 0:
                     continue
                 lo, hi = sorted((left_pos, right_pos))
-                span = sentence[lo : hi + max(len(left.name), len(right.name)) + 24]
-                relation_type = self._relation_type(span)
+                if hi - lo - min(len(left.name), len(right.name)) > 32:
+                    continue
+                relation_type = self._relation_type(
+                    sentence[lo + min(len(left.name), len(right.name)) : hi]
+                    + sentence[hi + max(len(left.name), len(right.name)) : hi + max(len(left.name), len(right.name)) + 16]
+                )
                 if relation_type is None:
                     continue
                 source, target = (left, right) if left_pos <= right_pos else (right, left)
@@ -210,7 +330,7 @@ class CandidateExtractor:
                     source_name, target_name = sorted((source.name, target.name))
                 else:
                     source_name, target_name = source.name, target.name
-                evidence = asdict(self._evidence(chapter_id=0, chapter_num=chapter_num, content=sentence, start_offset=0, end_offset=len(sentence), features=("relation", relation_type.value)))
+                evidence = asdict(self._evidence(chapter_id=chapter_id, chapter_num=chapter_num, content=sentence, start_offset=0, end_offset=len(sentence), features=("relation", relation_type.value)))
                 key = (source_name, target_name, relation_type)
                 relationships[key] = NovelRelationship(
                     book_id=book_id,
@@ -225,7 +345,7 @@ class CandidateExtractor:
             for character in local_chars:
                 for faction in factions:
                     if re.search(rf"{re.escape(character.name)}(?:加入|属于|是){re.escape(faction.name)}", sentence):
-                        evidence = asdict(self._evidence(0, chapter_num, sentence, 0, len(sentence), ("faction_membership",)))
+                        evidence = asdict(self._evidence(chapter_id, chapter_num, sentence, 0, len(sentence), ("faction_membership",)))
                         key = (character.name, faction.name, RelationType.SUBORDINATE)
                         relationships[key] = NovelRelationship(
                             book_id=book_id,
@@ -246,34 +366,72 @@ class CandidateExtractor:
         return None
 
     def _add_candidate(self, candidates, name, entity_type, evidence, *, score_hint, subtype=""):
-        key = (name, entity_type)
-        current = candidates.get(key)
+        raw_name = self._clean_name(str(name or ""))
+        canonical_name = self._canonical_name(raw_name)
         profile_negative = set(self.learning_profile.get("negative_terms", []))
-        if name in profile_negative or name in self.PERSON_STOPWORDS:
+        if (
+            not canonical_name
+            or raw_name in profile_negative
+            or canonical_name in profile_negative
+            or raw_name in self.PERSON_STOPWORDS
+            or canonical_name in self.PERSON_STOPWORDS
+        ):
             return
+        weighted_score = self._weighted_score(score_hint, evidence.features)
+        aliases = [raw_name] if raw_name and raw_name != canonical_name else []
+        key = (canonical_name, entity_type)
+        current = candidates.get(key)
         if current is None:
             candidates[key] = LocalCandidate(
-                name=name,
+                name=canonical_name,
                 entity_type=entity_type,
-                score=score_hint,
+                score=weighted_score,
                 mentions=1,
                 evidence=[evidence],
+                aliases=aliases,
                 subtype=subtype,
+                status=self._status(weighted_score, 1),
             )
             return
         current.mentions += 1
-        current.score = min(1.0, current.score + 0.12)
+        current.score = min(1.0, current.score + 0.12 * self._feature_multiplier(evidence.features))
         if evidence.text not in {item.text for item in current.evidence}:
             current.evidence.append(evidence)
+        current.aliases = list(dict.fromkeys([*(current.aliases or []), *aliases]))
         if subtype and not current.subtype:
             current.subtype = subtype
         current.status = self._status(current.score, current.mentions)
 
+    def _finalize_candidates(self, candidates, relation_names: set[str]) -> None:
+        for candidate in candidates.values():
+            if (
+                candidate.status == "candidate"
+                and candidate.mentions < 2
+                and candidate.name not in relation_names
+            ):
+                candidate.status = "rejected"
+
+    @staticmethod
+    def _candidate_is_eligible(candidates, name: str) -> bool:
+        return any(
+            candidate.name == name and candidate.status != "rejected"
+            for candidate in candidates.values()
+        )
+
     def _to_entity(self, book_id, chapter_num, candidate):
-        confidence = min(1.0, max(0.0, candidate.score + min(candidate.mentions - 1, 3) * 0.04))
+        confidence = min(1.0, max(0.0, candidate.score))
         candidate.score = confidence
-        candidate.status = self._status(confidence, candidate.mentions)
         description = candidate.evidence[0].text if candidate.evidence else f"章节中出现的{candidate.entity_type.value}"
+        attributes = {
+            "extraction_status": candidate.status,
+            "confidence": round(confidence, 4),
+            "subtype": candidate.subtype,
+            "evidence": [asdict(item) for item in candidate.evidence[:5]],
+            "mention_count": candidate.mentions,
+        }
+        profile_version = str(self.learning_profile.get("profile_version") or "").strip()
+        if profile_version:
+            attributes["learning_profile_version"] = profile_version
         return NovelEntity(
             book_id=book_id,
             name=candidate.name,
@@ -284,14 +442,37 @@ class CandidateExtractor:
             last_appearance_ch=chapter_num,
             appearance_count=candidate.mentions,
             importance_score=max(1, min(5, int(round(confidence * 5)))),
-            attributes={
-                "extraction_status": candidate.status,
-                "confidence": round(confidence, 4),
-                "subtype": candidate.subtype,
-                "evidence": [asdict(item) for item in candidate.evidence[:5]],
-                "mention_count": candidate.mentions,
-            },
+            attributes=attributes,
         )
+
+    def _canonical_name(self, name: str) -> str:
+        current = str(name or "").strip()
+        aliases = self.learning_profile.get("aliases") or {}
+        seen = set()
+        while current in aliases and current not in seen:
+            seen.add(current)
+            current = str(aliases[current] or "").strip()
+        return current
+
+    def _feature_multiplier(self, features: Iterable[str]) -> float:
+        weights = self.learning_profile.get("feature_weights") or {}
+        active = []
+        for feature in features or ():
+            try:
+                active.append(max(0.5, min(1.5, float(weights.get(feature, 1.0)))))
+            except (TypeError, ValueError):
+                active.append(1.0)
+        return sum(active) / len(active) if active else 1.0
+
+    def _weighted_score(self, score_hint: float, features: Iterable[str]) -> float:
+        return max(0.0, min(1.0, float(score_hint) * self._feature_multiplier(features)))
+
+    @staticmethod
+    def _candidate_position(candidate: LocalCandidate, sentence: str) -> int:
+        positions = [sentence.find(candidate.name)]
+        positions.extend(sentence.find(alias) for alias in candidate.aliases or [])
+        valid = [position for position in positions if position >= 0]
+        return min(valid) if valid else -1
 
     def _evidence(self, chapter_id, chapter_num, content, start_offset, end_offset, features):
         start = max(0, start_offset - 60)
@@ -312,7 +493,64 @@ class CandidateExtractor:
                 yield match.start(), match.end(), text
 
     def _valid_person(self, name):
-        return 2 <= len(name) <= 4 and name not in self.PERSON_STOPWORDS and not self._looks_like_item(name)
+        return (
+            2 <= len(name) <= 4
+            and name not in self.PERSON_STOPWORDS
+            and name not in self.GENERIC_PERSON_TERMS
+            and not self._looks_like_item(name)
+        )
+
+    def _select_person_span(self, sentence: str, start: int) -> tuple[str, int, int]:
+        """Prefer a complete three-character name, then fall back to two."""
+        if self._looks_like_title_phrase_at(sentence, start):
+            return "", start, 0
+        for length in (3, 2):
+            name = sentence[start : start + length]
+            if len(name) != length:
+                continue
+            if length == 3 and (name in self.PERSON_STOPWORDS or name in self.GENERIC_PERSON_TERMS):
+                return "", start, 0
+            if not self._valid_person(name):
+                continue
+            if length == 2 and name[-1] in self.ADDRESS_SUFFIXES:
+                return "", start, 0
+            if not all(self._is_han(char) for char in name):
+                continue
+            if length == 3 and sentence[start : start + 2] in self.GENERIC_PERSON_TERMS:
+                continue
+            if length == 3 and name[-1] in self.NAME_TAIL_STOPWORDS:
+                continue
+            return name, start, length
+        return "", start, 0
+
+    def _person_boundary(self, sentence: str, start: int, length: int) -> bool:
+        if start > 0 and self._is_han(sentence[start - 1]) and sentence[start - 1] not in self.NAME_PREFIXES:
+            return False
+        return True
+
+    def _looks_like_title_phrase_at(self, sentence: str, start: int) -> bool:
+        for title in self.TITLE_PHRASES:
+            if (
+                sentence[start + 1 : start + 1 + len(title)] == title
+                or sentence[start + 2 : start + 2 + len(title)] == title
+            ):
+                return True
+        return False
+
+    def _valid_nickname(self, sentence: str, start: int, name: str) -> bool:
+        return bool(
+            name
+            and name not in self.GENERIC_PERSON_TERMS
+            and name not in self.PERSON_STOPWORDS
+            and "的" not in name
+            and name[0] not in {"他", "她", "这", "那", "一", "每"}
+            and not self._looks_like_title_phrase_at(sentence, start)
+            and self._person_boundary(sentence, start, len(name))
+        )
+
+    @staticmethod
+    def _is_han(char: str) -> bool:
+        return bool(char) and "\u4e00" <= char <= "\u9fff"
 
     def _looks_like_item(self, name):
         return name.endswith(self.ITEM_SUFFIXES) and len(name) >= 3

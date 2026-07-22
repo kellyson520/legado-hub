@@ -664,6 +664,30 @@ class NovelIndexStateModel(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class NovelAdjudicationCandidateModel(Base):
+    __tablename__ = "novel_adjudication_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_scope", "book_id", "chapter_id", "candidate_key",
+            name="ux_novel_adjudication_scope_book_chapter_key",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    owner_scope = Column(String, nullable=False, index=True)
+    book_id = Column(Integer, nullable=False, index=True)
+    chapter_id = Column(Integer, nullable=True, index=True)
+    candidate_key = Column(String, nullable=False)
+    content_hash = Column(String, nullable=False, default="")
+    candidate_payload = Column(Text, nullable=False, default="{}")
+    evidence_payload = Column(Text, nullable=False, default="[]")
+    status = Column(String, nullable=False, default="pending", index=True)
+    decision_payload = Column(Text, nullable=False, default="{}")
+    attempts = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class NovelReadingProgressModel(Base):
     __tablename__ = "novel_reading_progress"
 

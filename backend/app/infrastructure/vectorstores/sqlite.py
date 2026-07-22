@@ -257,6 +257,43 @@ class SQLiteVectorStore(VectorStore):
         await self._db.commit()
         return cursor.rowcount
 
+    async def delete_chapter(
+        self,
+        owner_scope: str,
+        book_id: int,
+        chapter_id: int,
+        knowledge_version: str | None = None,
+    ) -> int:
+        if not self._uses_async_connection:
+            db, owned = self._open_sync_session()
+            try:
+                self._ensure_sync_schema(db)
+                query = db.query(NovelVectorModel).filter(
+                    NovelVectorModel.owner_scope == owner_scope,
+                    NovelVectorModel.book_id == book_id,
+                    NovelVectorModel.chapter_id == chapter_id,
+                )
+                if knowledge_version is not None:
+                    query = query.filter(NovelVectorModel.knowledge_version == knowledge_version)
+                count = query.delete(synchronize_session=False)
+                db.commit()
+                return int(count or 0)
+            finally:
+                if owned:
+                    db.close()
+        await self._ensure_async_schema()
+        conditions = "owner_scope=? AND book_id=? AND chapter_id=?"
+        params: list[object] = [owner_scope, book_id, chapter_id]
+        if knowledge_version is not None:
+            conditions += " AND knowledge_version=?"
+            params.append(knowledge_version)
+        cursor = await self._db.execute(
+            f"DELETE FROM novel_vectors WHERE {conditions}",
+            params,
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
     async def health(self) -> dict[str, Any]:
         try:
             if self._uses_async_connection:

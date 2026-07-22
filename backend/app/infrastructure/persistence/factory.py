@@ -618,6 +618,13 @@ async def build_novel_repository() -> SqliteNovelRepository:
     return SqliteNovelRepository(_novel_database)
 
 
+def build_novel_adaptive_learning_service(repo):
+    """Build the conservative learning facade over the shared novel repository."""
+    from app.application.services.novel_understanding.adaptive_learning import AdaptiveLearningService
+
+    return AdaptiveLearningService(repo=repo)
+
+
 async def close_novel_repository() -> None:
     global _novel_database
     async with _novel_database_lock:

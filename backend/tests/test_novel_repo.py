@@ -34,6 +34,7 @@ class TestNovelRepositoryInterface:
             'save_relationship', 'save_relationships_batch', 'get_relationships_by_book', 'get_relationships_by_entity',
             'save_event', 'save_events_batch', 'get_events',
             'save_state_change', 'save_state_changes_batch', 'get_state_changes',
+            'upsert_adjudication_candidate', 'list_adjudication_candidates', 'update_adjudication_candidate',
         ]
         for method in required:
             assert hasattr(NovelRepository, method), f"Missing {method}"
@@ -255,3 +256,203 @@ class TestSqliteNovelRepository:
         assert len(states) == 1
         assert states[0].chapter_id == 0
         assert await repo.list_index_states("user:2", book.id) == []
+
+    async def test_get_chapters_by_book_includes_zero_number_chapters_by_default(self, repo):
+        book = await repo.save_book(
+            "user:1", NovelBook(book_url="https://chapter-zero.test", owner_scope="user:1")
+        )
+        await repo.save_chapter(
+            "user:1",
+            NovelChapter(book_id=book.id, canonical_full="P0", canonical_num=0, chapter_title="序章"),
+        )
+
+        chapters = await repo.get_chapters_by_book("user:1", book.id)
+
+        assert [chapter.canonical_num for chapter in chapters] == [0]
+
+    async def test_legacy_evidence_column_order_is_read_by_name(self):
+        """Evidence added by ALTER TABLE must not be decoded by SELECT * offsets."""
+        import aiosqlite
+
+        db = await aiosqlite.connect(":memory:")
+        try:
+            with open("app/database_migrations/novel_schema.sql", encoding="utf-8") as schema:
+                await db.executescript(schema.read())
+            book = await self._save_book_for_repo(db, "https://legacy-evidence.test")
+            await db.execute("DROP TABLE novel_relationships")
+            await db.execute(
+                """CREATE TABLE novel_relationships (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_id INTEGER NOT NULL,
+                    source_entity TEXT NOT NULL,
+                    target_entity TEXT NOT NULL,
+                    relation_type TEXT NOT NULL DEFAULT 'custom',
+                    description TEXT NOT NULL DEFAULT '',
+                    since_chapter INTEGER NOT NULL DEFAULT 0,
+                    until_chapter INTEGER,
+                    confidence REAL NOT NULL DEFAULT 0.8,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    evidence TEXT NOT NULL DEFAULT '[]'
+                )"""
+            )
+            await db.execute(
+                """INSERT INTO novel_relationships (
+                    book_id, source_entity, target_entity, relation_type, description,
+                    since_chapter, confidence, evidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (book.id, "江轩", "周宁", "ally", "并肩作战", 0, 0.9, '[{"text":"旧库证据"}]'),
+            )
+            await db.execute("DROP TABLE novel_events")
+            await db.execute(
+                """CREATE TABLE novel_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_id INTEGER NOT NULL,
+                    chapter_id INTEGER NOT NULL,
+                    chapter_num INTEGER NOT NULL,
+                    event_type TEXT NOT NULL DEFAULT 'custom',
+                    description TEXT NOT NULL DEFAULT '',
+                    participants TEXT NOT NULL DEFAULT '[]',
+                    location TEXT NOT NULL DEFAULT '',
+                    importance INTEGER NOT NULL DEFAULT 3,
+                    related_entities TEXT NOT NULL DEFAULT '[]',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    evidence TEXT NOT NULL DEFAULT '[]'
+                )"""
+            )
+            await db.execute(
+                """INSERT INTO novel_events (
+                    book_id, chapter_id, chapter_num, event_type, description,
+                    participants, location, importance, related_entities, evidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (book.id, 0, 0, "battle", "旧事件", "[]", "", 3, "[]", '[{"text":"旧事件证据"}]'),
+            )
+            await db.execute("DROP TABLE novel_state_changes")
+            await db.execute(
+                """CREATE TABLE novel_state_changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    book_id INTEGER NOT NULL,
+                    entity_name TEXT NOT NULL,
+                    chapter_id INTEGER NOT NULL,
+                    chapter_num INTEGER NOT NULL,
+                    field_name TEXT NOT NULL DEFAULT 'custom',
+                    before_value TEXT NOT NULL DEFAULT '',
+                    after_value TEXT NOT NULL DEFAULT '',
+                    trigger_event TEXT NOT NULL DEFAULT '',
+                    confidence REAL NOT NULL DEFAULT 0.8,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    evidence TEXT NOT NULL DEFAULT '[]'
+                )"""
+            )
+            await db.execute(
+                """INSERT INTO novel_state_changes (
+                    book_id, entity_name, chapter_id, chapter_num, field_name,
+                    before_value, after_value, trigger_event, confidence, evidence
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (book.id, "玄天剑", 0, 0, "possession", "", "江轩", "获得", 0.9, '[{"text":"旧状态证据"}]'),
+            )
+            await db.commit()
+
+            legacy_repo = SqliteNovelRepository(db)
+            assert (await legacy_repo.get_relationships("user:1", book.id, limit=10))[0].evidence == [{"text": "旧库证据"}]
+            assert (await legacy_repo.get_events("user:1", book.id, limit=10))[0].evidence == [{"text": "旧事件证据"}]
+            assert (await legacy_repo.get_state_changes("user:1", book.id, limit=10))[0].evidence == [{"text": "旧状态证据"}]
+        finally:
+            await db.close()
+
+    @staticmethod
+    async def _save_book_for_repo(db, url):
+        return await SqliteNovelRepository(db).save_book(
+            "user:1", NovelBook(book_url=url, book_name="旧库证据书", owner_scope="user:1")
+        )
+
+    async def test_entity_evidence_is_merged_across_snapshots(self, repo):
+        book = await repo.save_book(
+            "user:1", NovelBook(book_url="https://entity-evidence.test", owner_scope="user:1")
+        )
+        await repo.replace_book_knowledge(
+            "user:1",
+            book.id,
+            [
+                {
+                    "chapter_id": 1,
+                    "chapter_num": 1,
+                    "entities": [
+                        {
+                            "name": "江轩",
+                            "entity_type": "character",
+                            "appearance_count": 1,
+                            "attributes": {"evidence": [{"text": "第一处证据"}], "source": "local"},
+                        }
+                    ],
+                },
+                {
+                    "chapter_id": 2,
+                    "chapter_num": 2,
+                    "entities": [
+                        {
+                            "name": "江轩",
+                            "entity_type": "character",
+                            "appearance_count": 1,
+                            "attributes": {"evidence": [{"text": "第二处证据"}], "source": "later"},
+                        }
+                    ],
+                },
+            ],
+        )
+
+        entity = (await repo.list_entities("user:1", book.id, limit=10))[0]
+        assert {item["text"] for item in entity.attributes["evidence"]} == {"第一处证据", "第二处证据"}
+
+    async def test_adjudication_candidate_round_trips_and_updates_status(self, repo):
+        from app.domain.entities.novel_runtime import NovelAdjudicationCandidate
+
+        book = await repo.save_book(
+            "user:1", NovelBook(book_url="https://adjudication.test", owner_scope="user:1")
+        )
+        candidate = NovelAdjudicationCandidate(
+            owner_scope="user:1",
+            book_id=book.id,
+            chapter_id=0,
+            candidate_key="candidate:江轩",
+            content_hash="hash-candidate",
+            candidate_payload={"name": "江轩", "status": "candidate"},
+            evidence_payload=[{"id": "e1", "text": "证据"}],
+        )
+
+        saved = await repo.upsert_adjudication_candidate(candidate)
+        assert saved.id > 0
+        pending = await repo.list_adjudication_candidates("user:1", book.id, status="pending")
+        assert pending[0].candidate_payload["name"] == "江轩"
+
+        assert await repo.update_adjudication_candidate(
+            "user:1",
+            saved.id,
+            status="accept",
+            decision={"verdict": "accept", "evidence_ids": ["e1"]},
+            attempts=1,
+        )
+        accepted = await repo.list_adjudication_candidates("user:1", book.id, status="accept")
+        assert accepted[0].decision["verdict"] == "accept"
+        assert accepted[0].attempts == 1
+
+    async def test_claim_legacy_scope_moves_adjudication_candidates(self, repo):
+        from app.domain.entities.novel_runtime import NovelAdjudicationCandidate
+
+        book = await repo.save_book(
+            "legacy", NovelBook(book_url="https://legacy-adjudication.test", owner_scope="legacy")
+        )
+        await repo.upsert_adjudication_candidate(
+            NovelAdjudicationCandidate(
+                owner_scope="legacy",
+                book_id=book.id,
+                chapter_id=1,
+                candidate_key="candidate:legacy",
+                candidate_payload={"name": "旧候选"},
+            )
+        )
+
+        counts = await repo.claim_legacy_scope("user:42")
+
+        assert counts["novel_adjudication_candidates"] == 1
+        candidates = await repo.list_adjudication_candidates("user:42", book.id)
+        assert [item.candidate_payload["name"] for item in candidates] == ["旧候选"]

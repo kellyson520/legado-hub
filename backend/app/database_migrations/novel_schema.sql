@@ -50,6 +50,26 @@ CREATE TABLE IF NOT EXISTS novel_index_states (
 CREATE INDEX IF NOT EXISTS idx_novel_index_states_owner_book
     ON novel_index_states(owner_scope, book_id, chapter_id);
 
+CREATE TABLE IF NOT EXISTS novel_adjudication_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_scope TEXT NOT NULL,
+    book_id INTEGER NOT NULL,
+    chapter_id INTEGER,
+    candidate_key TEXT NOT NULL,
+    content_hash TEXT NOT NULL DEFAULT '',
+    candidate_payload TEXT NOT NULL DEFAULT '{}',
+    evidence_payload TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',
+    decision_payload TEXT NOT NULL DEFAULT '{}',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE,
+    UNIQUE(owner_scope, book_id, chapter_id, candidate_key)
+);
+CREATE INDEX IF NOT EXISTS idx_novel_adjudication_scope_status
+    ON novel_adjudication_candidates(owner_scope, book_id, status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS novel_reading_progress (
     owner_scope TEXT NOT NULL,
     book_id INTEGER NOT NULL,
