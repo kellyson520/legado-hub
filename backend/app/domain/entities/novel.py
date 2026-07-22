@@ -211,6 +211,7 @@ class NovelRelationship:
     since_chapter: int = 0
     until_chapter: Optional[int] = None  # None 表示持续到当前
     confidence: float = 0.8
+    evidence: List[Dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
 
 
