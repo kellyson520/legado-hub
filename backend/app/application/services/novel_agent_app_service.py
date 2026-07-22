@@ -409,7 +409,7 @@ class NovelAgentAppService:
             )
         return {
             "messages": messages,
-            "tools": await self.list_tools(owner_scope, book_id),
+            "tools": self._model_tool_schemas(await self.list_tools(owner_scope, book_id)),
             "tool_choice": "auto",
             "temperature": 0,
         }, resolution
@@ -1058,3 +1058,42 @@ class NovelAgentAppService:
         if name in {"character.profile", "character.count", "character.aliases", "character.relations"}:
             return {"type": "object", "properties": {"name": {"type": "string"}, "book_id": {"type": "integer"}}, "required": ["name"], "additionalProperties": False}
         return {"type": "object", "properties": {"book_id": {"type": "integer"}, "chapter_id": {"type": "integer"}}, "additionalProperties": False}
+
+    @staticmethod
+    def _model_tool_schemas(tools: list[dict]) -> list[dict]:
+        schemas = []
+        for item in tools or []:
+            if not isinstance(item, dict):
+                continue
+            function = item.get("function")
+            if isinstance(function, dict):
+                name = str(function.get("name") or "").strip()
+                if not name:
+                    continue
+                parameters = function.get("parameters")
+                if not isinstance(parameters, dict):
+                    parameters = {"type": "object", "properties": {}, "additionalProperties": False}
+                schemas.append({
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": str(function.get("description") or name),
+                        "parameters": parameters,
+                    },
+                })
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            parameters = item.get("parameters")
+            if not isinstance(parameters, dict):
+                parameters = {"type": "object", "properties": {}, "additionalProperties": False}
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": str(item.get("description") or name),
+                    "parameters": parameters,
+                },
+            })
+        return schemas

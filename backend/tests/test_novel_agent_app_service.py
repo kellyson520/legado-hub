@@ -196,6 +196,26 @@ async def test_reader_context_contains_scoped_evidence_and_untrusted_boundary(se
 
 
 @pytest.mark.asyncio
+async def test_model_payload_serializes_novel_tools_as_openai_functions(service):
+    conversation = await service.create_conversation("user:1", book_id=7, entrypoint="book")
+
+    await service.send_message(
+        "user:1",
+        conversation["id"],
+        "这本书讲述的什么故事",
+        entrypoint="book",
+        book_id=7,
+    )
+
+    tools = service._platform.calls[-1]["payload"]["tools"]
+    assert tools
+    assert all(item["type"] == "function" for item in tools)
+    assert all("name" in item["function"] for item in tools)
+    assert all("description" in item["function"] for item in tools)
+    assert all("parameters" in item["function"] for item in tools)
+
+
+@pytest.mark.asyncio
 async def test_read_tool_is_scoped_and_runtime_records_accepted_result(service):
     result = await service.call_tool(
         "user:1",
