@@ -63,6 +63,28 @@ async def test_changed_chapter_is_reindexed_without_reprocessing_unchanged_chapt
 
 
 @pytest.mark.asyncio
+async def test_index_includes_chapters_with_zero_canonical_number(index_service):
+    from app.domain.entities.novel import NovelChapter
+
+    service, book_id = index_service
+    await service.repo.save_chapter(
+        "user:1",
+        NovelChapter(
+            book_id=book_id,
+            canonical_type="P",
+            canonical_full="P0",
+            canonical_num=0,
+            chapter_title="序章",
+            raw_text="江轩在序章中出现。",
+        ),
+    )
+
+    result = await service.index_book("user:1", book_id=book_id)
+
+    assert result.processed_chapters == 3
+
+
+@pytest.mark.asyncio
 async def test_structured_events_and_relationships_are_validated_and_deduplicated(index_service):
     from app.infrastructure.vectorstores.disabled import DisabledVectorStore
     from app.services.novel_understanding.embedding import EmbeddingAdapter
