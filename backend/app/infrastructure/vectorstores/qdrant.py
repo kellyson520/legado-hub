@@ -31,18 +31,22 @@ class QdrantVectorStore(VectorStore):
     async def upsert(self, records: Sequence[VectorRecord]) -> int:
         points = []
         for record in records:
+            record_key = record.record_key or f"chapter:{int(record.chapter_id)}"
             point_id = int(hashlib.sha256(
-                f"{record.owner_scope}:{record.book_id}:{record.chapter_id}:{record.knowledge_version}".encode()
+                f"{record.owner_scope}:{record.book_id}:{record.knowledge_version}:{record_key}".encode()
             ).hexdigest()[:15], 16)
+            payload = dict(record.payload or {})
+            payload.setdefault("record_key", record_key)
             points.append({
                 "id": point_id,
                 "vector": record.vector,
                 "payload": {
-                    **record.payload,
+                    **payload,
                     "owner_scope": record.owner_scope,
                     "book_id": record.book_id,
                     "chapter_id": record.chapter_id,
                     "knowledge_version": record.knowledge_version,
+                    "record_key": record_key,
                 },
             })
         response = await self._client.put(
@@ -83,6 +87,7 @@ class QdrantVectorStore(VectorStore):
             item_payload = item.get("payload") or {}
             if not isinstance(item_payload, dict):
                 raise VectorStoreUnavailable("Qdrant search returned an invalid payload shape")
+            record_key = str(item_payload.get("record_key") or f"chapter:{int(item_payload.get('chapter_id', 0))}")
             output.append(VectorRecord(
                 owner_scope=str(item_payload.get("owner_scope", owner_scope)),
                 book_id=int(item_payload.get("book_id", book_id)),
@@ -91,6 +96,7 @@ class QdrantVectorStore(VectorStore):
                 vector=[],
                 payload={key: value for key, value in item_payload.items() if key not in {"owner_scope", "book_id", "chapter_id", "knowledge_version"}},
                 score=float(item.get("score", 0.0)),
+                record_key=record_key,
             ))
         return output
 

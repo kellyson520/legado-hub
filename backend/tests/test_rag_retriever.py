@@ -168,6 +168,69 @@ async def test_scoped_retrieval_returns_evidence_and_never_uses_hash_vectors():
         await db.close()
 
 
+@pytest.mark.asyncio
+async def test_vector_memory_payload_maps_type_record_key_and_citation():
+    from app.domain.repositories.vector_store import VectorRecord
+
+    class Repo:
+        async def get_chapters_by_book(self, owner_scope, book_id, limit=100000):
+            return []
+
+        async def get_book_by_id(self, owner_scope, book_id):
+            return type("Book", (), {"book_name": "记忆书"})()
+
+        async def get_chapter_by_id(self, owner_scope, chapter_id):
+            return None
+
+        async def search_entities(self, owner_scope, book_id, query, limit=5):
+            return []
+
+        async def get_events(self, owner_scope, book_id, limit=5):
+            return []
+
+        async def get_relationships(self, owner_scope, book_id, limit=5):
+            return []
+
+    class Embedding:
+        async def embed(self, query):
+            return type("Embedding", (), {"semantic": True, "vector": [1.0]})()
+
+    class Store:
+        async def search(self, owner_scope, book_id, knowledge_version, query_vector, top_k):
+            return [
+                VectorRecord(
+                    owner_scope,
+                    book_id,
+                    0,
+                    knowledge_version,
+                    [],
+                    {
+                        "memory_type": "entity",
+                        "record_key": "entity:item:玄天剑",
+                        "item_id": 42,
+                        "chapter_id": 0,
+                        "chapter_num": 0,
+                        "card": "实体|名称: 玄天剑",
+                        "evidence": [{"chapter_id": 0, "text": "江轩取出玄天剑"}],
+                    },
+                    0.95,
+                    "entity:item:玄天剑",
+                )
+            ]
+
+    results = await RAGRetriever(Repo(), embedding=Embedding(), vector_store=Store()).retrieve(
+        "user:1", 7, "玄天剑", top_k=5, knowledge_version="k1"
+    )
+
+    memory = next(item for item in results if item.source == "vector")
+    assert memory.item_type == "entity"
+    assert memory.item_id == 42
+    assert memory.record_key == "entity:item:玄天剑"
+    assert memory.chapter_num == 0
+    assert "江轩取出玄天剑" in memory.evidence
+    assert memory.citation["chapter_id"] == 0
+
+
 class TestPromptBuilder:
     """Prompt 构建器测试"""
 

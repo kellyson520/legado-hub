@@ -7,6 +7,7 @@ import inspect
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from types import SimpleNamespace
 from typing import Any
 
 from app.domain.entities.novel import (
@@ -24,6 +25,7 @@ from app.domain.repositories.vector_store import VectorRecord
 from .auto_extractor import AutoExtractor
 from .bm25_index import BM25Index
 from .embedding import EmbeddingAdapter, EmbeddingUnavailable
+from .memory_cards import entity_memory_card, event_memory_card, memory_card_hash, state_memory_card
 
 
 @dataclass
@@ -149,7 +151,7 @@ class NovelIndexService:
                 state.extraction_payload = snapshot
                 state.extraction_status = "completed"
                 state.bm25_status = "completed"
-                await self._index_vector(owner_scope, chapter, state)
+                await self._index_vector(owner_scope, chapter, state, snapshot=snapshot)
                 state.last_success_at = datetime.now(timezone.utc)
                 if structured_status != "failed":
                     state.failure_reason = ""
@@ -431,7 +433,14 @@ class NovelIndexService:
         ]
         return relationships, events, states
 
-    async def _index_vector(self, owner_scope: str, chapter, state: NovelIndexState) -> None:
+    async def _index_vector(
+        self,
+        owner_scope: str,
+        chapter,
+        state: NovelIndexState,
+        *,
+        snapshot: dict[str, Any] | None = None,
+    ) -> None:
         if self.vector_store is None or self.embedding is None:
             state.vector_status = "disabled"
             return
@@ -443,36 +452,105 @@ class NovelIndexService:
         if not health.get("enabled"):
             state.vector_status = "disabled"
             return
+        snapshot = snapshot or {}
+        texts = [chapter.raw_text or ""]
+        metadata = [
+            {
+                "memory_type": "chapter",
+                "record_key": f"chapter:{int(chapter.id)}",
+                "chapter_id": int(chapter.id),
+                "chapter_num": int(chapter.canonical_num),
+                "title": chapter.chapter_title,
+                "text": (chapter.raw_text or "")[:2000],
+                "card_hash": memory_card_hash(chapter.raw_text or ""),
+            }
+        ]
+        for raw_entity in snapshot.get("entities") or []:
+            entity = SimpleNamespace(**raw_entity)
+            card = entity_memory_card(entity)
+            texts.append(card)
+            name = str(raw_entity.get("name") or "").strip()
+            entity_type = str(raw_entity.get("entity_type") or "entity")
+            metadata.append(
+                {
+                    "memory_type": "entity",
+                    "record_key": f"entity:{entity_type}:{name.casefold()}",
+                    "item_id": _stable_memory_id(f"entity:{entity_type}:{name.casefold()}"),
+                    "chapter_id": int(chapter.id),
+                    "chapter_num": int(chapter.canonical_num),
+                    "name": name,
+                    "card": card,
+                    "text": card,
+                    "evidence": (raw_entity.get("attributes") or {}).get("evidence", []),
+                    "card_hash": memory_card_hash(card),
+                }
+            )
+        for raw_event in snapshot.get("events") or []:
+            event = SimpleNamespace(**raw_event)
+            card = event_memory_card(event)
+            texts.append(card)
+            event_key = f"event:{int(raw_event.get('chapter_id', chapter.id))}:{memory_card_hash(card)[:16]}"
+            metadata.append(
+                {
+                    "memory_type": "event",
+                    "record_key": event_key,
+                    "item_id": _stable_memory_id(event_key),
+                    "chapter_id": int(raw_event.get("chapter_id", chapter.id)),
+                    "chapter_num": int(raw_event.get("chapter_num", chapter.canonical_num)),
+                    "card": card,
+                    "text": card,
+                    "evidence": raw_event.get("evidence", []),
+                    "card_hash": memory_card_hash(card),
+                }
+            )
+        for raw_state in snapshot.get("state_changes") or []:
+            state_change = SimpleNamespace(**raw_state)
+            card = state_memory_card(state_change)
+            texts.append(card)
+            state_key = f"state:{int(raw_state.get('chapter_id', chapter.id))}:{memory_card_hash(card)[:16]}"
+            metadata.append(
+                {
+                    "memory_type": "state",
+                    "record_key": state_key,
+                    "item_id": _stable_memory_id(state_key),
+                    "chapter_id": int(raw_state.get("chapter_id", chapter.id)),
+                    "chapter_num": int(raw_state.get("chapter_num", chapter.canonical_num)),
+                    "card": card,
+                    "text": card,
+                    "evidence": raw_state.get("evidence", []),
+                    "card_hash": memory_card_hash(card),
+                }
+            )
         try:
-            embedding = await self.embedding.embed(chapter.raw_text or "")
+            embed_batch = getattr(self.embedding, "embed_batch", None)
+            if callable(embed_batch):
+                embeddings = await embed_batch(texts)
+            else:
+                embeddings = [await self.embedding.embed(text) for text in texts]
         except Exception:
             state.vector_status = "failed"
             return
-        if not getattr(embedding, "semantic", False):
+        if len(embeddings) != len(metadata) or not all(getattr(item, "semantic", False) for item in embeddings):
             state.vector_status = "disabled"
             return
+        embedding = embeddings[0]
         state.embedding_model = embedding.model or state.embedding_model
         state.embedding_dimension = embedding.dimension
         self.embedding_model = state.embedding_model
         self.embedding_dimension = state.embedding_dimension
         try:
-            await self.vector_store.upsert(
-                [
-                    VectorRecord(
-                        owner_scope=owner_scope,
-                        book_id=chapter.book_id,
-                        chapter_id=chapter.id,
-                        knowledge_version=self.knowledge_version,
-                        vector=embedding.vector,
-                        payload={
-                            "chapter_num": chapter.canonical_num,
-                            "chapter_id": chapter.id,
-                            "title": chapter.chapter_title,
-                            "text": (chapter.raw_text or "")[:2000],
-                        },
-                    )
-                ]
-            )
+            await self.vector_store.upsert([
+                VectorRecord(
+                    owner_scope=owner_scope,
+                    book_id=chapter.book_id,
+                    chapter_id=chapter.id,
+                    knowledge_version=self.knowledge_version,
+                    vector=item.vector,
+                    payload=payload,
+                    record_key=payload["record_key"],
+                )
+                for item, payload in zip(embeddings, metadata)
+            ])
         except Exception:
             state.vector_status = "failed"
             return
@@ -535,3 +613,7 @@ class NovelIndexService:
     @staticmethod
     def _hash(content: str) -> str:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _stable_memory_id(value: str) -> int:
+    return int(hashlib.sha256(value.encode("utf-8")).hexdigest()[:12], 16)

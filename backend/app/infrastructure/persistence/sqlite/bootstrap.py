@@ -294,17 +294,40 @@ def _ensure_sqlite_agent_runtime_columns() -> None:
 
 def _ensure_sqlite_novel_vector_table() -> None:
     with engine.begin() as connection:
+        columns = {
+            row[1]
+            for row in connection.exec_driver_sql("PRAGMA table_info(novel_vectors)").fetchall()
+        }
+        if columns and "record_key" not in columns:
+            connection.exec_driver_sql("ALTER TABLE novel_vectors RENAME TO novel_vectors_legacy")
+            columns = set()
         connection.exec_driver_sql(
             """CREATE TABLE IF NOT EXISTS novel_vectors (
                 owner_scope VARCHAR NOT NULL,
                 book_id INTEGER NOT NULL,
                 chapter_id INTEGER NOT NULL,
                 knowledge_version VARCHAR NOT NULL,
+                record_key VARCHAR NOT NULL DEFAULT '',
                 vector TEXT NOT NULL DEFAULT '[]',
                 payload TEXT NOT NULL DEFAULT '{}',
-                PRIMARY KEY(owner_scope, book_id, chapter_id, knowledge_version)
+                PRIMARY KEY(owner_scope, book_id, knowledge_version, record_key)
             )"""
         )
+        if not columns:
+            legacy_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(novel_vectors_legacy)").fetchall()
+            }
+            if legacy_columns:
+                connection.exec_driver_sql(
+                    """INSERT INTO novel_vectors (
+                       owner_scope, book_id, chapter_id, knowledge_version,
+                       record_key, vector, payload
+                    ) SELECT owner_scope, book_id, chapter_id, knowledge_version,
+                       'chapter:' || CAST(chapter_id AS TEXT), vector, payload
+                       FROM novel_vectors_legacy"""
+                )
+                connection.exec_driver_sql("DROP TABLE novel_vectors_legacy")
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS idx_novel_vectors_scope_book_version "
             "ON novel_vectors(owner_scope, book_id, knowledge_version)"

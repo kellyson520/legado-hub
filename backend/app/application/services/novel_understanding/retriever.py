@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.domain.entities.novel import NovelBook
@@ -25,6 +25,9 @@ class RetrievalResult:
     evidence: str = ""
     confidence: float = 0.0
     book_title: str = ""
+    record_key: str = ""
+    citation: dict[str, Any] = field(default_factory=dict)
+    knowledge_version: str = ""
 
 
 class RAGRetriever:
@@ -100,20 +103,34 @@ class RAGRetriever:
                             continue
                         payload = item.payload or {}
                         chapter_id = int(payload.get("chapter_id", item.chapter_id))
-                        content = str(payload.get("text") or payload.get("content") or "")[:2000]
+                        memory_type = str(payload.get("memory_type") or "chapter")
+                        record_key = item.record_key or str(
+                            payload.get("record_key") or f"chapter:{chapter_id}"
+                        )
+                        item_id = int(payload.get("item_id", payload.get("entity_id", chapter_id)) or chapter_id)
+                        content = str(
+                            payload.get("text") or payload.get("card") or payload.get("content") or ""
+                        )[:2000]
+                        evidence = _evidence_text(payload.get("evidence"), content)
                         self._merge_result(
                             results,
                             RetrievalResult(
                                 source="vector",
-                                item_type="chapter",
-                                item_id=chapter_id,
+                                item_type=memory_type,
+                                item_id=item_id,
                                 score=float(item.score) * self.WEIGHT_VECTOR,
                                 content=content,
                                 owner_scope=owner_scope,
                                 book_id=int(book_id),
                                 chapter_num=int(payload.get("chapter_num", 0) or 0),
-                                evidence=content,
+                                evidence=evidence,
                                 confidence=max(0.0, min(1.0, float(item.score))),
+                                record_key=record_key,
+                                citation=dict(
+                                    payload.get("citation")
+                                    or {"chapter_id": chapter_id, "chapter_num": int(payload.get("chapter_num", 0) or 0)}
+                                ),
+                                knowledge_version=knowledge_version,
                             ),
                         )
             except (EmbeddingUnavailable, RuntimeError, ValueError):
@@ -393,7 +410,7 @@ class RAGRetriever:
 
     @staticmethod
     def _merge_result(results: dict[str, RetrievalResult], result: RetrievalResult, weight: float = 1.0) -> None:
-        key = f"{result.item_type}:{result.item_id}"
+        key = f"{result.item_type}:{result.record_key or result.item_id}"
         result.score *= weight
         existing = results.get(key)
         if existing is None:
@@ -404,3 +421,22 @@ class RAGRetriever:
         existing.content = existing.content or result.content
         existing.chapter_num = existing.chapter_num or result.chapter_num
         existing.confidence = max(existing.confidence, result.confidence)
+        existing.record_key = existing.record_key or result.record_key
+        existing.citation = existing.citation or result.citation
+        existing.knowledge_version = existing.knowledge_version or result.knowledge_version
+
+
+def _evidence_text(value: Any, fallback: str) -> str:
+    if isinstance(value, (list, tuple)):
+        parts = []
+        for item in value[:3]:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("excerpt") or ""))
+            else:
+                parts.append(str(item))
+        text = "；".join(part for part in parts if part.strip())
+        if text:
+            return text[:500]
+    if isinstance(value, dict):
+        return str(value.get("text") or value.get("excerpt") or fallback)[:500]
+    return str(value or fallback)[:500]

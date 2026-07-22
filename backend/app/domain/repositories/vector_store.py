@@ -14,6 +14,7 @@ class VectorRecord:
     vector: list[float]
     payload: dict[str, Any]
     score: float = 0.0
+    record_key: str = ""
 
 
 class VectorStoreUnavailable(RuntimeError):

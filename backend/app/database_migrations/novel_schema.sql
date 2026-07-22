@@ -73,9 +73,10 @@ CREATE TABLE IF NOT EXISTS novel_vectors (
     book_id INTEGER NOT NULL,
     chapter_id INTEGER NOT NULL,
     knowledge_version TEXT NOT NULL,
+    record_key TEXT NOT NULL DEFAULT '',
     vector TEXT NOT NULL DEFAULT '[]',
     payload TEXT NOT NULL DEFAULT '{}',
-    PRIMARY KEY(owner_scope, book_id, chapter_id, knowledge_version),
+    PRIMARY KEY(owner_scope, book_id, knowledge_version, record_key),
     FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_novel_vectors_scope_book_version

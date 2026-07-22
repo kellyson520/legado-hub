@@ -133,6 +133,7 @@ async def migrate_novel_database(db: Any) -> int:
             await db.execute("ALTER TABLE novel_reading_progress ADD COLUMN line_height REAL NOT NULL DEFAULT 1.9")
         if "content_width" not in progress_columns:
             await db.execute("ALTER TABLE novel_reading_progress ADD COLUMN content_width TEXT NOT NULL DEFAULT 'comfortable'")
+    await _ensure_keyed_vector_table(db)
     await db.commit()
     if current_version < 1:
         await db.execute("PRAGMA user_version=1")
@@ -140,6 +141,45 @@ async def migrate_novel_database(db: Any) -> int:
     await db.execute("PRAGMA foreign_keys=ON")
     await db.execute("PRAGMA legacy_alter_table=OFF")
     return max(current_version, 1)
+
+
+async def _ensure_keyed_vector_table(db: Any) -> None:
+    """Upgrade chapter-only vectors so one chapter can hold many memories."""
+    async with db.execute("PRAGMA table_info(novel_vectors)") as cursor:
+        columns = {row[1] for row in await cursor.fetchall()}
+    if columns and "record_key" not in columns:
+        await db.execute("ALTER TABLE novel_vectors RENAME TO novel_vectors_legacy")
+        columns = set()
+    if not columns:
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS novel_vectors (
+               owner_scope TEXT NOT NULL,
+               book_id INTEGER NOT NULL,
+               chapter_id INTEGER NOT NULL,
+               knowledge_version TEXT NOT NULL,
+               record_key TEXT NOT NULL DEFAULT '',
+               vector TEXT NOT NULL DEFAULT '[]',
+               payload TEXT NOT NULL DEFAULT '{}',
+               PRIMARY KEY(owner_scope, book_id, knowledge_version, record_key),
+               FOREIGN KEY(book_id) REFERENCES novels(id) ON DELETE CASCADE
+            )"""
+        )
+        async with db.execute("PRAGMA table_info(novel_vectors_legacy)") as cursor:
+            legacy_columns = {row[1] for row in await cursor.fetchall()}
+        if legacy_columns:
+            await db.execute(
+                """INSERT INTO novel_vectors (
+                   owner_scope, book_id, chapter_id, knowledge_version,
+                   record_key, vector, payload
+                ) SELECT owner_scope, book_id, chapter_id, knowledge_version,
+                   'chapter:' || CAST(chapter_id AS TEXT), vector, payload
+                   FROM novel_vectors_legacy"""
+            )
+            await db.execute("DROP TABLE novel_vectors_legacy")
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_novel_vectors_scope_book_version "
+        "ON novel_vectors(owner_scope, book_id, knowledge_version)"
+    )
 
 
 async def _repair_legacy_foreign_keys(db: Any) -> None:

@@ -684,15 +684,16 @@ class NovelVectorModel(Base):
     __tablename__ = "novel_vectors"
     __table_args__ = (
         UniqueConstraint(
-            "owner_scope", "book_id", "chapter_id", "knowledge_version",
-            name="ux_novel_vectors_scope_book_chapter_version",
+            "owner_scope", "book_id", "knowledge_version", "record_key",
+            name="ux_novel_vectors_scope_book_version_record",
         ),
     )
 
     owner_scope = Column(String, primary_key=True)
     book_id = Column(Integer, primary_key=True)
-    chapter_id = Column(Integer, primary_key=True)
     knowledge_version = Column(String, primary_key=True)
+    record_key = Column(String, primary_key=True, default="")
+    chapter_id = Column(Integer, nullable=False, index=True)
     vector = Column(Text, nullable=False, default="[]")
     payload = Column(Text, nullable=False, default="{}")
 

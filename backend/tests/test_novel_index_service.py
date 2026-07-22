@@ -194,6 +194,74 @@ async def test_vector_backend_failure_keeps_local_chapter_index_available(index_
     assert state.vector_status == "failed"
 
 
+@pytest.mark.asyncio
+async def test_semantic_vector_index_keeps_chapter_and_memory_card_records(index_service):
+    from app.domain.entities.novel import EntityType, NovelEntity
+    from app.infrastructure.vectorstores.disabled import DisabledVectorStore
+    from app.services.novel_understanding.embedding import EmbeddingAdapter
+    from app.services.novel_understanding.index_service import NovelIndexService
+
+    base, book_id = index_service
+    chapter = await base.repo.get_chapters_by_book("user:1", book_id, start_num=1, limit=1)
+    chapter = chapter[0]
+    await base.repo.update_chapter_content(
+        "user:1",
+        chapter.id,
+        "江轩从石匣中取出玄天剑，剑身泛起寒光。",
+    )
+
+    class Extractor:
+        def extract_from_chapter(self, current_book_id, chapter_num, title, text):
+            return [
+                NovelEntity(
+                    book_id=current_book_id,
+                    name="玄天剑",
+                    entity_type=EntityType.ITEM,
+                    first_appearance_ch=chapter_num,
+                    last_appearance_ch=chapter_num,
+                    appearance_count=1,
+                    attributes={"confidence": 0.9, "evidence": [{"chapter_id": chapter.id, "text": text}]},
+                )
+            ], []
+
+    class Embedding:
+        model = "semantic-test"
+
+        async def embed_batch(self, texts):
+            return [
+                type(
+                    "Embedding",
+                    (),
+                    {"semantic": True, "vector": [1.0, 0.0], "model": self.model, "dimension": 2},
+                )()
+                for _ in texts
+            ]
+
+    class Store:
+        def __init__(self):
+            self.records = []
+
+        async def health(self):
+            return {"enabled": True}
+
+        async def upsert(self, records):
+            self.records.extend(records)
+            return len(records)
+
+    store = Store()
+    service = NovelIndexService(
+        repo=base.repo,
+        extractor=Extractor(),
+        embedding=Embedding(),
+        vector_store=store,
+    )
+    result = await service.index_book("user:1", book_id)
+
+    assert result.failed_chapters == 0
+    assert {record.record_key for record in store.records} >= {"chapter:1", "entity:item:玄天剑"}
+    assert all(record.payload.get("card_hash") for record in store.records)
+
+
 def test_structured_extractor_rejects_unknown_fields_and_unbound_evidence():
     from app.services.novel_understanding.structured_extractor import StructuredExtractor
 

@@ -44,6 +44,46 @@ async def test_sqlite_vector_store_filters_owner_book_version(sqlite_vector_stor
 
 
 @pytest.mark.asyncio
+async def test_sqlite_vector_store_keeps_distinct_memory_records_for_one_chapter(sqlite_vector_store):
+    from app.domain.repositories.vector_store import VectorRecord
+
+    await sqlite_vector_store.upsert(
+        [
+            VectorRecord(
+                "user:1", 7, 1, "k1", [1.0, 0.0],
+                {"memory_type": "chapter", "text": "正文"},
+                record_key="chapter:1",
+            ),
+            VectorRecord(
+                "user:1", 7, 1, "k1", [0.9, 0.1],
+                {"memory_type": "entity", "text": "玄天剑"},
+                record_key="entity:item:玄天剑",
+            ),
+        ]
+    )
+
+    results = await sqlite_vector_store.search("user:1", 7, "k1", [1.0, 0.0], top_k=5)
+    assert {item.record_key for item in results} == {"chapter:1", "entity:item:玄天剑"}
+    assert {item.payload["memory_type"] for item in results} == {"chapter", "entity"}
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vector_store_migrates_legacy_chapter_records_without_dropping_them(sqlite_vector_store):
+    await sqlite_vector_store._db.execute(
+        "INSERT INTO novel_vectors (owner_scope, book_id, chapter_id, knowledge_version, vector, payload) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("user:1", 7, 1, "k1", "[1.0, 0.0]", '{"text":"旧章节"}'),
+    )
+    await sqlite_vector_store._db.commit()
+
+    results = await sqlite_vector_store.search("user:1", 7, "k1", [1.0, 0.0], top_k=5)
+
+    assert results[0].record_key == "chapter:1"
+    assert results[0].payload["record_key"] == "chapter:1"
+    assert results[0].payload["text"] == "旧章节"
+
+
+@pytest.mark.asyncio
 async def test_disabled_store_has_no_fake_semantic_hits():
     from app.infrastructure.vectorstores.disabled import DisabledVectorStore
 
