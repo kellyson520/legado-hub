@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.domain.entities.novel import NovelStatus
+
 
 class NovelIndexWorker:
-    def __init__(self, *, index_service, runtime_repo):
+    def __init__(self, *, index_service, runtime_repo, novel_repo=None):
         self._index_service = index_service
         self._runtime_repo = runtime_repo
+        self._novel_repo = novel_repo
 
     async def run(self, *, limit: int = 10, owner_scope: str | None = None) -> dict[str, Any]:
         tasks = self._runtime_repo.list_tasks(owner_scope)
@@ -35,11 +38,25 @@ class NovelIndexWorker:
                     "errors": indexed.errors,
                 }
                 self._runtime_repo.save_task(task)
+                if self._novel_repo is not None:
+                    await self._novel_repo.update_book_status(
+                        task.owner_scope,
+                        task.book_id,
+                        NovelStatus.READY,
+                        progress=1.0,
+                    )
                 outcomes.append({"task_id": task.id, "status": task.status, "result": task.result})
             except Exception as exc:
                 task.status = "failed"
                 task.result = {"error": str(exc)[:500]}
                 self._runtime_repo.save_task(task)
+                if self._novel_repo is not None:
+                    await self._novel_repo.update_book_status(
+                        task.owner_scope,
+                        task.book_id,
+                        NovelStatus.ERROR,
+                        error_msg=str(exc)[:500],
+                    )
                 outcomes.append({"task_id": task.id, "status": task.status, "result": task.result})
         return {"processed": len(outcomes), "tasks": outcomes}
 

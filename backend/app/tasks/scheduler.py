@@ -647,4 +647,5 @@ async def run_novel_index_job(limit: int = 10, owner_scope: str | None = None) -
     return await NovelIndexWorker(
         index_service=index_service,
         runtime_repo=build_novel_runtime_repository(),
+        novel_repo=repo,
     ).run(limit=limit, owner_scope=owner_scope)

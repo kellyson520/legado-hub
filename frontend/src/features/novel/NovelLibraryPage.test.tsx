@@ -85,3 +85,25 @@ test('书架上传小说时把文件交给统一导入接口', async () => {
   await waitFor(() => expect(novelMocks.uploadNovel).toHaveBeenCalledWith(file))
   expect(await screen.findByText(/导入任务已创建/)).toBeInTheDocument()
 })
+
+test('书架把分析失败显示为明确的终态', async () => {
+  novelMocks.listNovelBooks.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: [{
+      id: 7,
+      book_name: '失败书',
+      status: 'error',
+      ingest_error_msg: 'provider unavailable',
+      total_chapters: 1,
+      ingest_progress: 0.3,
+    }],
+    meta: { total: 1 },
+    trace_id: null,
+  })
+
+  render(<MemoryRouter><NovelLibraryPage /></MemoryRouter>)
+
+  expect(await screen.findByText('分析失败，可重试')).toBeInTheDocument()
+})

@@ -26,6 +26,7 @@ const statusLabel: Record<string, string> = {
   summarizing: '正在理解',
   ready: '可阅读',
   failed: '需要重试',
+  error: '分析失败，可重试',
 }
 
 function percentOf(book: NovelBook) {
