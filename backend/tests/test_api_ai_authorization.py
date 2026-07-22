@@ -33,6 +33,7 @@ def _client(monkeypatch, tmp_path):
 
     workspace = Workspace()
     monkeypatch.setattr(ai_router, "build_ai_workspace_service", lambda: workspace)
+    monkeypatch.setattr(ai_router, "build_ai_conversation_service", lambda: workspace)
     client = TestClient(app)
     token = create_access_token({"sub": "7", "permissions": ["ai.run", "book_sources.read"], "roles": []})
     return client, {"Authorization": f"Bearer {token}"}

@@ -8,6 +8,7 @@ from app.core.permissions import Permission
 from app.core.response import from_paginated_result, ok
 from app.infrastructure.persistence.factory import (
     build_ai_service,
+    build_ai_conversation_service,
     build_ai_workspace_service,
     build_scoped_novel_agent_app_service,
 )
@@ -99,7 +100,7 @@ async def list_conversations(
     identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
     actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
-    result = await build_ai_workspace_service().list_conversations_page(
+    result = await build_ai_conversation_service().list_conversations_page(
         actor_id,
         page=page,
         page_size=page_size,
@@ -115,7 +116,7 @@ async def create_conversation(
     identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
     actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
-    data = await build_ai_workspace_service().create_conversation(
+    data = await build_ai_conversation_service().create_conversation(
         actor_id,
         payload.title,
         owner_scope=owner_scope_for(identity),
@@ -132,7 +133,7 @@ async def get_conversation(
     identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
     actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
-    data = build_ai_workspace_service().get_conversation(conversation_id, actor_id, owner_scope_for(identity))
+    data = build_ai_conversation_service().get_conversation(conversation_id, actor_id, owner_scope_for(identity))
     return ok(data=data, message="ai conversation loaded", meta={})
 
 
@@ -200,7 +201,7 @@ async def list_authorization_requests(
     status: str | None = Query(default="pending", max_length=32),
     identity=Depends(require_permission(Permission.AI_RUN)),
 ):
-    data = [] if status not in (None, "pending") else build_ai_workspace_service().list_pending_authorizations(
+    data = [] if status not in (None, "pending") else build_ai_conversation_service().list_pending_authorizations(
         str(identity.user_id), conversation_id,
     )
     return ok(data=data, message="ai authorization requests listed", meta={})
@@ -211,7 +212,7 @@ async def list_authorization_grants(
     conversation_id: str | None = Query(default=None, max_length=100),
     identity=Depends(require_permission(Permission.AI_RUN)),
 ):
-    data = build_ai_workspace_service().list_authorization_grants(str(identity.user_id), conversation_id)
+    data = build_ai_conversation_service().list_authorization_grants(str(identity.user_id), conversation_id)
     return ok(data=data, message="ai authorization grants listed", meta={})
 
 
@@ -220,7 +221,7 @@ async def revoke_authorization_grant(
     grant_id: str,
     identity=Depends(require_permission(Permission.AI_RUN)),
 ):
-    data = await build_ai_workspace_service().revoke_authorization_grant(
+    data = await build_ai_conversation_service().revoke_authorization_grant(
         grant_id,
         actor_id=str(identity.user_id),
     )

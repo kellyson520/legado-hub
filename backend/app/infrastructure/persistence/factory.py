@@ -633,6 +633,28 @@ def build_ai_service() -> AIService:
     )
 
 
+def build_ai_conversation_service() -> AIWorkspaceService:
+    """Build only the dependencies needed to read and manage conversations.
+
+    Conversation history and authorization state do not need provider, source,
+    or analysis-tool initialization. Keeping this path separate prevents a
+    read request from paying the startup cost of the full AI workspace.
+    """
+    ensure_sqlite_bootstrap()
+    audit = build_auth_repository()
+    return AIWorkspaceService(
+        platform=None,
+        conversations=SQLiteAIConversationRepository(),
+        sources=None,
+        ai_tasks=None,
+        audit=audit,
+        authorization_service=AIConversationAuthorizationService(
+            repo=build_ai_authorization_repository(),
+            audit=audit,
+        ),
+    )
+
+
 def build_ai_workspace_service(*, novel_agent_app=None) -> AIWorkspaceService:
     ensure_sqlite_bootstrap()
     authorization = AIConversationAuthorizationService(
