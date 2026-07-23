@@ -178,7 +178,7 @@ Run: `npm run build` in `frontend/`, then `git diff --check`.
 
 Expected: Vite build succeeds and diff check is clean.
 
-- [ ] **Step 3: Commit and push**
+- [x] **Step 3: Commit and push**
 
 ```bash
 git add backend/app/application/services/source_probe_service.py backend/app/application/services/source_health_admin_service.py backend/app/core/config.py backend/app/tasks/scheduler.py backend/tests/test_source_probe_service.py backend/tests/test_source_health_admin_service.py backend/tests/test_source_health_scheduler.py docs/superpowers/specs/2026-07-23-source-health-batch-probing-design.md docs/superpowers/plans/2026-07-23-source-health-batch-probing.md
@@ -186,7 +186,7 @@ git commit -m "fix: make source health probing batch resilient"
 git push origin main
 ```
 
-- [ ] **Step 4: Redeploy and verify**
+- [x] **Step 4: Redeploy and verify**
 
 Sync `frontend/dist` to `/tmp/legado-hub-release/frontend/dist`, reload Nginx, restart the local Uvicorn from `/tmp/legado-hub-main-merge/backend` with the two `/root/legado-hub/backend/data` database environment variables, and verify:
 
