@@ -18,3 +18,12 @@ test('工具对象结果渲染为键值列表，保留嵌套内容但限制文�
   expect(screen.getByText('completed')).toBeInTheDocument()
   expect(screen.getByText(/序章证据/)).toBeInTheDocument()
 })
+
+test('工具返回 Markdown 字符串时渲染为富文本表格', () => {
+  render(<ToolResultRenderer value={'| 人物 | 身份 |\n| --- | --- |\n| 陈舟 | 主角 |'} />)
+
+  expect(screen.getByRole('table')).toBeInTheDocument()
+  expect(screen.getByRole('columnheader', { name: '人物' })).toBeInTheDocument()
+  expect(screen.getByText('陈舟')).toBeInTheDocument()
+  expect(screen.queryByText('| 人物 | 身份 |')).not.toBeInTheDocument()
+})

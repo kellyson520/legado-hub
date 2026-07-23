@@ -29,7 +29,7 @@ const aiMocks = vi.hoisted(() => ({
         tool_calls: [{
           name: 'list_visible_sources',
           arguments: {},
-          result: [{ id: 'source-1', name: '示例书源', status: 'published' }],
+          result: '| 人物 | 身份 |\n| --- | --- |\n| 陈舟 | 主角 |',
         }],
       }],
     },

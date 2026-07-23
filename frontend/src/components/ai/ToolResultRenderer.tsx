@@ -1,4 +1,5 @@
 import { DataTable, type DataTableColumn } from '@/components/data/DataTable'
+import { MarkdownMessage } from '@/components/ai/MarkdownMessage'
 
 const MAX_CELL_LENGTH = 320
 const MAX_COLUMNS = 6
@@ -30,6 +31,10 @@ function fallbackJson(value: unknown): string {
 }
 
 export function ToolResultRenderer({ value }: { value: unknown }) {
+  if (typeof value === 'string') {
+    return <MarkdownMessage content={value} className="text-sm" />
+  }
+
   if (Array.isArray(value) && value.length > 0 && value.every(isRecord)) {
     const records = value.map((item, index) => ({ ...item, __row_key: index }))
     const keys = Array.from(new Set(records.flatMap((item) => Object.keys(item).filter((key) => key !== '__row_key')))).slice(0, MAX_COLUMNS)
