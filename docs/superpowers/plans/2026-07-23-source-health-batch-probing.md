@@ -4,7 +4,7 @@
 
 **Goal:** 修复书源健康定时探测首源异常导致整批停止的问题，并让每 30 分钟按可控小批次持续探测多个启用书源。
 
-**Architecture:** 保留 APScheduler 的 `*/30` 触发器和现有健康快照持久化。调度器每轮从 SQLite 取最多 50 个未探测/最久未探测源；健康服务在 1500 秒预算内逐源串行执行完整链路，逐源捕获异常并返回批次汇总，避免共享 Legado runtime 被并发调用。
+**Architecture:** 保留 APScheduler 的 `*/30` 触发器和现有健康快照持久化。调度器从 SQLite 领取到期候选，按 50 个源拆成小批次并在 1740 秒硬截止内持续轮转；每个 worker 逐源执行完整链路，租约避免重复领取，逐源捕获异常并返回批次汇总。
 
 **Tech Stack:** Python 3.12、FastAPI、APScheduler、SQLite、pytest、Legado source fetcher。
 
@@ -195,4 +195,13 @@ curl -i http://127.0.0.1:8000/api/health
 curl -i http://127.0.0.1:3001/api/health
 ```
 
-Expected: both return the normal unauthenticated `401` response, the scheduler log reports `probe_source_health` registration, and subsequent 30-minute runs report `total`, `succeeded`, and `failed` counts instead of aborting at the first source.
+Expected: both return the normal unauthenticated `401` response, the scheduler log reports `probe_source_health` registration, and subsequent 30-minute runs report `total`, `succeeded`, `failed`, and `deferred` counts without aborting at the first source.
+
+### Task 5: 误判与并发边界加固
+
+已补充以下回归保护：
+
+- 合法 JS 请求或合法 JSON 空结果不会因为请求预览/元数据包含文本而被降级或判为验证墙。
+- 批次内故障持久化和调度器外层 worker 都受绝对截止时间约束。
+- 成功结果的 snapshot、probe run、书源镜像状态在同一 SQLite 事务写入。
+- 到期候选通过 SQLite 租约领取，避免并行任务重复探测和旧结果覆盖。

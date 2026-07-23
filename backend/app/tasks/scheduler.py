@@ -11,7 +11,9 @@
 import asyncio
 import inspect
 import logging
+import time
 from datetime import datetime, timedelta
+from uuid import uuid4
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -172,6 +174,7 @@ def job_probe_source_health():
             run_smart_source_health_probe_job(
                 limit=settings.SOURCE_HEALTH_PROBE_BATCH_SIZE,
                 timeout_seconds=settings.SOURCE_HEALTH_PROBE_BATCH_TIMEOUT_SECONDS,
+                concurrency=settings.SOURCE_HEALTH_PROBE_CONCURRENCY,
                 keyword_samples=list(SMART_SOURCE_HEALTH_KEYWORDS),
             )
         )
@@ -460,29 +463,192 @@ async def run_smart_source_health_probe_job(
     keyword_samples: list[str] | None = None,
     probe_mode: str = "full_chain",
     timeout_seconds: float | None = None,
+    concurrency: int = 1,
 ) -> dict:
     service = build_source_health_admin_service()
+    services = [service]
+    claim_worker_id = f"source-health-{uuid4().hex}"
+    claimed_source_ids: list[int] = []
+
+    def acquire_candidate_ids(limit: int | None, lease_seconds: int) -> list[int]:
+        claim = getattr(service, "claim_probe_candidate_ids", None)
+        if callable(claim):
+            source_ids = [int(source_id) for source_id in claim(
+                limit=limit,
+                worker_id=claim_worker_id,
+                lease_seconds=lease_seconds,
+            )]
+            claimed_source_ids.extend(source_ids)
+            return source_ids
+        return [int(source_id) for source_id in service.list_probe_candidate_ids(limit=limit)]
+
     try:
-        source_ids = service.list_probe_candidate_ids(limit=max(int(limit), 0))
         keywords = keyword_samples or list(SMART_SOURCE_HEALTH_KEYWORDS)
-        if not source_ids:
+        batch_size = max(int(limit), 0)
+        if batch_size <= 0:
             return {
                 "results": [],
                 "total": 0,
                 "succeeded": 0,
                 "failed": 0,
                 "deferred": 0,
+                "deferred_source_ids": [],
                 "keyword_samples": keywords,
+                "source_ids": [],
             }
-        result = await service.probe_book_sources(
-            source_ids,
-            keyword_samples=keywords,
-            probe_mode=probe_mode,
-            timeout_seconds=timeout_seconds,
+
+        if timeout_seconds is None:
+            source_ids = acquire_candidate_ids(batch_size, lease_seconds=300)
+            if not source_ids:
+                return {
+                    "results": [],
+                    "total": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "deferred": 0,
+                    "deferred_source_ids": [],
+                    "keyword_samples": keywords,
+                    "source_ids": [],
+                }
+            result = await service.probe_book_sources(
+                source_ids,
+                keyword_samples=keywords,
+                probe_mode=probe_mode,
+            )
+            return {**result, "keyword_samples": keywords, "source_ids": source_ids}
+
+        normalized_timeout = max(float(timeout_seconds), 0.0)
+        candidate_ids = acquire_candidate_ids(
+            None,
+            lease_seconds=max(int(normalized_timeout) + 60, 60),
         )
-        return {**result, "keyword_samples": keywords, "source_ids": source_ids}
+        if not candidate_ids:
+            return {
+                "results": [],
+                "total": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "deferred": 0,
+                "deferred_source_ids": [],
+                "keyword_samples": keywords,
+                "source_ids": [],
+            }
+
+        deadline = time.monotonic() + normalized_timeout
+        batches = [
+            candidate_ids[offset:offset + batch_size]
+            for offset in range(0, len(candidate_ids), batch_size)
+        ]
+        worker_count = min(max(int(concurrency), 1), len(batches))
+        services.extend(
+            build_source_health_admin_service()
+            for _ in range(worker_count - 1)
+        )
+        next_batch_index = 0
+        batch_lock = asyncio.Lock()
+
+        async def run_worker(worker_service):
+            nonlocal next_batch_index
+            worker_results = []
+            while True:
+                async with batch_lock:
+                    if next_batch_index >= len(batches):
+                        return worker_results
+                    batch_ids = batches[next_batch_index]
+                    next_batch_index += 1
+
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return worker_results
+                batch_result = await worker_service.probe_book_sources(
+                    batch_ids,
+                    keyword_samples=keywords,
+                    probe_mode=probe_mode,
+                    timeout_seconds=remaining,
+                )
+                worker_results.append(batch_result)
+                if batch_result.get("deferred"):
+                    return worker_results
+
+        worker_tasks = [
+            asyncio.create_task(run_worker(worker_service))
+            for worker_service in services
+        ]
+        remaining = max(deadline - time.monotonic(), 0.0)
+        done, pending = await asyncio.wait(worker_tasks, timeout=remaining)
+        if pending:
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
+        worker_batches = []
+        for task in done:
+            if task.cancelled():
+                continue
+            try:
+                worker_batches.append(task.result())
+            except Exception as exc:
+                logger.warning(
+                    "source health worker stopped with an exception",
+                    extra={"worker": "source_health", "error_type": type(exc).__name__},
+                )
+        results = [
+            item
+            for worker_results in worker_batches
+            for batch_result in worker_results
+            for item in (batch_result.get("results") or [])
+        ]
+        succeeded = sum(
+            int(batch_result.get("succeeded", 0) or 0)
+            for worker_results in worker_batches
+            for batch_result in worker_results
+        )
+        failed = sum(
+            int(batch_result.get("failed", 0) or 0)
+            for worker_results in worker_batches
+            for batch_result in worker_results
+        )
+
+        def result_source_id(item: dict) -> int | None:
+            raw_id = item.get("source_id")
+            if raw_id is None and isinstance(item.get("snapshot"), dict):
+                raw_id = item["snapshot"].get("source_id")
+            try:
+                return int(raw_id) if raw_id is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        processed_ids = {
+            source_id
+            for item in results
+            if (source_id := result_source_id(item)) is not None
+        }
+        deferred_source_ids = [
+            int(source_id)
+            for source_id in candidate_ids
+            if int(source_id) not in processed_ids
+        ]
+        return {
+            "results": results,
+            "total": len(candidate_ids),
+            "succeeded": succeeded,
+            "failed": failed,
+            "deferred": len(deferred_source_ids),
+            "deferred_source_ids": deferred_source_ids,
+            "keyword_samples": keywords,
+            "source_ids": candidate_ids,
+        }
     finally:
-        await _close_async_service(service)
+        release = getattr(service, "release_probe_claims", None)
+        if claimed_source_ids and callable(release):
+            try:
+                release(claimed_source_ids, worker_id=claim_worker_id)
+            except Exception as exc:
+                logger.warning(
+                    "source health probe lease release failed",
+                    extra={"error_type": type(exc).__name__},
+                )
+        for worker_service in services:
+            await _close_async_service(worker_service)
 
 
 async def _close_async_service(service) -> None:

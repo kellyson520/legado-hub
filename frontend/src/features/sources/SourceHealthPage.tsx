@@ -25,10 +25,11 @@ function tone(status: string) {
   if (status === 'healthy' || status === 'ok') return 'text-emerald-600 dark:text-emerald-400'
   if (status === 'degraded') return 'text-amber-600 dark:text-amber-400'
   if (status === 'blocked' || status === 'failed' || status === 'dead') return 'text-rose-600 dark:text-rose-400'
+  if (status === 'disabled') return 'text-slate-500 dark:text-slate-400'
   return 'text-muted-foreground'
 }
 
-type HealthStatus = 'healthy' | 'degraded' | 'blocked' | 'dead' | 'unprobed' | 'unknown'
+type HealthStatus = 'healthy' | 'degraded' | 'blocked' | 'dead' | 'unprobed' | 'unknown' | 'disabled'
 
 interface HealthSummary {
   total: number
@@ -38,9 +39,10 @@ interface HealthSummary {
   dead: number
   unprobed: number
   unknown: number
+  disabled: number
 }
 
-const HEALTH_STATUSES: HealthStatus[] = ['healthy', 'degraded', 'blocked', 'dead', 'unprobed', 'unknown']
+const HEALTH_STATUSES: HealthStatus[] = ['healthy', 'degraded', 'blocked', 'dead', 'unprobed', 'unknown', 'disabled']
 
 function displayHealthStatus(row: Pick<SourceHealthRow, 'health_status' | 'failure_reason'>): HealthStatus {
   if (row.health_status === 'unknown' && row.failure_reason === 'not_probed') return 'unprobed'
@@ -58,6 +60,7 @@ function countPageStatuses(rows: SourceHealthRow[]): HealthSummary {
     dead: 0,
     unprobed: 0,
     unknown: 0,
+    disabled: 0,
   }
   rows.forEach((row) => {
     summary[displayHealthStatus(row)] += 1
@@ -77,6 +80,8 @@ function MetricCard({ label, value, status }: { label: string; value: number | s
       ? 'border-l-amber-500'
       : status === 'blocked' || status === 'dead'
         ? 'border-l-rose-500'
+        : status === 'disabled'
+          ? 'border-l-slate-400'
         : status === 'unknown'
           ? 'border-l-slate-400'
           : 'border-l-primary'
@@ -103,6 +108,7 @@ function HealthMetrics({ title, description, summary, prefix, unavailable }: {
     { key: 'dead', label: `${prefix}失效： `, status: 'dead' },
     { key: 'unprobed', label: `${prefix}未探测： `, status: 'unprobed' },
     { key: 'unknown', label: `${prefix}未知： `, status: 'unknown' },
+    { key: 'disabled', label: `${prefix}禁用： `, status: 'disabled' },
   ]
   return (
     <section aria-labelledby={`${prefix}-health-summary`} className="space-y-3">
@@ -223,6 +229,7 @@ export function SourceHealthPage() {
     dead: hasTotalStatusCounts ? readCount(meta.status_counts, 'dead', 0) : 0,
     unprobed: hasTotalStatusCounts ? readCount(meta.status_counts, 'unprobed', 0) : 0,
     unknown: hasTotalStatusCounts ? readCount(meta.status_counts, 'unknown', 0) : 0,
+    disabled: hasTotalStatusCounts ? readCount(meta.status_counts, 'disabled', 0) : 0,
   }
 
   return (

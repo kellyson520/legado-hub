@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from typing import Literal
 
 from app.core.permissions import Permission
 from app.core.response import from_paginated_result, ok
@@ -8,17 +9,18 @@ from app.interfaces.http.deps import require_permission
 
 
 router = APIRouter()
+ProbeMode = Literal["full_chain", "search_only"]
 
 
 class ProbeRequest(BaseModel):
     keyword_samples: list[str] = ["捞尸人", "斗罗大陆", "剑来"]
-    probe_mode: str = "full_chain"
+    probe_mode: ProbeMode = "full_chain"
 
 
 class ProbeBatchRequest(BaseModel):
     source_ids: list[int]
     keyword_samples: list[str] = ["捞尸人", "斗罗大陆", "剑来"]
-    probe_mode: str = "full_chain"
+    probe_mode: ProbeMode = "full_chain"
 
 
 class QuarantineRequest(BaseModel):

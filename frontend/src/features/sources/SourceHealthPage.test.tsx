@@ -67,6 +67,7 @@ function healthResponse(page: number, data = page === 2 ? pageTwoRows : pageOneR
         dead: 1,
         unprobed: 2,
         unknown: 1,
+        disabled: 0,
       },
     },
     trace_id: null,
@@ -176,6 +177,7 @@ test('source health page separates unprobed rows from unknown errors', async () 
     dead: 0,
     unprobed: 1,
     unknown: 1,
+    disabled: 0,
   }
   vi.mocked(listSourceHealth).mockResolvedValueOnce(response)
 
@@ -190,6 +192,43 @@ test('source health page separates unprobed rows from unknown errors', async () 
   expect(screen.getByText('本页未知： 1')).toBeInTheDocument()
   expect(screen.getByText('总未探测： 1')).toBeInTheDocument()
   expect(screen.getByText('总未知： 1')).toBeInTheDocument()
+})
+
+test('source health page separates disabled sources from unprobed sources', async () => {
+  const response = healthResponse(1, [{
+    ...pageOneRows[0],
+    source_id: 32,
+    source_name: '已禁用书源',
+    health_status: 'disabled',
+    search_status: 'skipped',
+    toc_status: 'skipped',
+    content_status: 'skipped',
+    failure_reason: 'disabled',
+    route_policy: 'skip',
+  }])
+  response.meta.total = 1
+  response.meta.status_counts = {
+    total: 1,
+    healthy: 0,
+    degraded: 0,
+    blocked: 0,
+    dead: 0,
+    unprobed: 0,
+    unknown: 0,
+    disabled: 1,
+  }
+  vi.mocked(listSourceHealth).mockResolvedValueOnce(response)
+
+  render(
+    <MemoryRouter>
+      <SourceHealthPage />
+    </MemoryRouter>
+  )
+
+  expect(await screen.findByText('已禁用书源')).toBeInTheDocument()
+  expect(screen.getByText('本页禁用： 1')).toBeInTheDocument()
+  expect(screen.getByText('总禁用： 1')).toBeInTheDocument()
+  expect(screen.getByText('总未探测： 0')).toBeInTheDocument()
 })
 
 test('source health page does not present page counts as full distribution when metadata is unavailable', async () => {

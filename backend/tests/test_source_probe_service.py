@@ -108,6 +108,74 @@ async def test_probe_service_keeps_trying_when_first_search_hit_breaks_full_chai
 
 
 @pytest.mark.asyncio
+async def test_probe_service_does_not_treat_whitespace_content_as_success():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class WhitespaceContentFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return [{"title": "第一章", "url": f"{book_url}/1"}]
+
+        async def get_content(self, source, chapter_url):
+            return {"title": "第一章", "content": " \n\t "}
+
+    probe = await SourceProbeService(WhitespaceContentFetcher()).probe_source(
+        source={"id": 3, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+    )
+
+    assert probe.content.status == "failed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"content": "Just a moment..."},
+        {"content": {"error": "captcha"}},
+    ],
+)
+async def test_probe_service_does_not_treat_challenge_or_error_payload_as_content(
+    payload,
+):
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class ChallengeFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return [{"title": "第一章", "url": "https://example.test/book/1/1"}]
+
+        async def get_content(self, source, chapter_url):
+            return payload
+
+    evidence = await SourceProbeService(ChallengeFetcher()).probe_source(
+        source={"id": 4, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+    )
+
+    assert evidence.content.status == "failed"
+    assert evidence.content.detail["parse_status"] in {"content_access_blocked", "error_payload"}
+
+
+@pytest.mark.asyncio
+async def test_probe_service_rejects_unknown_probe_mode():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    with pytest.raises(ValueError, match="probe_mode"):
+        await SourceProbeService(FakeFetcher()).probe_source(
+            source={"id": 4, "bookSourceUrl": "https://example.test"},
+            keyword_samples=["sample"],
+            probe_mode="unsupported_mode",
+        )
+
+
+@pytest.mark.asyncio
 async def test_probe_service_keeps_toc_evidence_json_serializable():
     import json
 
@@ -284,6 +352,62 @@ async def test_probe_service_records_failed_transport_evidence_for_js_source():
     assert probe.search.detail["http_status"] == 403
     assert probe.search.detail["response_kind"] == "html"
     assert "Just a moment" in probe.search.detail["response_preview"]
+
+
+@pytest.mark.asyncio
+async def test_probe_service_does_not_repeat_keywords_after_conclusive_transport_failure():
+    from app.application.services.source_probe_service import SourceProbeService
+    from app.infrastructure.legado.engine.http_client import HttpResponse
+
+    class FakeJsRuntime:
+        def execute_with_metadata(self, code, data=None, **kwargs):
+            return type(
+                "Out",
+                (),
+                {
+                    "success": True,
+                    "value": "https://blocked.example.com/search?wd=test",
+                    "error": None,
+                },
+            )()
+
+    class FakeHttp:
+        async def get(self, url, headers=None):
+            return HttpResponse(
+                url=url,
+                status=403,
+                text="<html>Just a moment...</html>",
+                is_html=True,
+            )
+
+    class FakeFetcher:
+        def __init__(self):
+            self._js_runtime = FakeJsRuntime()
+            self._http = FakeHttp()
+            self.keywords = []
+
+        @staticmethod
+        def _coerce_js_search_output(value, base_url):
+            return {"url": value, "method": "GET", "headers": {}}, None
+
+        async def search(self, source, keyword, page=1):
+            self.keywords.append(keyword)
+            return []
+
+    fetcher = FakeFetcher()
+    probe = await SourceProbeService(fetcher).probe_source(
+        source={
+            "id": 67,
+            "bookSourceName": "WAF 书源",
+            "bookSourceUrl": "https://blocked.example.com",
+            "searchUrl": "@js:return 'https://blocked.example.com/search?wd=test'",
+        },
+        keyword_samples=["捞尸人", "斗罗大陆", "剑来"],
+        probe_mode="search_only",
+    )
+
+    assert fetcher.keywords == ["捞尸人"]
+    assert probe.attempted_keywords == ["捞尸人"]
 
 
 @pytest.mark.asyncio

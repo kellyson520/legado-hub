@@ -61,6 +61,222 @@ def test_source_health_repository_persists_snapshot_and_probe_history(monkeypatc
     assert runs[0].search_result["request_preview"].endswith("token=undefined")
 
 
+def test_source_health_repository_normalizes_legacy_no_match_snapshots(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-legacy-no-match.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.domain.entities.source_health import SourceHealthSnapshot
+    from app.infrastructure.persistence.factory import build_source_health_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.schema import BookSourceModel
+    from app.infrastructure.persistence.sqlite.session import SessionLocal
+
+    bootstrap_sqlite()
+    db = SessionLocal()
+    try:
+        db.add(
+            BookSourceModel(
+                id=1,
+                bookSourceName="旧无命中源",
+                bookSourceUrl="https://legacy-no-match.example",
+                payload="{}",
+                enabled=True,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    repo = build_source_health_repository()
+    repo.upsert_snapshot(
+        SourceHealthSnapshot(
+            source_id=1,
+            source_name="旧无命中源",
+            source_url="https://legacy-no-match.example",
+            health_status="degraded",
+            failure_reason="keyword_no_result",
+            route_policy="deprioritize",
+            route_score=45.0,
+            decision_confidence="medium",
+        )
+    )
+
+    loaded = repo.get_snapshot(1)
+    rows, total = repo.list_book_source_health_inventory(limit=10, offset=0)
+    counts = repo.count_book_source_health_statuses()
+
+    assert loaded is not None
+    assert loaded.health_status == "unknown"
+    assert loaded.route_policy == "probe_only"
+    assert loaded.route_score == 10.0
+    assert rows[0].health_status == "unknown"
+    assert total == 1
+    assert counts["unknown"] == 1
+    assert counts["degraded"] == 0
+
+
+async def test_source_health_repository_records_failure_atomically(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-failure-atomic.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "原子失败源", "bookSourceUrl": "https://atomic.example", "enabled": True},
+        actor_id=1,
+    )
+    now = datetime.now(timezone.utc)
+    snapshot = SourceHealthSnapshot(
+        source_id=source["id"],
+        source_name=source["bookSourceName"],
+        source_url=source["bookSourceUrl"],
+        health_status="unknown",
+        search_status="failed",
+        toc_status="skipped",
+        content_status="skipped",
+        failure_reason="probe_exception",
+        decision_confidence="low",
+        route_policy="probe_only",
+        route_score=10.0,
+        last_probe_at=now,
+        next_probe_at=now,
+    )
+    run = SourceProbeRun(
+        source_id=source["id"],
+        source_name=source["bookSourceName"],
+        probe_mode="full_chain",
+        keyword="sample",
+        overall_status="unknown",
+        failure_reason="probe_exception",
+        created_at=now,
+    )
+
+    health_repo.record_probe_failure(
+        snapshot,
+        run,
+        source_status="unknown",
+        error_msg="probe_exception:low",
+        last_check_time=now,
+    )
+
+    loaded = health_repo.get_snapshot(source["id"])
+    runs = health_repo.list_probe_runs(source["id"], limit=1)
+    source_after = (await source_repo.list_book_sources_full(ids=[source["id"]]))[0]
+    assert loaded is not None and loaded.failure_reason == "probe_exception"
+    assert runs and runs[0].failure_reason == "probe_exception"
+    assert source_after["sourceStatus"] == "unknown"
+    assert source_after["errorMsg"] == "probe_exception:low"
+
+
+async def test_source_health_repository_records_success_atomically(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-success-atomic.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "原子成功源", "bookSourceUrl": "https://success-atomic.example", "enabled": True},
+        actor_id=1,
+    )
+    now = datetime.now(timezone.utc)
+    snapshot = SourceHealthSnapshot(
+        source_id=source["id"],
+        source_name=source["bookSourceName"],
+        source_url=source["bookSourceUrl"],
+        health_status="healthy",
+        search_status="ok",
+        toc_status="ok",
+        content_status="ok",
+        decision_confidence="high",
+        route_policy="allow",
+        route_score=100.0,
+        last_success_at=now,
+        last_probe_at=now,
+        next_probe_at=now,
+    )
+    run = SourceProbeRun(
+        source_id=source["id"],
+        source_name=source["bookSourceName"],
+        probe_mode="full_chain",
+        keyword="sample",
+        overall_status="healthy",
+        failure_reason="",
+        created_at=now,
+    )
+
+    health_repo.record_probe_result(
+        snapshot,
+        run,
+        source_status="healthy",
+        error_msg="",
+        last_check_time=now,
+    )
+
+    loaded = health_repo.get_snapshot(source["id"])
+    runs = health_repo.list_probe_runs(source["id"], limit=1)
+    source_after = (await source_repo.list_book_sources_full(ids=[source["id"]]))[0]
+    assert loaded is not None and loaded.health_status == "healthy"
+    assert runs and runs[0].overall_status == "healthy"
+    assert source_after["sourceStatus"] == "healthy"
+    assert source_after["errorMsg"] == ""
+
+
+async def test_source_health_repository_claims_due_candidates_without_overlap(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-claims.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    first = await source_repo.create_book_source(
+        {"bookSourceName": "抢占一", "bookSourceUrl": "https://claim-one.example", "enabled": True},
+        actor_id=1,
+    )
+    second = await source_repo.create_book_source(
+        {"bookSourceName": "抢占二", "bookSourceUrl": "https://claim-two.example", "enabled": True},
+        actor_id=1,
+    )
+
+    claimed_by_a = health_repo.claim_probe_candidate_ids(
+        limit=2,
+        worker_id="worker-a",
+        lease_seconds=60,
+    )
+    claimed_by_b = health_repo.claim_probe_candidate_ids(
+        limit=2,
+        worker_id="worker-b",
+        lease_seconds=60,
+    )
+
+    assert claimed_by_a == [first["id"], second["id"]]
+    assert claimed_by_b == []
+
+    health_repo.release_probe_claims(claimed_by_a, worker_id="worker-a")
+    claimed_after_release = health_repo.claim_probe_candidate_ids(
+        limit=2,
+        worker_id="worker-b",
+        lease_seconds=60,
+    )
+    assert claimed_after_release == claimed_by_a
+
+
 async def test_source_repository_keeps_ephemeral_sources_tenant_scoped_and_expiring(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "ephemeral-sources.sqlite3"))

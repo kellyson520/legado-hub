@@ -42,7 +42,9 @@ class Settings(BaseSettings):
     SOURCE_BUILD_BATCH_SIZE: int = 1
     SOURCE_HEALTH_PROBE_WORKER_ENABLED: bool = True
     SOURCE_HEALTH_PROBE_BATCH_SIZE: int = 50
-    SOURCE_HEALTH_PROBE_BATCH_TIMEOUT_SECONDS: int = 1500
+    # Keep a one-minute guard before the next */30 scheduler tick.
+    SOURCE_HEALTH_PROBE_BATCH_TIMEOUT_SECONDS: int = 1740
+    SOURCE_HEALTH_PROBE_CONCURRENCY: int = 16
     INTERACTIVE_BROWSER_PROFILE_ROOT: str = "/tmp/legado-hub-browser-sessions"
     INTERACTIVE_BROWSER_CHROMIUM_PATH: str = "chromium-browser"
     INTERACTIVE_BROWSER_XVFB_PATH: str = "Xvfb"

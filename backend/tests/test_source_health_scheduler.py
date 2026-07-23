@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 
@@ -9,7 +11,8 @@ def test_source_health_probe_uses_thirty_minute_schedule_and_batch_default():
 
     assert probe_job[1] == "*/30 * * * *"
     assert Settings().SOURCE_HEALTH_PROBE_BATCH_SIZE == 50
-    assert Settings().SOURCE_HEALTH_PROBE_BATCH_TIMEOUT_SECONDS == 1500
+    assert Settings().SOURCE_HEALTH_PROBE_BATCH_TIMEOUT_SECONDS == 1740
+    assert Settings().SOURCE_HEALTH_PROBE_CONCURRENCY == 16
 
 
 @pytest.mark.asyncio
@@ -151,6 +154,177 @@ async def test_smart_source_health_probe_uses_bounded_unprobed_candidates(monkey
     assert result["total"] == 3
     assert [item["snapshot"]["source_id"] for item in result["results"]] == [4, 7, 8]
     assert result["keyword_samples"] == ["捞尸人", "斗罗大陆"]
+
+
+@pytest.mark.asyncio
+async def test_smart_source_health_probe_processes_multiple_small_batches_in_one_window(monkeypatch):
+    from app.tasks import scheduler
+
+    calls = []
+    batches = []
+
+    class FakeAdminService:
+        def list_probe_candidate_ids(self, limit):
+            calls.append(limit)
+            return list(range(1, 6))[:limit]
+
+        async def probe_book_sources(self, source_ids, keyword_samples, probe_mode="full_chain", **kwargs):
+            batches.append(list(source_ids))
+            return {
+                "results": [{"source_id": source_id, "status": "completed"} for source_id in source_ids],
+                "total": len(source_ids),
+                "succeeded": len(source_ids),
+                "failed": 0,
+                "deferred": 0,
+            }
+
+    monkeypatch.setattr(scheduler, "build_source_health_admin_service", lambda: FakeAdminService())
+
+    result = await scheduler.run_smart_source_health_probe_job(
+        limit=2,
+        timeout_seconds=60,
+        keyword_samples=["捞尸人"],
+    )
+
+    assert batches == [[1, 2], [3, 4], [5]]
+    assert result["total"] == 5
+    assert result["succeeded"] == 5
+    assert result["failed"] == 0
+    assert result["deferred"] == 0
+    assert calls[0] is None
+
+
+@pytest.mark.asyncio
+async def test_smart_source_health_probe_reports_unstarted_candidates_as_deferred(monkeypatch):
+    from app.tasks import scheduler
+
+    class FakeAdminService:
+        def list_probe_candidate_ids(self, limit):
+            assert limit is None
+            return [1, 2, 3, 4, 5]
+
+        async def probe_book_sources(self, source_ids, keyword_samples, probe_mode="full_chain", **kwargs):
+            assert source_ids == [1, 2]
+            return {
+                "results": [{"source_id": 1, "status": "completed"}],
+                "total": 2,
+                "succeeded": 1,
+                "failed": 0,
+                "deferred": 1,
+                "deferred_source_ids": [2],
+            }
+
+    monkeypatch.setattr(scheduler, "build_source_health_admin_service", lambda: FakeAdminService())
+
+    result = await scheduler.run_smart_source_health_probe_job(
+        limit=2,
+        timeout_seconds=60,
+        keyword_samples=["捞尸人"],
+    )
+
+    assert result["total"] == 5
+    assert result["succeeded"] == 1
+    assert result["failed"] == 0
+    assert result["deferred"] == 4
+    assert result["deferred_source_ids"] == [2, 3, 4, 5]
+
+
+@pytest.mark.asyncio
+async def test_smart_source_health_probe_runs_small_batches_with_bounded_parallel_workers(monkeypatch):
+    from app.tasks import scheduler
+
+    active = 0
+    max_active = 0
+    batches = []
+    services = []
+
+    class FakeAdminService:
+        def __init__(self):
+            services.append(self)
+
+        def list_probe_candidate_ids(self, limit):
+            assert limit is None
+            return [1, 2, 3, 4]
+
+        async def probe_book_sources(self, source_ids, keyword_samples, probe_mode="full_chain", **kwargs):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            batches.append(list(source_ids))
+            await asyncio.sleep(0.01)
+            active -= 1
+            return {
+                "results": [{"source_id": source_id, "status": "completed"} for source_id in source_ids],
+                "total": len(source_ids),
+                "succeeded": len(source_ids),
+                "failed": 0,
+                "deferred": 0,
+                "deferred_source_ids": [],
+            }
+
+        async def aclose(self):
+            return None
+
+    def build_service():
+        return FakeAdminService()
+
+    monkeypatch.setattr(scheduler, "build_source_health_admin_service", build_service)
+
+    result = await scheduler.run_smart_source_health_probe_job(
+        limit=2,
+        timeout_seconds=60,
+        concurrency=2,
+        keyword_samples=["捞尸人"],
+    )
+
+    assert len(services) == 2
+    assert sorted(batches) == [[1, 2], [3, 4]]
+    assert max_active == 2
+    assert result["total"] == 4
+    assert result["succeeded"] == 4
+    assert result["deferred"] == 0
+
+
+@pytest.mark.asyncio
+async def test_smart_source_health_probe_enforces_outer_deadline_when_worker_ignores_timeout(monkeypatch):
+    from time import monotonic
+
+    from app.tasks import scheduler
+
+    class SlowAdminService:
+        def list_probe_candidate_ids(self, limit):
+            assert limit is None
+            return [1, 2]
+
+        async def probe_book_sources(self, source_ids, keyword_samples, probe_mode="full_chain", **kwargs):
+            await asyncio.sleep(0.2)
+            return {
+                "results": [{"source_id": source_id, "status": "completed"} for source_id in source_ids],
+                "total": len(source_ids),
+                "succeeded": len(source_ids),
+                "failed": 0,
+                "deferred": 0,
+            }
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(scheduler, "build_source_health_admin_service", lambda: SlowAdminService())
+
+    started = monotonic()
+    result = await scheduler.run_smart_source_health_probe_job(
+        limit=2,
+        timeout_seconds=0.02,
+        concurrency=1,
+        keyword_samples=["捞尸人"],
+    )
+    elapsed = monotonic() - started
+
+    assert elapsed < 0.15
+    assert result["total"] == 2
+    assert result["succeeded"] == 0
+    assert result["failed"] == 0
+    assert result["deferred"] == 2
 
 
 @pytest.mark.asyncio

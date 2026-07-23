@@ -424,6 +424,15 @@ class SourceHealthSnapshotModel(Base):
     metadata_json = Column(Text, nullable=False, default="{}")
 
 
+class SourceHealthProbeLeaseModel(Base):
+    __tablename__ = "source_health_probe_leases"
+
+    source_id = Column(Integer, primary_key=True)
+    worker_id = Column(String, nullable=False, index=True)
+    claimed_at = Column(DateTime, nullable=False)
+    lease_expires_at = Column(DateTime, nullable=False, index=True)
+
+
 class SourceProbeRunModel(Base):
     __tablename__ = "source_probe_runs"
 

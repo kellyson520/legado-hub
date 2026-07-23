@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import time
+import json
 import re
+import time
 from copy import deepcopy
 from urllib.parse import quote, urlencode, urljoin
 
@@ -12,6 +13,8 @@ from app.core.url_safety import SourceUrlPolicy
 
 
 class SourceProbeService:
+    _VALID_PROBE_MODES = frozenset({"full_chain", "search_only"})
+
     def __init__(self, fetcher, url_policy=SourceUrlPolicy):
         self._fetcher = fetcher
         self._url_policy = url_policy
@@ -114,6 +117,7 @@ class SourceProbeService:
         keyword_samples: list[str],
         probe_mode: str = "full_chain",
     ) -> SourceProbeEvidence:
+        probe_mode = self._normalize_probe_mode(probe_mode)
         keywords = self._normalize_keywords(keyword_samples)
         attempts: list[dict] = []
         selected: SourceProbeEvidence | None = None
@@ -146,6 +150,8 @@ class SourceProbeService:
             if chain_succeeded:
                 selected = candidate
                 break
+            if self._has_conclusive_transport_failure(candidate):
+                break
 
         if selected is None:
             selected = await self._probe_single_keyword(
@@ -177,6 +183,13 @@ class SourceProbeService:
                 normalized.append(keyword)
         return normalized or ["捞尸人", "斗罗大陆", "剑来"]
 
+    @classmethod
+    def _normalize_probe_mode(cls, probe_mode: str) -> str:
+        normalized = str(probe_mode or "").strip()
+        if normalized not in cls._VALID_PROBE_MODES:
+            raise ValueError(f"unsupported probe_mode: {probe_mode!r}")
+        return normalized
+
     @staticmethod
     def _probe_quality(evidence: SourceProbeEvidence) -> tuple[int, int, int, int]:
         return (
@@ -185,6 +198,51 @@ class SourceProbeService:
             int(evidence.content.status == "ok"),
             evidence.search.hit_count,
         )
+
+    @staticmethod
+    def _has_conclusive_transport_failure(evidence: SourceProbeEvidence) -> bool:
+        failure_markers = (
+            "timeout",
+            "connection reset",
+            "cannot connect",
+            "network unreachable",
+            "ssl",
+            "tls",
+            "handshake",
+            "worker_eof",
+            "worker_io_error",
+            "js_runtime_error",
+            "token=undefined",
+            "just a moment",
+            "cloudflare",
+            "captcha",
+            "access denied",
+        )
+        for stage in (evidence.search, evidence.toc, evidence.content):
+            if stage.status != "failed":
+                continue
+            detail = stage.detail or {}
+            raw_status = detail.get("http_status")
+            try:
+                http_status = int(raw_status) if raw_status is not None else None
+            except (TypeError, ValueError):
+                http_status = None
+            if http_status == 0 or (http_status is not None and http_status >= 400):
+                return True
+            if str(detail.get("block_reason") or "").lower() == "verification_wall":
+                return True
+            diagnostic = " ".join(
+                str(value)
+                for value in (
+                    stage.error_message,
+                    detail.get("response_preview"),
+                    detail.get("js_error"),
+                )
+                if value
+            ).lower()
+            if any(marker in diagnostic for marker in failure_markers):
+                return True
+        return False
 
     async def _probe_single_keyword(
         self,
@@ -266,15 +324,43 @@ class SourceProbeService:
                 content_started = time.perf_counter()
                 try:
                     payload = await self._fetcher.get_content(source, chapters[0]["url"])
-                    body = payload.get("content", "")
+                    raw_body = payload.get("content", "")
+                    body = raw_body.decode("utf-8", errors="replace") if isinstance(raw_body, bytes) else (
+                        raw_body if isinstance(raw_body, str) else ""
+                    )
+                    normalized_body = body.strip()
+                    content_detail = {"content_length": len(normalized_body)}
+                    if not isinstance(raw_body, (str, bytes)) and raw_body not in (None, ""):
+                        content_detail.update(
+                            {
+                                "parse_status": "error_payload",
+                                "response_preview": _safe_preview(raw_body),
+                            }
+                        )
+                    elif _looks_like_access_wall(normalized_body):
+                        content_detail.update(
+                            {
+                                "parse_status": "content_access_blocked",
+                                "block_reason": "verification_wall",
+                                "response_preview": normalized_body[:300],
+                            }
+                        )
+                    elif _looks_like_error_payload(normalized_body):
+                        content_detail.update(
+                            {
+                                "parse_status": "error_payload",
+                                "response_preview": normalized_body[:300],
+                            }
+                        )
+                    content_ok = bool(normalized_body) and "parse_status" not in content_detail
                     content = StageProbeResult(
                         stage="content",
-                        status="ok" if body else "failed",
+                        status="ok" if content_ok else "failed",
                         elapsed_ms=int((time.perf_counter() - content_started) * 1000),
                         sample_title=payload.get("title", ""),
-                        detail={"content_length": len(body)},
+                        detail=content_detail,
                     )
-                    if not body:
+                    if not normalized_body and "parse_status" not in content.detail:
                         content.detail.update(
                             await self._collect_stage_transport_evidence(
                                 source,
@@ -471,6 +557,52 @@ class SourceProbeService:
 
 def _is_html_success(response) -> bool:
     return bool(getattr(response, "success", False) and getattr(response, "is_html", False))
+
+
+def _safe_preview(value: object, limit: int = 300) -> str:
+    try:
+        rendered = json.dumps(value, ensure_ascii=False, default=str)
+    except Exception:
+        rendered = str(value)
+    return rendered[:limit]
+
+
+def _looks_like_access_wall(content: str) -> bool:
+    sample = BeautifulSoup(content[:4000], "lxml").get_text(" ", strip=True).lower()
+    strong_markers = (
+        "just a moment",
+        "cloudflare",
+        "access denied",
+        "verify you are human",
+        "enable javascript and cookies",
+        "getcookie(\"getsite\")",
+        "cf-chl-",
+        "安全验证",
+        "人机验证",
+        "访问验证",
+    )
+    if any(marker in sample for marker in strong_markers):
+        return True
+    return (
+        "captcha" in sample
+        and len(sample) <= 1200
+        and any(marker in sample for marker in ("/captcha", "enter captcha", "verify", "challenge", "human", "robot"))
+    )
+
+
+def _looks_like_error_payload(content: str) -> bool:
+    if not content.lstrip().startswith(("{", "[")):
+        return False
+    try:
+        value = json.loads(content)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if not isinstance(value, dict):
+        return False
+    keys = {str(key).lower() for key in value}
+    return bool(keys & {"error", "errmsg", "error_msg", "message", "status"}) and not bool(
+        keys & {"content", "chapter", "chapters", "data"}
+    )
 
 
 def _chapter_evidence(chapter: dict) -> dict:

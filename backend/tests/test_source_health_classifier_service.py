@@ -231,7 +231,31 @@ def test_classifier_marks_html_response_when_json_is_expected():
     assert decision.failure_reason == "html_instead_of_json"
 
 
-def test_classifier_marks_probe_with_no_keyword_hit_as_degraded_not_unknown():
+def test_classifier_marks_verification_wall_as_waf_blocked():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=109,
+        source_name="验证墙书源",
+        source_url="https://verify.example",
+        probe_mode="full_chain",
+        keyword="sample",
+        search=StageProbeResult(stage="search", status="ok", hit_count=1),
+        toc=StageProbeResult(stage="toc", status="ok", hit_count=1),
+        content=StageProbeResult(
+            stage="content",
+            status="failed",
+            detail={"parse_status": "content_access_blocked", "block_reason": "verification_wall"},
+        ),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.health_status == "blocked"
+    assert decision.failure_reason == "waf_blocked"
+
+
+def test_classifier_keeps_probe_with_no_keyword_hit_unknown_without_transport_evidence():
     from app.application.services.source_health_classifier_service import SourceHealthClassifierService
 
     evidence = SourceProbeEvidence(
@@ -248,8 +272,110 @@ def test_classifier_marks_probe_with_no_keyword_hit_as_degraded_not_unknown():
     decision = SourceHealthClassifierService().classify(evidence)
 
     assert decision.failure_reason == "keyword_no_result"
-    assert decision.health_status == "degraded"
-    assert decision.route_policy == "deprioritize"
+    assert decision.health_status == "unknown"
+    assert decision.route_policy == "probe_only"
+    assert decision.decision_confidence == "low"
+
+
+def test_classifier_ignores_valid_js_request_preview_when_search_has_no_hits():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=2,
+        source_name="合法空结果 JS 书源",
+        source_url="https://example.test",
+        probe_mode="search_only",
+        keyword="不存在的关键词",
+        search=StageProbeResult(
+            stage="search",
+            status="failed",
+            hit_count=0,
+            request_preview="https://api.example.test/search?q=%E4%B8%8D%E5%AD%98%E5%9C%A8%E7%9A%84%E5%85%B3%E9%94%AE%E8%AF%8D",
+            detail={
+                "js_exec_status": "ok",
+                "js_result_preview": "https://api.example.test/search",
+                "http_status": 200,
+                "response_kind": "json",
+            },
+        ),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.failure_reason == "keyword_no_result"
+    assert decision.health_status == "unknown"
+    assert decision.route_policy == "probe_only"
+
+
+def test_classifier_does_not_treat_captcha_word_in_valid_json_as_a_verification_wall():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=5,
+        source_name="合法 JSON 书源",
+        source_url="https://example.test",
+        probe_mode="search_only",
+        keyword="不存在的关键词",
+        search=StageProbeResult(
+            stage="search",
+            status="failed",
+            hit_count=0,
+            detail={
+                "http_status": 200,
+                "response_kind": "json",
+                "response_preview": '{"data": [], "note": "captcha is mentioned in metadata"}',
+            },
+        ),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.failure_reason == "keyword_no_result"
+    assert decision.health_status == "unknown"
+
+
+def test_classifier_does_not_call_full_chain_healthy_when_later_stages_were_skipped():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=3,
+        source_name="链路未完成书源",
+        source_url="https://example.test",
+        probe_mode="full_chain",
+        keyword="sample",
+        search=StageProbeResult(stage="search", status="ok", hit_count=1),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.health_status != "healthy"
+    assert decision.route_policy != "allow"
+
+
+def test_classifier_does_not_allow_unknown_probe_mode_to_be_healthy():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=4,
+        source_name="非法模式书源",
+        source_url="https://example.test",
+        probe_mode="full_chain ",
+        keyword="sample",
+        search=StageProbeResult(stage="search", status="ok", hit_count=1),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.health_status != "healthy"
+    assert decision.route_policy != "allow"
 
 
 def test_classifier_marks_diagnostic_gap_as_degraded_not_unknown():

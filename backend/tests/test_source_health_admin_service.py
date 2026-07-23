@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 
@@ -72,7 +74,7 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
     )
 
     first_page = await service.list_book_source_health(page=1, page_size=2)
-    unknown_second_page = await service.list_book_source_health(page=2, page_size=1, statuses=["unknown"])
+    unknown_second_page = await service.list_book_source_health(page=2, page_size=1, statuses=["unprobed"])
     searched = await service.list_book_source_health(page=1, page_size=10, search="unprobed-two")
     snapshots, snapshot_total = health_repo.list_snapshots(limit=100)
 
@@ -90,6 +92,7 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
             "dead": 0,
             "unprobed": 2,
             "unknown": 0,
+            "disabled": 0,
         },
     }
     assert [item["source_id"] for item in first_page["items"]] == [unprobed_first["id"], probed["id"]]
@@ -122,6 +125,7 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
         "dead": 0,
         "unprobed": 2,
         "unknown": 0,
+        "disabled": 0,
     }
     assert unknown_second_page["meta"] == {
         "page": 2,
@@ -137,6 +141,7 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
             "dead": 0,
             "unprobed": 2,
             "unknown": 0,
+            "disabled": 0,
         },
     }
     assert [item["source_id"] for item in unknown_second_page["items"]] == [unprobed_last["id"]]
@@ -154,6 +159,7 @@ async def test_health_inventory_includes_unprobed_sources_without_creating_snaps
             "dead": 0,
             "unprobed": 1,
             "unknown": 0,
+            "disabled": 0,
         },
     }
     assert [item["source_id"] for item in searched["items"]] == [unprobed_last["id"]]
@@ -210,8 +216,47 @@ async def test_health_inventory_counts_unknown_failures_separately_from_unprobed
         "dead": 0,
         "unprobed": 1,
         "unknown": 1,
+        "disabled": 0,
     }
     assert [item["failure_reason"] for item in result["items"]] == ["not_probed", "parser_unknown"]
+
+
+@pytest.mark.asyncio
+async def test_health_inventory_does_not_count_disabled_sources_as_unprobed(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-disabled.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    await source_repo.create_book_source(
+        {"bookSourceName": "启用未探测", "bookSourceUrl": "https://enabled.example", "enabled": True},
+        actor_id=1,
+    )
+    disabled = await source_repo.create_book_source(
+        {"bookSourceName": "已禁用未探测", "bookSourceUrl": "https://disabled.example", "enabled": False},
+        actor_id=1,
+    )
+
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=None,
+        classifier=None,
+    )
+
+    result = await service.list_book_source_health(page=1, page_size=20)
+
+    assert result["meta"]["status_counts"]["unprobed"] == 1
+    assert result["meta"]["status_counts"]["disabled"] == 1
+    disabled_row = next(item for item in result["items"] if item["source_id"] == disabled["id"])
+    assert disabled_row["health_status"] == "disabled"
+    assert disabled_row["failure_reason"] == "disabled"
 
 
 @pytest.mark.asyncio
@@ -256,6 +301,67 @@ async def test_admin_service_prioritizes_unprobed_enabled_sources(monkeypatch, t
     )
 
     assert service.list_probe_candidate_ids(limit=1) == [first["id"]]
+
+
+@pytest.mark.asyncio
+async def test_admin_service_skips_sources_before_next_probe_at(monkeypatch, tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-candidate-cooldown.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.domain.entities.source_health import SourceHealthSnapshot
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    unprobed = await source_repo.create_book_source(
+        {"bookSourceName": "未探测", "bookSourceUrl": "https://unprobed.example", "enabled": True},
+        actor_id=1,
+    )
+    due = await source_repo.create_book_source(
+        {"bookSourceName": "到期重测", "bookSourceUrl": "https://due.example", "enabled": True},
+        actor_id=1,
+    )
+    cooling = await source_repo.create_book_source(
+        {"bookSourceName": "冷却中", "bookSourceUrl": "https://cooling.example", "enabled": True},
+        actor_id=1,
+    )
+    now = datetime.now(timezone.utc)
+    health_repo.upsert_snapshot(
+        SourceHealthSnapshot(
+            source_id=due["id"],
+            source_name=due["bookSourceName"],
+            source_url=due["bookSourceUrl"],
+            health_status="degraded",
+            last_probe_at=now - timedelta(minutes=45),
+            next_probe_at=now - timedelta(minutes=1),
+        )
+    )
+    health_repo.upsert_snapshot(
+        SourceHealthSnapshot(
+            source_id=cooling["id"],
+            source_name=cooling["bookSourceName"],
+            source_url=cooling["bookSourceUrl"],
+            health_status="blocked",
+            failure_reason="waf_blocked",
+            last_probe_at=now,
+            next_probe_at=now + timedelta(minutes=30),
+        )
+    )
+
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=None,
+        classifier=None,
+    )
+
+    assert service.list_probe_candidate_ids(limit=None) == [unprobed["id"], due["id"]]
 
 
 @pytest.mark.asyncio
@@ -324,7 +430,7 @@ async def test_health_inventory_paginates_in_repository_without_loading_full_sou
 
     event.listen(engine, "before_cursor_execute", capture_statement)
     try:
-        result = await service.list_book_source_health(page=2, page_size=1, statuses=["unknown"])
+        result = await service.list_book_source_health(page=2, page_size=1, statuses=["unprobed"])
     finally:
         event.remove(engine, "before_cursor_execute", capture_statement)
 
@@ -342,6 +448,7 @@ async def test_health_inventory_paginates_in_repository_without_loading_full_sou
             "dead": 0,
             "unprobed": 2,
             "unknown": 0,
+            "disabled": 0,
         },
     }
     assert [item["source_id"] for item in result["items"]] == [second_unprobed["id"]]
@@ -403,6 +510,104 @@ async def test_admin_service_persists_snapshot_and_mirrors_book_source_fields(mo
 
 
 @pytest.mark.asyncio
+async def test_admin_service_keeps_single_transient_transport_failure_unknown_then_confirms_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-transient.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+    from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class TransientProbeService:
+        async def probe_source(self, source, keyword_samples, probe_mode="full_chain"):
+            return SourceProbeEvidence(
+                source_id=source["id"],
+                source_name=source["bookSourceName"],
+                source_url=source["bookSourceUrl"],
+                probe_mode=probe_mode,
+                keyword=keyword_samples[0],
+                search=StageProbeResult(stage="search", status="failed", detail={"http_status": 503}),
+                toc=StageProbeResult(stage="toc", status="skipped"),
+                content=StageProbeResult(stage="content", status="skipped"),
+            )
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "瞬时错误书源", "bookSourceUrl": "https://transient.example", "enabled": True},
+        actor_id=1,
+    )
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=TransientProbeService(),
+        classifier=SourceHealthClassifierService(),
+    )
+
+    first = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+    second = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+
+    assert first["snapshot"]["health_status"] == "unknown"
+    assert first["snapshot"]["failure_reason"] == "http_status_error"
+    assert second["snapshot"]["health_status"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_admin_service_keeps_single_waf_failure_unknown_then_confirms_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-waf-stability.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+    from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class WafProbeService:
+        async def probe_source(self, source, keyword_samples, probe_mode="full_chain"):
+            return SourceProbeEvidence(
+                source_id=source["id"],
+                source_name=source["bookSourceName"],
+                source_url=source["bookSourceUrl"],
+                probe_mode=probe_mode,
+                keyword=keyword_samples[0],
+                search=StageProbeResult(
+                    stage="search",
+                    status="failed",
+                    detail={"http_status": 403, "response_kind": "html", "response_preview": "captcha"},
+                ),
+                toc=StageProbeResult(stage="toc", status="skipped"),
+                content=StageProbeResult(stage="content", status="skipped"),
+            )
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "WAF 瞬时拦截", "bookSourceUrl": "https://waf.example", "enabled": True},
+        actor_id=1,
+    )
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=WafProbeService(),
+        classifier=SourceHealthClassifierService(),
+    )
+
+    first = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+    second = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+
+    assert first["snapshot"]["health_status"] == "unknown"
+    assert first["snapshot"]["failure_reason"] == "waf_blocked"
+    assert second["snapshot"]["health_status"] == "blocked"
+
+
+@pytest.mark.asyncio
 async def test_admin_service_continues_batch_after_one_source_failure():
     from app.application.services.source_health_admin_service import SourceHealthAdminService
 
@@ -437,6 +642,47 @@ async def test_admin_service_continues_batch_after_one_source_failure():
 
 
 @pytest.mark.asyncio
+async def test_admin_service_records_unexpected_probe_exception_as_unknown_not_unprobed(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-exception.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "异常书源", "bookSourceUrl": "https://exception.example", "enabled": True},
+        actor_id=1,
+    )
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=None,
+        classifier=None,
+    )
+
+    async def fail_probe(source_id, keyword_samples, probe_mode="full_chain"):
+        raise RuntimeError("unexpected parser failure")
+
+    service.probe_book_source = fail_probe
+    result = await service.probe_book_sources([source["id"]], keyword_samples=["捞尸人"])
+    snapshot = health_repo.get_snapshot(source["id"])
+    inventory = await service.list_book_source_health(page=1, page_size=20)
+
+    assert result["failed"] == 1
+    assert snapshot is not None
+    assert snapshot.health_status == "unknown"
+    assert snapshot.failure_reason == "probe_exception"
+    assert snapshot.last_probe_at is not None
+    assert inventory["meta"]["status_counts"]["unknown"] == 1
+    assert inventory["meta"]["status_counts"]["unprobed"] == 0
+
+
+@pytest.mark.asyncio
 async def test_admin_service_defers_remaining_sources_when_batch_deadline_expires():
     from app.application.services.source_health_admin_service import SourceHealthAdminService
 
@@ -461,10 +707,49 @@ async def test_admin_service_defers_remaining_sources_when_batch_deadline_expire
     )
 
     assert calls == []
-    assert result["total"] == 0
+    assert result["total"] == 2
     assert result["succeeded"] == 0
     assert result["failed"] == 0
     assert result["deferred"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_service_bounds_timeout_failure_persistence_by_batch_deadline():
+    from time import monotonic
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+
+    service = SourceHealthAdminService(
+        source_repo=None,
+        health_repo=None,
+        probe_service=None,
+        classifier=None,
+    )
+    calls = []
+
+    async def slow_probe(source_id, keyword_samples, probe_mode="full_chain"):
+        calls.append(source_id)
+        await asyncio.sleep(0.2)
+        return {"snapshot": {"source_id": source_id}}
+
+    async def slow_failure_persistence(*args, **kwargs):
+        await asyncio.sleep(0.2)
+
+    service.probe_book_source = slow_probe
+    service._record_probe_failure = slow_failure_persistence
+
+    started = monotonic()
+    result = await service.probe_book_sources(
+        [1, 2],
+        keyword_samples=["捞尸人"],
+        timeout_seconds=0.1,
+    )
+    elapsed = monotonic() - started
+
+    assert elapsed < 0.18
+    assert calls == [1]
+    assert result["failed"] == 1
+    assert result["deferred_source_ids"] == [2]
 
 
 @pytest.mark.asyncio

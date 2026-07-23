@@ -1,13 +1,19 @@
 import json
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, case, func, or_, text
 
 from app.core.pagination import LIKE_ESCAPE, like_pattern
 from app.infrastructure.persistence.sqlite.session import SessionLocal
 from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
 from app.domain.repositories.source_health_repo import SourceHealthRepository
 
-from .schema import BookSourceModel, SourceHealthSnapshotModel, SourceProbeRunModel
+from .schema import (
+    BookSourceModel,
+    SourceHealthProbeLeaseModel,
+    SourceHealthSnapshotModel,
+    SourceProbeRunModel,
+)
 
 
 class SQLiteSourceHealthRepository(SourceHealthRepository):
@@ -32,19 +38,89 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
     def _dump_json(value: dict) -> str:
         return json.dumps(value, ensure_ascii=False, default=str)
 
+    def _apply_snapshot_row(self, row: SourceHealthSnapshotModel, snapshot: SourceHealthSnapshot) -> None:
+        row.source_name = snapshot.source_name
+        row.source_url = snapshot.source_url
+        row.health_status = snapshot.health_status
+        row.search_status = snapshot.search_status
+        row.toc_status = snapshot.toc_status
+        row.content_status = snapshot.content_status
+        row.failure_reason = snapshot.failure_reason
+        row.decision_confidence = snapshot.decision_confidence
+        row.route_policy = snapshot.route_policy
+        row.route_score = snapshot.route_score
+        row.consecutive_failures = snapshot.consecutive_failures
+        row.consecutive_successes = snapshot.consecutive_successes
+        row.last_success_at = snapshot.last_success_at
+        row.last_probe_at = snapshot.last_probe_at
+        row.next_probe_at = snapshot.next_probe_at
+        row.metadata_json = self._dump_json(snapshot.metadata)
+
+    def _new_probe_run_row(self, run: SourceProbeRun) -> SourceProbeRunModel:
+        return SourceProbeRunModel(
+            id=run.id,
+            source_id=run.source_id,
+            source_name=run.source_name,
+            probe_mode=run.probe_mode,
+            keyword=run.keyword,
+            overall_status=run.overall_status,
+            failure_reason=run.failure_reason,
+            search_result=self._dump_json(run.search_result),
+            toc_result=self._dump_json(run.toc_result),
+            content_result=self._dump_json(run.content_result),
+            summary=self._dump_json(run.summary),
+            created_at=run.created_at,
+        )
+
+    @staticmethod
+    def _normalized_health_status_expression():
+        raw_status = func.coalesce(SourceHealthSnapshotModel.health_status, "unknown")
+        # Older probes treated an absent fixed keyword as a degraded source.
+        # Keep that historical data from influencing routing or inventory.
+        return case(
+            (
+                and_(
+                    raw_status == "degraded",
+                    SourceHealthSnapshotModel.failure_reason == "keyword_no_result",
+                ),
+                "unknown",
+            ),
+            else_=raw_status,
+        )
+
+    @classmethod
+    def _inventory_status_expression(cls):
+        derived_status = cls._normalized_health_status_expression()
+        unprobed = or_(
+            SourceHealthSnapshotModel.source_id.is_(None),
+            and_(
+                derived_status == "unknown",
+                SourceHealthSnapshotModel.failure_reason == "not_probed",
+            ),
+        )
+        return case(
+            (BookSourceModel.enabled == False, "disabled"),
+            (unprobed, "unprobed"),
+            else_=derived_status,
+        )
+
     def _snapshot_to_entity(self, model: SourceHealthSnapshotModel) -> SourceHealthSnapshot:
+        legacy_no_match = (
+            model.health_status == "degraded"
+            and model.failure_reason == "keyword_no_result"
+        )
         return SourceHealthSnapshot(
             source_id=model.source_id,
             source_name=model.source_name,
             source_url=model.source_url,
-            health_status=model.health_status,
+            health_status="unknown" if legacy_no_match else model.health_status,
             search_status=model.search_status,
             toc_status=model.toc_status,
             content_status=model.content_status,
             failure_reason=model.failure_reason,
-            decision_confidence=model.decision_confidence,
-            route_policy=model.route_policy,
-            route_score=float(model.route_score or 0),
+            decision_confidence="low" if legacy_no_match else model.decision_confidence,
+            route_policy="probe_only" if legacy_no_match else model.route_policy,
+            route_score=10.0 if legacy_no_match else float(model.route_score or 0),
             consecutive_failures=model.consecutive_failures,
             consecutive_successes=model.consecutive_successes,
             last_success_at=model.last_success_at,
@@ -85,9 +161,10 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
     ) -> tuple[list[SourceHealthSnapshot], int]:
         db = self._db()
         try:
+            normalized_status = self._normalized_health_status_expression()
             query = db.query(SourceHealthSnapshotModel).order_by(SourceHealthSnapshotModel.source_id.asc())
             if statuses:
-                query = query.filter(SourceHealthSnapshotModel.health_status.in_(statuses))
+                query = query.filter(normalized_status.in_(statuses))
             total = query.count()
             rows = query.offset(offset).limit(limit).all()
             return [self._snapshot_to_entity(row) for row in rows], total
@@ -103,7 +180,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
     ) -> tuple[list[SourceHealthSnapshot], int]:
         db = self._db()
         try:
-            derived_status = func.coalesce(SourceHealthSnapshotModel.health_status, "unknown")
+            inventory_status = self._inventory_status_expression()
             normalized_search = search.strip()
             search_pattern = like_pattern(normalized_search)
             count_query = db.query(func.count(BookSourceModel.id)).outerjoin(
@@ -111,7 +188,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                 SourceHealthSnapshotModel.source_id == BookSourceModel.id,
             )
             if statuses:
-                count_query = count_query.filter(derived_status.in_(statuses))
+                count_query = count_query.filter(inventory_status.in_(statuses))
             if normalized_search:
                 count_query = count_query.filter(
                     or_(
@@ -126,6 +203,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                     BookSourceModel.id.label("book_source_id"),
                     BookSourceModel.bookSourceName.label("book_source_name"),
                     BookSourceModel.bookSourceUrl.label("book_source_url"),
+                    BookSourceModel.enabled.label("book_source_enabled"),
                     SourceHealthSnapshotModel.source_id.label("snapshot_source_id"),
                     SourceHealthSnapshotModel.source_name.label("snapshot_source_name"),
                     SourceHealthSnapshotModel.source_url.label("snapshot_source_url"),
@@ -151,7 +229,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                 .order_by(BookSourceModel.id.asc())
             )
             if statuses:
-                query = query.filter(derived_status.in_(statuses))
+                query = query.filter(inventory_status.in_(statuses))
             if normalized_search:
                 query = query.filter(
                     or_(
@@ -171,20 +249,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
     ) -> dict[str, int]:
         db = self._db()
         try:
-            derived_status = func.coalesce(SourceHealthSnapshotModel.health_status, "unknown")
-            inventory_status = case(
-                (
-                    or_(
-                        SourceHealthSnapshotModel.source_id.is_(None),
-                        and_(
-                            derived_status == "unknown",
-                            SourceHealthSnapshotModel.failure_reason == "not_probed",
-                        ),
-                    ),
-                    "unprobed",
-                ),
-                else_=derived_status,
-            )
+            inventory_status = self._inventory_status_expression()
             normalized_search = search.strip()
             search_pattern = like_pattern(normalized_search)
             query = (
@@ -195,7 +260,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                 )
             )
             if statuses:
-                query = query.filter(derived_status.in_(statuses))
+                query = query.filter(inventory_status.in_(statuses))
             if normalized_search:
                 query = query.filter(
                     or_(
@@ -205,7 +270,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                 )
             grouped = query.group_by(inventory_status).all()
             counts = {str(status): int(count) for status, count in grouped}
-            for status in ("healthy", "degraded", "blocked", "dead", "unprobed", "unknown"):
+            for status in ("healthy", "degraded", "blocked", "dead", "unprobed", "unknown", "disabled"):
                 counts.setdefault(status, 0)
             counts["total"] = sum(counts.values())
             return counts
@@ -213,6 +278,21 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             self._close(db)
 
     def _inventory_row_to_snapshot(self, row) -> SourceHealthSnapshot:
+        if not bool(row.book_source_enabled):
+            return SourceHealthSnapshot(
+                source_id=row.book_source_id,
+                source_name=row.book_source_name,
+                source_url=row.book_source_url,
+                health_status="disabled",
+                search_status="skipped",
+                toc_status="skipped",
+                content_status="skipped",
+                failure_reason="disabled",
+                decision_confidence="high",
+                route_policy="skip",
+                route_score=0.0,
+                metadata=self._loads_dict(row.snapshot_metadata_json),
+            )
         if row.snapshot_source_id is None:
             return SourceHealthSnapshot(
                 source_id=row.book_source_id,
@@ -227,18 +307,22 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                 route_policy="probe_only",
                 route_score=10.0,
             )
+        legacy_no_match = (
+            row.snapshot_health_status == "degraded"
+            and row.snapshot_failure_reason == "keyword_no_result"
+        )
         return SourceHealthSnapshot(
             source_id=row.snapshot_source_id,
             source_name=row.snapshot_source_name,
             source_url=row.snapshot_source_url,
-            health_status=row.snapshot_health_status,
+            health_status="unknown" if legacy_no_match else row.snapshot_health_status,
             search_status=row.snapshot_search_status,
             toc_status=row.snapshot_toc_status,
             content_status=row.snapshot_content_status,
             failure_reason=row.snapshot_failure_reason,
-            decision_confidence=row.snapshot_decision_confidence,
-            route_policy=row.snapshot_route_policy,
-            route_score=float(row.snapshot_route_score or 0),
+            decision_confidence="low" if legacy_no_match else row.snapshot_decision_confidence,
+            route_policy="probe_only" if legacy_no_match else row.snapshot_route_policy,
+            route_score=10.0 if legacy_no_match else float(row.snapshot_route_score or 0),
             consecutive_failures=row.snapshot_consecutive_failures,
             consecutive_successes=row.snapshot_consecutive_successes,
             last_success_at=row.snapshot_last_success_at,
@@ -254,22 +338,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             if row is None:
                 row = SourceHealthSnapshotModel(source_id=snapshot.source_id)
                 db.add(row)
-            row.source_name = snapshot.source_name
-            row.source_url = snapshot.source_url
-            row.health_status = snapshot.health_status
-            row.search_status = snapshot.search_status
-            row.toc_status = snapshot.toc_status
-            row.content_status = snapshot.content_status
-            row.failure_reason = snapshot.failure_reason
-            row.decision_confidence = snapshot.decision_confidence
-            row.route_policy = snapshot.route_policy
-            row.route_score = snapshot.route_score
-            row.consecutive_failures = snapshot.consecutive_failures
-            row.consecutive_successes = snapshot.consecutive_successes
-            row.last_success_at = snapshot.last_success_at
-            row.last_probe_at = snapshot.last_probe_at
-            row.next_probe_at = snapshot.next_probe_at
-            row.metadata_json = self._dump_json(snapshot.metadata)
+            self._apply_snapshot_row(row, snapshot)
             db.commit()
             db.refresh(row)
             return self._snapshot_to_entity(row)
@@ -279,24 +348,85 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
     def record_probe_run(self, run: SourceProbeRun) -> SourceProbeRun:
         db = self._db()
         try:
-            row = SourceProbeRunModel(
-                id=run.id,
-                source_id=run.source_id,
-                source_name=run.source_name,
-                probe_mode=run.probe_mode,
-                keyword=run.keyword,
-                overall_status=run.overall_status,
-                failure_reason=run.failure_reason,
-                search_result=self._dump_json(run.search_result),
-                toc_result=self._dump_json(run.toc_result),
-                content_result=self._dump_json(run.content_result),
-                summary=self._dump_json(run.summary),
-                created_at=run.created_at,
-            )
+            row = self._new_probe_run_row(run)
             db.add(row)
             db.commit()
             db.refresh(row)
             return self._run_to_entity(row)
+        finally:
+            self._close(db)
+
+    def record_probe_failure(
+        self,
+        snapshot: SourceHealthSnapshot,
+        run: SourceProbeRun,
+        *,
+        source_status: str,
+        error_msg: str,
+        last_check_time: datetime,
+    ) -> tuple[SourceHealthSnapshot, SourceProbeRun]:
+        return self._record_probe_state(
+            snapshot,
+            run,
+            source_status=source_status,
+            error_msg=error_msg,
+            last_check_time=last_check_time,
+        )
+
+    def record_probe_result(
+        self,
+        snapshot: SourceHealthSnapshot,
+        run: SourceProbeRun,
+        *,
+        source_status: str,
+        error_msg: str,
+        last_check_time: datetime,
+    ) -> tuple[SourceHealthSnapshot, SourceProbeRun]:
+        return self._record_probe_state(
+            snapshot,
+            run,
+            source_status=source_status,
+            error_msg=error_msg,
+            last_check_time=last_check_time,
+        )
+
+    def _record_probe_state(
+        self,
+        snapshot: SourceHealthSnapshot,
+        run: SourceProbeRun,
+        *,
+        source_status: str,
+        error_msg: str,
+        last_check_time: datetime,
+    ) -> tuple[SourceHealthSnapshot, SourceProbeRun]:
+        db = self._db()
+        try:
+            source = db.query(BookSourceModel).filter(BookSourceModel.id == snapshot.source_id).first()
+            if source is None:
+                raise ValueError(f"book source not found: {snapshot.source_id}")
+
+            row = (
+                db.query(SourceHealthSnapshotModel)
+                .filter(SourceHealthSnapshotModel.source_id == snapshot.source_id)
+                .first()
+            )
+            if row is None:
+                row = SourceHealthSnapshotModel(source_id=snapshot.source_id)
+                db.add(row)
+            self._apply_snapshot_row(row, snapshot)
+
+            run_row = self._new_probe_run_row(run)
+            db.add(run_row)
+            source.sourceStatus = source_status
+            source.errorMsg = error_msg
+            source.lastCheckTime = last_check_time
+            db.commit()
+            db.refresh(row)
+            db.refresh(run_row)
+            return self._snapshot_to_entity(row), self._run_to_entity(run_row)
+        except Exception:
+            db.rollback()
+            raise
         finally:
             self._close(db)
 
@@ -314,7 +444,7 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
         finally:
             self._close(db)
 
-    def list_probe_candidate_ids(self, limit: int = 20) -> list[int]:
+    def list_probe_candidate_ids(self, limit: int | None = 20) -> list[int]:
         db = self._db()
         try:
             unprobed_first = case(
@@ -325,22 +455,127 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
                 (SourceHealthSnapshotModel.last_probe_at.is_(None), 0),
                 else_=1,
             )
-            rows = (
+            query = (
                 db.query(BookSourceModel.id)
                 .outerjoin(
                     SourceHealthSnapshotModel,
                     SourceHealthSnapshotModel.source_id == BookSourceModel.id,
                 )
                 .filter(BookSourceModel.enabled == True)
+                .filter(
+                    or_(
+                        SourceHealthSnapshotModel.source_id.is_(None),
+                        SourceHealthSnapshotModel.next_probe_at.is_(None),
+                        SourceHealthSnapshotModel.next_probe_at <= datetime.now(timezone.utc),
+                    )
+                )
                 .order_by(
                     unprobed_first.asc(),
                     no_probe_time_first.asc(),
                     SourceHealthSnapshotModel.last_probe_at.asc(),
                     BookSourceModel.id.asc(),
                 )
-                .limit(max(int(limit), 0))
-                .all()
             )
+            if limit is not None:
+                query = query.limit(max(int(limit), 0))
+            rows = query.all()
             return [int(row[0]) for row in rows]
+        finally:
+            self._close(db)
+
+    def claim_probe_candidate_ids(
+        self,
+        limit: int | None = 20,
+        *,
+        worker_id: str,
+        lease_seconds: int = 1800,
+    ) -> list[int]:
+        normalized_limit = None if limit is None else max(int(limit), 0)
+        if normalized_limit == 0:
+            return []
+        if not str(worker_id or "").strip():
+            raise ValueError("worker_id is required")
+
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=max(int(lease_seconds), 1))
+        db = self._db()
+        try:
+            # SQLite has no row-level SELECT FOR UPDATE.  An immediate write
+            # transaction makes candidate selection and lease insertion one
+            # compare-and-set operation across scheduler/manual callers.
+            db.execute(text("BEGIN IMMEDIATE"))
+            db.query(SourceHealthProbeLeaseModel).filter(
+                SourceHealthProbeLeaseModel.lease_expires_at <= now,
+            ).delete(synchronize_session=False)
+
+            unprobed_first = case(
+                (SourceHealthSnapshotModel.source_id.is_(None), 0),
+                else_=1,
+            )
+            no_probe_time_first = case(
+                (SourceHealthSnapshotModel.last_probe_at.is_(None), 0),
+                else_=1,
+            )
+            active_lease = and_(
+                SourceHealthProbeLeaseModel.source_id == BookSourceModel.id,
+                SourceHealthProbeLeaseModel.lease_expires_at > now,
+            )
+            query = (
+                db.query(BookSourceModel.id)
+                .outerjoin(
+                    SourceHealthSnapshotModel,
+                    SourceHealthSnapshotModel.source_id == BookSourceModel.id,
+                )
+                .outerjoin(SourceHealthProbeLeaseModel, active_lease)
+                .filter(BookSourceModel.enabled == True)
+                .filter(SourceHealthProbeLeaseModel.source_id.is_(None))
+                .filter(
+                    or_(
+                        SourceHealthSnapshotModel.source_id.is_(None),
+                        SourceHealthSnapshotModel.next_probe_at.is_(None),
+                        SourceHealthSnapshotModel.next_probe_at <= now,
+                    )
+                )
+                .order_by(
+                    unprobed_first.asc(),
+                    no_probe_time_first.asc(),
+                    SourceHealthSnapshotModel.last_probe_at.asc(),
+                    BookSourceModel.id.asc(),
+                )
+            )
+            if normalized_limit is not None:
+                query = query.limit(normalized_limit)
+            source_ids = [int(row[0]) for row in query.all()]
+            for source_id in source_ids:
+                db.add(
+                    SourceHealthProbeLeaseModel(
+                        source_id=source_id,
+                        worker_id=str(worker_id),
+                        claimed_at=now,
+                        lease_expires_at=expires_at,
+                    )
+                )
+            db.commit()
+            return source_ids
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            self._close(db)
+
+    def release_probe_claims(self, source_ids: list[int], *, worker_id: str) -> None:
+        normalized_ids = [int(source_id) for source_id in source_ids or []]
+        if not normalized_ids:
+            return
+        db = self._db()
+        try:
+            db.query(SourceHealthProbeLeaseModel).filter(
+                SourceHealthProbeLeaseModel.source_id.in_(normalized_ids),
+                SourceHealthProbeLeaseModel.worker_id == str(worker_id),
+            ).delete(synchronize_session=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         finally:
             self._close(db)

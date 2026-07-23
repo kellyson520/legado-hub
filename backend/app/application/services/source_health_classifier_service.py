@@ -43,16 +43,19 @@ class SourceHealthClassifierService:
         )
 
     def _failure_reason(self, evidence: SourceProbeEvidence) -> str:
-        haystacks = [
-            evidence.search.request_preview,
+        request_haystacks = [
+            stage.request_preview
+            for stage in (evidence.search, evidence.toc, evidence.content)
+            if stage.request_preview
+        ]
+        diagnostic_haystacks = [
             evidence.search.error_message,
-            evidence.toc.request_preview,
             evidence.toc.error_message,
             evidence.content.error_message,
         ]
         for stage in (evidence.search, evidence.toc, evidence.content):
             if stage.detail.get("response_preview"):
-                haystacks.append(str(stage.detail["response_preview"]))
+                diagnostic_haystacks.append(str(stage.detail["response_preview"]))
             diagnostic_detail = {
                 key: stage.detail[key]
                 for key in (
@@ -62,13 +65,15 @@ class SourceHealthClassifierService:
                     "http_error",
                     "response_kind",
                     "response_preview",
+                    "parse_status",
+                    "block_reason",
                 )
                 if key in stage.detail
             }
             if diagnostic_detail:
-                haystacks.append(json.dumps(diagnostic_detail, ensure_ascii=False, default=str))
-        merged = " ".join(item for item in haystacks if item)
-        lowered = merged.lower()
+                diagnostic_haystacks.append(json.dumps(diagnostic_detail, ensure_ascii=False, default=str))
+        diagnostics = " ".join(item for item in diagnostic_haystacks if item)
+        lowered = f"{diagnostics} {' '.join(request_haystacks)}".lower()
         details = [stage.detail for stage in (evidence.search, evidence.toc, evidence.content)]
         stage_http_statuses = [
             int(detail["http_status"])
@@ -88,7 +93,13 @@ class SourceHealthClassifierService:
             return "upstream_changed"
         if re.search(r'["\']status["\']\s*:\s*4200\b', lowered):
             return "auth_required"
-        if any(marker in lowered for marker in ["just a moment", "cloudflare", "captcha", "access denied"]):
+        if self._has_verification_wall_evidence(details):
+            return "waf_blocked"
+        if any(
+            str(detail.get("block_reason") or "").lower() == "verification_wall"
+            or str(detail.get("parse_status") or "").lower() == "content_access_blocked"
+            for detail in details
+        ):
             return "waf_blocked"
         if any(status in {403, 429} for status in http_statuses):
             return "waf_blocked"
@@ -117,10 +128,21 @@ class SourceHealthClassifierService:
             return "html_instead_of_json"
         if any(str(detail.get("parse_status") or "").lower() == "empty" for detail in details):
             return "parse_empty"
-        if evidence.search.status == "failed" and evidence.search.hit_count == 0 and not merged:
-            return "keyword_no_result"
-        if evidence.search.status == "failed" and '"http_status": 2' in lowered:
-            return "parse_empty"
+        if evidence.search.status == "failed" and evidence.search.hit_count == 0:
+            search_detail = evidence.search.detail or {}
+            search_http_status = search_detail.get("http_status")
+            try:
+                search_http_status = int(search_http_status) if search_http_status is not None else None
+            except (TypeError, ValueError):
+                search_http_status = None
+            has_explicit_search_error = bool(
+                evidence.search.error_message
+                or search_detail.get("js_error")
+                or search_detail.get("http_error")
+                or (search_http_status is not None and not 200 <= search_http_status < 400)
+            )
+            if not has_explicit_search_error:
+                return "keyword_no_result"
         if evidence.search.status == "ok" and evidence.toc.status == "failed":
             return "parse_empty"
         if evidence.search.status == "ok" and evidence.toc.status == "ok" and evidence.content.status == "failed":
@@ -130,12 +152,50 @@ class SourceHealthClassifierService:
         return ""
 
     @staticmethod
+    def _has_verification_wall_evidence(details: list[dict]) -> bool:
+        strong_markers = (
+            "just a moment",
+            "cloudflare",
+            "access denied",
+            "verify you are human",
+            "enable javascript and cookies",
+            "cf-chl-",
+            "安全验证",
+            "人机验证",
+            "访问验证",
+        )
+        captcha_context = ("/captcha", "enter captcha", "verify", "challenge", "human", "robot")
+        for detail in details:
+            if str(detail.get("block_reason") or "").lower() == "verification_wall":
+                return True
+            if str(detail.get("parse_status") or "").lower() == "content_access_blocked":
+                return True
+            if str(detail.get("response_kind") or "").lower() != "html":
+                continue
+            preview = str(detail.get("response_preview") or "").lower()
+            if any(marker in preview for marker in strong_markers):
+                return True
+            if "captcha" in preview and any(marker in preview for marker in captcha_context):
+                return True
+        return False
+
+    @staticmethod
     def _health_status(evidence: SourceProbeEvidence, failure_reason: str) -> str:
-        if (
-            evidence.search.status == "ok"
-            and evidence.toc.status in {"ok", "skipped"}
-            and evidence.content.status in {"ok", "skipped"}
-        ):
+        if evidence.probe_mode == "full_chain":
+            full_chain_succeeded = (
+                evidence.search.status == "ok"
+                and evidence.toc.status == "ok"
+                and evidence.content.status == "ok"
+            )
+        elif evidence.probe_mode == "search_only":
+            full_chain_succeeded = (
+                evidence.search.status == "ok"
+                and evidence.toc.status in {"ok", "skipped"}
+                and evidence.content.status in {"ok", "skipped"}
+            )
+        else:
+            full_chain_succeeded = False
+        if full_chain_succeeded:
             return "healthy"
         if failure_reason in {
             "token_missing",
@@ -155,7 +215,12 @@ class SourceHealthClassifierService:
             evidence.toc.status == "failed" or evidence.content.status == "failed"
         ):
             return "degraded"
-        if failure_reason in {"html_instead_of_json", "parse_empty", "keyword_no_result", "unknown_error"}:
+        # A fixed probe title may simply be absent from a valid source. Without
+        # transport or parser evidence, no result is inconclusive rather than a
+        # reason to deprioritize the source.
+        if failure_reason == "keyword_no_result":
+            return "unknown"
+        if failure_reason in {"html_instead_of_json", "parse_empty", "unknown_error"}:
             return "degraded"
         return "unknown"
 
@@ -171,7 +236,7 @@ class SourceHealthClassifierService:
             "js_runtime_failure",
         }:
             return "high"
-        if failure_reason in {"timeout", "http_status_error", "html_instead_of_json", "parse_empty", "keyword_no_result"}:
+        if failure_reason in {"timeout", "http_status_error", "html_instead_of_json", "parse_empty"}:
             return "medium"
         return "low"
 
