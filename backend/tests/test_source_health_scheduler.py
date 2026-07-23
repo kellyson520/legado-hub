@@ -1,6 +1,17 @@
 import pytest
 
 
+def test_source_health_probe_uses_thirty_minute_schedule_and_batch_default():
+    from app.core.config import Settings
+    from app.tasks.scheduler import JOBS
+
+    probe_job = next(item for item in JOBS if item[0] == "probe_source_health")
+
+    assert probe_job[1] == "*/30 * * * *"
+    assert Settings().SOURCE_HEALTH_PROBE_BATCH_SIZE == 50
+    assert Settings().SOURCE_HEALTH_PROBE_BATCH_TIMEOUT_SECONDS == 1500
+
+
 @pytest.mark.asyncio
 async def test_health_service_quarantines_and_rolls_back_unstable_version(tmp_path, monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
@@ -123,7 +134,7 @@ async def test_smart_source_health_probe_uses_bounded_unprobed_candidates(monkey
             assert limit == 3
             return [4, 7, 8]
 
-        async def probe_book_sources(self, source_ids, keyword_samples, probe_mode="full_chain"):
+        async def probe_book_sources(self, source_ids, keyword_samples, probe_mode="full_chain", **kwargs):
             return {
                 "results": [{"snapshot": {"source_id": source_id}} for source_id in source_ids],
                 "total": len(source_ids),

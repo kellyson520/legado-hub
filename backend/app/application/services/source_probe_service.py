@@ -361,7 +361,7 @@ class SourceProbeService:
                 request_spec = {**request_spec, "url": request_url}
                 preview = request_url
                 request_body = request_spec.get("body")
-                if request_body not in {None, ""}:
+                if request_body is not None and request_body != "":
                     preview = f"{preview} BODY={request_body}"
             return {
                 "request_preview": preview,

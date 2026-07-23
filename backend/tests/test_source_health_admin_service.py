@@ -403,6 +403,71 @@ async def test_admin_service_persists_snapshot_and_mirrors_book_source_fields(mo
 
 
 @pytest.mark.asyncio
+async def test_admin_service_continues_batch_after_one_source_failure():
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+
+    service = SourceHealthAdminService(
+        source_repo=None,
+        health_repo=None,
+        probe_service=None,
+        classifier=None,
+    )
+    calls = []
+
+    async def probe_book_source(source_id, keyword_samples, probe_mode="full_chain"):
+        calls.append(source_id)
+        if source_id == 1:
+            raise RuntimeError("broken source")
+        return {"snapshot": {"source_id": source_id, "health_status": "healthy"}}
+
+    service.probe_book_source = probe_book_source
+
+    result = await service.probe_book_sources([1, 2], keyword_samples=["捞尸人"])
+
+    assert calls == [1, 2]
+    assert result["total"] == 2
+    assert result["succeeded"] == 1
+    assert result["failed"] == 1
+    assert result["results"][0] == {
+        "source_id": 1,
+        "status": "failed",
+        "error": "broken source",
+    }
+    assert result["results"][1]["snapshot"]["source_id"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_service_defers_remaining_sources_when_batch_deadline_expires():
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+
+    service = SourceHealthAdminService(
+        source_repo=None,
+        health_repo=None,
+        probe_service=None,
+        classifier=None,
+    )
+    calls = []
+
+    async def probe_book_source(source_id, keyword_samples, probe_mode="full_chain"):
+        calls.append(source_id)
+        return {"snapshot": {"source_id": source_id}}
+
+    service.probe_book_source = probe_book_source
+
+    result = await service.probe_book_sources(
+        [1, 2],
+        keyword_samples=["捞尸人"],
+        timeout_seconds=0,
+    )
+
+    assert calls == []
+    assert result["total"] == 0
+    assert result["succeeded"] == 0
+    assert result["failed"] == 0
+    assert result["deferred"] == 2
+
+
+@pytest.mark.asyncio
 async def test_admin_service_recover_source_resets_blocked_snapshot(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-recover.sqlite3"))

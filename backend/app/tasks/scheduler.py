@@ -171,6 +171,7 @@ def job_probe_source_health():
         result = _safe_async_run(
             run_smart_source_health_probe_job(
                 limit=settings.SOURCE_HEALTH_PROBE_BATCH_SIZE,
+                timeout_seconds=settings.SOURCE_HEALTH_PROBE_BATCH_TIMEOUT_SECONDS,
                 keyword_samples=list(SMART_SOURCE_HEALTH_KEYWORDS),
             )
         )
@@ -180,6 +181,9 @@ def job_probe_source_health():
                 "action": "job_end",
                 "job": job_name,
                 "total": result.get("total", 0) if isinstance(result, dict) else 0,
+                "succeeded": result.get("succeeded", 0) if isinstance(result, dict) else 0,
+                "failed": result.get("failed", 0) if isinstance(result, dict) else 0,
+                "deferred": result.get("deferred", 0) if isinstance(result, dict) else 0,
             },
         )
     except Exception as exc:
@@ -452,20 +456,29 @@ async def run_source_health_probe_job(
 
 
 async def run_smart_source_health_probe_job(
-    limit: int = 10,
+    limit: int = 50,
     keyword_samples: list[str] | None = None,
     probe_mode: str = "full_chain",
+    timeout_seconds: float | None = None,
 ) -> dict:
     service = build_source_health_admin_service()
     try:
         source_ids = service.list_probe_candidate_ids(limit=max(int(limit), 0))
         keywords = keyword_samples or list(SMART_SOURCE_HEALTH_KEYWORDS)
         if not source_ids:
-            return {"results": [], "total": 0, "keyword_samples": keywords}
+            return {
+                "results": [],
+                "total": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "deferred": 0,
+                "keyword_samples": keywords,
+            }
         result = await service.probe_book_sources(
             source_ids,
             keyword_samples=keywords,
             probe_mode=probe_mode,
+            timeout_seconds=timeout_seconds,
         )
         return {**result, "keyword_samples": keywords, "source_ids": source_ids}
     finally:

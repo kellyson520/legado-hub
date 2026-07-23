@@ -4,7 +4,7 @@
 
 **Goal:** 修复书源健康定时探测首源异常导致整批停止的问题，并让每 30 分钟按可控小批次持续探测多个启用书源。
 
-**Architecture:** 保留 APScheduler 的 `*/30` 触发器和现有健康快照持久化。调度器每轮从 SQLite 取最多 50 个未探测/最久未探测源；健康服务逐源串行执行完整链路，逐源捕获异常并返回批次汇总，避免共享 Legado runtime 被并发调用。
+**Architecture:** 保留 APScheduler 的 `*/30` 触发器和现有健康快照持久化。调度器每轮从 SQLite 取最多 50 个未探测/最久未探测源；健康服务在 1500 秒预算内逐源串行执行完整链路，逐源捕获异常并返回批次汇总，避免共享 Legado runtime 被并发调用。
 
 **Tech Stack:** Python 3.12、FastAPI、APScheduler、SQLite、pytest、Legado source fetcher。
 
@@ -16,7 +16,7 @@
 - Modify: `backend/app/application/services/source_probe_service.py:363-365`
 - Test: `backend/tests/test_source_probe_service.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_search_preflight_accepts_structured_request_body():
@@ -30,13 +30,13 @@ def test_search_preflight_accepts_structured_request_body():
     assert result["request_preview"] == "https://example.test/search BODY={'q': '捞尸人'}"
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `backend/.venv/bin/python -m pytest backend/tests/test_source_probe_service.py -k structured_request_body -q`
 
 Expected: FAIL with `TypeError: unhashable type: 'dict'` at the existing set-membership check.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Replace the set membership with a type-safe comparison:
 
@@ -45,7 +45,7 @@ if request_body is not None and request_body != "":
     preview = f"{preview} BODY={request_body}"
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `backend/.venv/bin/python -m pytest backend/tests/test_source_probe_service.py -k structured_request_body -q`
 
@@ -54,48 +54,56 @@ Expected: PASS.
 ### Task 2: 让健康批次逐源容错并返回汇总
 
 **Files:**
-- Modify: `backend/app/application/services/source_health_admin_service.py:130-147`
+- Modify: `backend/app/application/services/source_health_admin_service.py:130-170`
 - Test: `backend/tests/test_source_health_admin_service.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 @pytest.mark.asyncio
 async def test_probe_book_sources_continues_after_one_source_failure():
     service = build_service_with_probe_results(fail_source_ids={1}, success_source_ids={2})
 
-    result = await service.probe_book_sources([1, 2], keyword_samples=["捞尸人"])
+    result = await service.probe_book_sources([1, 2], keyword_samples=["捞尸人"], timeout_seconds=60)
 
     assert result["total"] == 2
     assert result["succeeded"] == 1
     assert result["failed"] == 1
     assert [item["source_id"] for item in result["results"]] == [1, 2]
+    assert result["deferred"] == 0
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `backend/.venv/bin/python -m pytest backend/tests/test_source_health_admin_service.py -k continues_after_one_source_failure -q`
 
 Expected: FAIL because the current first exception escapes and source 2 is never processed.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Wrap each `probe_book_source()` call and keep processing:
+Wrap each `probe_book_source()` call and keep processing. Use the remaining batch deadline to bound each source; stop before starting more sources when the deadline is exhausted:
 
 ```python
+deadline = time.monotonic() + timeout_seconds if timeout_seconds else None
 results = []
 failed = 0
+deferred = 0
 for source_id in source_ids:
+    remaining = deadline - time.monotonic() if deadline is not None else None
+    if remaining is not None and remaining <= 0:
+        deferred += 1
+        continue
     try:
-        item = await self.probe_book_source(source_id, keyword_samples=keyword_samples, probe_mode=probe_mode)
+        call = self.probe_book_source(source_id, keyword_samples=keyword_samples, probe_mode=probe_mode)
+        item = await asyncio.wait_for(call, timeout=remaining) if remaining is not None else await call
         results.append({"source_id": int(source_id), **item, "status": "completed"})
     except Exception as exc:
         failed += 1
         results.append({"source_id": int(source_id), "status": "failed", "error": str(exc)[:500]})
-return {"results": results, "total": len(results), "succeeded": len(results) - failed, "failed": failed}
+return {"results": results, "total": len(results), "succeeded": len(results) - failed, "failed": failed, "deferred": deferred}
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `backend/.venv/bin/python -m pytest backend/tests/test_source_health_admin_service.py -k continues_after_one_source_failure -q`
 
@@ -104,11 +112,11 @@ Expected: PASS, with both source IDs present.
 ### Task 3: 配置可控小批次并验证调度传参
 
 **Files:**
-- Modify: `backend/app/core/config.py:43-44`
-- Modify: `backend/app/tasks/scheduler.py:454-470`
+- Modify: `backend/app/core/config.py:43-45`
+- Modify: `backend/app/tasks/scheduler.py:165-190,454-475`
 - Test: `backend/tests/test_source_health_scheduler.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 @pytest.mark.asyncio
@@ -130,23 +138,24 @@ async def test_smart_probe_uses_configured_small_batch(monkeypatch):
     assert result["failed"] == 0
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `backend/.venv/bin/python -m pytest backend/tests/test_source_health_scheduler.py -k configured_small_batch -q`
 
 Expected: FAIL because the scheduler result currently has no `failed` field and the batch result contract is incomplete.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
-Set the default batch size to 50 while leaving the cron expression unchanged:
+Set the default batch size and deadline while leaving the cron expression unchanged:
 
 ```python
 SOURCE_HEALTH_PROBE_BATCH_SIZE: int = 50
+SOURCE_HEALTH_PROBE_BATCH_TIMEOUT_SECONDS: int = 1500
 ```
 
-Keep `run_smart_source_health_probe_job()` passing the configured `limit` to `list_probe_candidate_ids()` and merge the service summary into the scheduler result.
+Keep `run_smart_source_health_probe_job()` passing the configured `limit` and `timeout_seconds` to the service, and merge the service summary into the scheduler result.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `backend/.venv/bin/python -m pytest backend/tests/test_source_health_scheduler.py -k 'smart_probe' -q`
 
@@ -157,13 +166,13 @@ Expected: PASS, and existing candidate ordering tests remain green.
 **Files:**
 - No additional source files; deployment uses the validated `frontend/dist` and backend checkout.
 
-- [ ] **Step 1: Run focused backend tests**
+- [x] **Step 1: Run focused backend tests**
 
 Run: `backend/.venv/bin/python -m pytest backend/tests/test_source_probe_service.py backend/tests/test_source_health_admin_service.py backend/tests/test_source_health_scheduler.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 2: Run frontend build and diff checks**
+- [x] **Step 2: Run frontend build and diff checks**
 
 Run: `npm run build` in `frontend/`, then `git diff --check`.
 

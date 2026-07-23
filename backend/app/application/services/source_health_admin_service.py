@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 
 from app.core.pagination import paginated_result
@@ -132,17 +134,69 @@ class SourceHealthAdminService:
         source_ids: list[int],
         keyword_samples: list[str],
         probe_mode: str = "full_chain",
+        timeout_seconds: float | None = None,
     ) -> dict:
+        source_ids = list(source_ids or [])
         results = []
-        for source_id in source_ids:
-            results.append(
-                await self.probe_book_source(
-                    source_id,
-                    keyword_samples=keyword_samples,
-                    probe_mode=probe_mode,
-                )
-            )
-        return {"results": results, "total": len(results)}
+        failed = 0
+        deferred = 0
+        deadline = (
+            time.monotonic() + max(float(timeout_seconds), 0.0)
+            if timeout_seconds is not None
+            else None
+        )
+        set_deadline = getattr(self._probe_service, "set_execution_deadline", None)
+        if deadline is not None and callable(set_deadline):
+            set_deadline(deadline)
+        try:
+            for index, source_id in enumerate(source_ids):
+                remaining = deadline - time.monotonic() if deadline is not None else None
+                if remaining is not None and remaining <= 0:
+                    deferred += len(source_ids) - index
+                    break
+                try:
+                    call = self.probe_book_source(
+                        source_id,
+                        keyword_samples=keyword_samples,
+                        probe_mode=probe_mode,
+                    )
+                    result = (
+                        await asyncio.wait_for(call, timeout=remaining)
+                        if remaining is not None
+                        else await call
+                    )
+                    result = dict(result or {})
+                    result.setdefault("source_id", int(source_id))
+                    result["status"] = "completed"
+                    results.append(result)
+                except asyncio.TimeoutError:
+                    failed += 1
+                    results.append(
+                        {
+                            "source_id": int(source_id),
+                            "status": "failed",
+                            "error": "source probe batch timeout",
+                        }
+                    )
+                except Exception as exc:
+                    failed += 1
+                    results.append(
+                        {
+                            "source_id": int(source_id),
+                            "status": "failed",
+                            "error": str(exc)[:500],
+                        }
+                    )
+        finally:
+            if deadline is not None and callable(set_deadline):
+                set_deadline(None)
+        return {
+            "results": results,
+            "total": len(results),
+            "succeeded": len(results) - failed,
+            "failed": failed,
+            "deferred": deferred,
+        }
 
     def list_probe_candidate_ids(self, limit: int = 20) -> list[int]:
         return self._health_repo.list_probe_candidate_ids(limit=max(int(limit), 0))

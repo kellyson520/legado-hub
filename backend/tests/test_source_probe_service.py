@@ -192,6 +192,46 @@ async def test_probe_service_collects_js_preflight_request_preview():
     assert probe.search.detail["js_exec_status"] == "ok"
 
 
+def test_probe_service_accepts_structured_js_request_body():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class FakeJsRuntime:
+        def execute_with_metadata(self, code, data=None, **kwargs):
+            return type(
+                "Out",
+                (),
+                {
+                    "success": True,
+                    "value": {"url": "https://api.example.com/search", "body": {"q": "捞尸人"}},
+                    "error": None,
+                },
+            )()
+
+    class FakeFetcherWithStructuredBody:
+        def __init__(self):
+            self._js_runtime = FakeJsRuntime()
+
+        @staticmethod
+        def _coerce_js_search_output(value, base_url):
+            return {
+                "url": value["url"],
+                "method": "POST",
+                "headers": {},
+                "body": value["body"],
+            }, None
+
+    result = SourceProbeService(fetcher=FakeFetcherWithStructuredBody())._build_search_preflight(
+        {
+            "id": 4,
+            "bookSourceUrl": "https://www.example.com",
+            "searchUrl": "@js:return {url: 'https://api.example.com/search', body: {q: key}}",
+        },
+        "捞尸人",
+    )
+
+    assert result["request_preview"] == "https://api.example.com/search BODY={'q': '捞尸人'}"
+
+
 @pytest.mark.asyncio
 async def test_probe_service_records_failed_transport_evidence_for_js_source():
     from app.application.services.source_probe_service import SourceProbeService
