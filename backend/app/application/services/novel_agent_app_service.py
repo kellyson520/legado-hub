@@ -1062,11 +1062,24 @@ class NovelAgentAppService:
             )
 
         if projection_empty and callable(replace):
-            await self._repo_call("replace_book_knowledge", owner_scope, int(book_id), chapter_snapshots)
-            await self._save_local_index_states(owner_scope, book_id, chapters, chapter_snapshots)
-            extracted_entities = await self._list_entities(owner_scope, book_id) or extracted_entities
-            extracted_relationships = await self._relations_from_repo(owner_scope, book_id, "") or extracted_relationships
-            value = (extracted_entities, extracted_relationships)
+            # Another indexer may have materialized the projection while the
+            # local fallback was extracting. Recheck immediately before the
+            # destructive replace so a stale empty read cannot erase it.
+            latest_entities = await self._list_entities(owner_scope, book_id)
+            latest_events = await self._repo_call("get_events", owner_scope, int(book_id), limit=1) or []
+            latest_states = await self._repo_call("get_state_changes", owner_scope, int(book_id), limit=1) or []
+            latest_relationships = await self._relations_from_repo(owner_scope, book_id, "")
+            latest_projection_exists = bool(
+                latest_entities or latest_events or latest_states or latest_relationships
+            )
+            if latest_projection_exists:
+                value = (latest_entities, latest_relationships)
+            else:
+                await self._repo_call("replace_book_knowledge", owner_scope, int(book_id), chapter_snapshots)
+                await self._save_local_index_states(owner_scope, book_id, chapters, chapter_snapshots)
+                extracted_entities = await self._list_entities(owner_scope, book_id) or extracted_entities
+                extracted_relationships = await self._relations_from_repo(owner_scope, book_id, "") or extracted_relationships
+                value = (extracted_entities, extracted_relationships)
         else:
             value = (
                 self._merge_entities(existing_entities, extracted_entities),

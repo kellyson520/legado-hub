@@ -482,7 +482,8 @@ async def test_structured_failure_is_retried_instead_of_being_skipped(index_serv
     )
 
     first = await service.index_book("user:1", book_id)
-    assert first.processed_chapters == 2
+    assert first.processed_chapters == 1
+    assert first.failed_chapters == 1
     failed_state = await service.repo.get_index_state("user:1", book_id, chapter_id=1)
     assert failed_state.extraction_payload["structured_status"] == "failed"
 
@@ -492,6 +493,69 @@ async def test_structured_failure_is_retried_instead_of_being_skipped(index_serv
     assert second.skipped_chapters == 1
     recovered = await service.repo.get_index_state("user:1", book_id, chapter_id=1)
     assert recovered.extraction_payload["structured_status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_structured_failure_preserves_previous_materialized_knowledge(index_service):
+    from app.infrastructure.vectorstores.disabled import DisabledVectorStore
+    from app.services.novel_understanding.embedding import EmbeddingAdapter
+
+    base, book_id = index_service
+    await base.index_book("user:1", book_id)
+    state = await base.repo.get_index_state("user:1", book_id, chapter_id=1)
+    previous_snapshot = dict(state.extraction_payload)
+    previous_snapshot["events"] = [{
+        "chapter_id": 1,
+        "chapter_num": 1,
+        "event_type": "discovery",
+        "description": "旧事件",
+        "participants": ["林远"],
+        "importance": 4,
+        "evidence": [],
+    }]
+    previous_snapshot["state_changes"] = [{
+        "entity_name": "林远",
+        "chapter_id": 1,
+        "chapter_num": 1,
+        "field_name": "status",
+        "before_value": "未知",
+        "after_value": "确认",
+        "trigger_event": "旧事件",
+        "confidence": 0.8,
+        "evidence": [],
+    }]
+    state.extraction_payload = previous_snapshot
+    await base.repo.save_index_state(state)
+    chapter_two = await base.repo.get_index_state("user:1", book_id, chapter_id=2)
+    await base.repo.replace_book_knowledge(
+        "user:1",
+        book_id,
+        [previous_snapshot, chapter_two.extraction_payload],
+    )
+    await base.repo.update_chapter_content("user:1", chapter_id=1, content="林远在新地点重新出现。")
+
+    class Extractor:
+        def extract_from_chapter(self, _book_id, _chapter_num, _title, _text):
+            return {"entities": [], "relationships": [], "structured": {"events": [], "state_changes": []}}
+
+    class FailingStructuredExtractor:
+        def parse(self, _payload, *, chapter_id, chapter_text):
+            raise ValueError(f"structured parse failed for {chapter_id}: {chapter_text[:8]}")
+
+    service = type(base)(
+        repo=base.repo,
+        extractor=Extractor(),
+        structured_extractor=FailingStructuredExtractor(),
+        vector_store=DisabledVectorStore(),
+        embedding=EmbeddingAdapter(),
+    )
+
+    result = await service.index_book("user:1", book_id)
+
+    assert result.failed_chapters == 1
+    assert result.processed_chapters == 0
+    assert any(event.description == "旧事件" for event in await service.repo.get_events("user:1", book_id, limit=100))
+    assert any(state_change.trigger_event == "旧事件" for state_change in await service.repo.get_state_changes("user:1", book_id, limit=100))
 
 
 @pytest.mark.asyncio

@@ -146,13 +146,27 @@ class NovelIndexService:
                     elif structured is None:
                         structured_status = "not_requested"
                 except Exception as exc:
-                    # Local extraction remains usable when only the optional
-                    # structured payload is malformed.  Keep the failure in
-                    # the snapshot so a later retry can target that portion.
+                    # A structured failure invalidates the chapter snapshot.
+                    # Keep the previous checkpoint materialized and retry the
+                    # chapter later instead of replacing the book projection
+                    # with incomplete facts.
                     structured = None
                     structured_status = "failed"
+                    state.extraction_payload = self._chapter_snapshot(
+                        chapter,
+                        entities=list(entities or []),
+                        relationships=list(relationships or []),
+                        events=[],
+                        state_changes=[],
+                        structured_status=structured_status,
+                        learning_profile_version=learning_profile_version,
+                    )
                     state.failure_reason = f"structured extraction: {str(exc)[:450]}"
+                    state.extraction_status = "failed"
+                    await self.repo.save_index_state(state)
+                    result.failed_chapters += 1
                     result.errors.append({"chapter_id": chapter.id, "error": str(exc)[:500], "scope": "structured"})
+                    continue
 
                 structured_relationships, structured_events, structured_states = self._structured_entities(
                     structured,

@@ -521,6 +521,70 @@ async def test_local_fallback_does_not_replace_existing_projection():
 
 
 @pytest.mark.asyncio
+async def test_local_fallback_rechecks_projection_before_replace(monkeypatch):
+    from app.application.services.novel_agent_app_service import NovelAgentAppService
+    from app.domain.entities.novel import EntityType
+    from app.application.services.novel_understanding.auto_extractor import AutoExtractor
+
+    class RacingProjectionRepository(NovelRepository):
+        def __init__(self):
+            self.entities = []
+            self.replace_calls = 0
+
+        async def list_entities(self, _owner_scope, _book_id, limit=50, offset=0, **_kwargs):
+            return self.entities[offset : offset + limit]
+
+        async def get_events(self, *_args, **_kwargs):
+            return []
+
+        async def get_state_changes(self, *_args, **_kwargs):
+            return []
+
+        async def get_relationships_by_book(self, *_args, **_kwargs):
+            return []
+
+        async def list_index_states(self, _owner_scope, _book_id):
+            return []
+
+        async def get_chapters_by_book(self, _owner_scope, _book_id, **_kwargs):
+            return [Chapter(id=2)]
+
+        async def replace_book_knowledge(self, *_args, **_kwargs):
+            self.replace_calls += 1
+
+    repo = RacingProjectionRepository()
+    concurrent_entity = type(
+        "Entity",
+        (),
+        {
+            "book_id": 7,
+            "name": "后台已写入的人物",
+            "aliases": [],
+            "entity_type": EntityType.CHARACTER,
+            "description": "并发索引结果",
+            "first_appearance_ch": 1,
+            "last_appearance_ch": 1,
+            "appearance_count": 1,
+            "importance_score": 3,
+            "attributes": {},
+        },
+    )()
+
+    def extract_during_race(self, *_args, **_kwargs):
+        repo.entities = [concurrent_entity]
+        return [], []
+
+    monkeypatch.setattr(AutoExtractor, "extract_with_evidence", extract_during_race)
+    service = NovelAgentAppService(novel_repo=repo)
+
+    entities, relationships = await service._ensure_local_knowledge("user:1", 7)
+
+    assert repo.replace_calls == 0
+    assert entities == [concurrent_entity]
+    assert relationships == []
+
+
+@pytest.mark.asyncio
 async def test_named_profile_falls_back_when_projection_contains_only_other_entities():
     from app.application.services.novel_agent_app_service import NovelAgentAppService
     from app.domain.entities.novel import EntityType
