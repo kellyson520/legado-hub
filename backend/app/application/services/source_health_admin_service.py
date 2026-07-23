@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -23,6 +24,13 @@ class SourceHealthAdminService:
             "http_status_error",
             "js_runtime_failure",
             "waf_blocked",
+        }
+    )
+    _INCONCLUSIVE_DEGRADED_REASONS = frozenset(
+        {
+            "unknown_error",
+            "html_instead_of_json",
+            "parse_empty",
         }
     )
 
@@ -122,10 +130,14 @@ class SourceHealthAdminService:
             now = datetime.now(timezone.utc)
             previous = self._health_repo.get_snapshot(source_id)
             raw_is_healthy = decision.health_status == "healthy"
+            failure_fingerprint = self._failure_fingerprint(evidence, decision.failure_reason)
+            previous_fingerprint = str((previous.metadata or {}).get("failure_fingerprint") or "") if previous else ""
             same_failure = bool(
                 previous
                 and previous.failure_reason
                 and previous.failure_reason == decision.failure_reason
+                and previous_fingerprint
+                and previous_fingerprint == failure_fingerprint
             )
             consecutive_failures = 0 if raw_is_healthy else (
                 (previous.consecutive_failures if same_failure else 0) + 1
@@ -135,6 +147,8 @@ class SourceHealthAdminService:
             effective_route_score = decision.route_score
             effective_confidence = decision.decision_confidence
             decision_metadata = dict(decision.metadata or {})
+            if failure_fingerprint:
+                decision_metadata["failure_fingerprint"] = failure_fingerprint
             decision_metadata.update(
                 {
                     "raw_health_status": decision.health_status,
@@ -146,6 +160,26 @@ class SourceHealthAdminService:
                 and decision.failure_reason in self._TRANSIENT_BLOCK_REASONS
                 and consecutive_failures < 2
             ):
+                effective_health_status = "unknown"
+                effective_route_policy = "probe_only"
+                effective_route_score = 10.0
+                effective_confidence = "low"
+                decision_metadata["stability_guard"] = "awaiting_confirmation"
+            elif decision.failure_reason == "empty_result":
+                # A valid empty response is evidence that the endpoint
+                # answered, not evidence that the source is broken.
+                effective_health_status = "unknown"
+                effective_route_policy = "probe_only"
+                effective_route_score = 10.0
+                effective_confidence = "low"
+                decision_metadata["stability_guard"] = "inconclusive_empty_result"
+            elif (
+                decision.health_status == "degraded"
+                and decision.failure_reason in self._INCONCLUSIVE_DEGRADED_REASONS
+                and consecutive_failures < 2
+            ):
+                # A parser/runtime mismatch or empty upstream response is not
+                # enough evidence to call a source degraded on the first try.
                 effective_health_status = "unknown"
                 effective_route_policy = "probe_only"
                 effective_route_score = 10.0
@@ -593,6 +627,28 @@ class SourceHealthAdminService:
             text,
         )
         return text[:500]
+
+    @classmethod
+    def _failure_fingerprint(cls, evidence, failure_reason: str) -> str:
+        if not failure_reason:
+            return ""
+        parts = [failure_reason]
+        for stage in (evidence.search, evidence.toc, evidence.content):
+            detail = stage.detail or {}
+            parts.extend(
+                [
+                    stage.stage,
+                    stage.status,
+                    re.sub(r"\s+", " ", cls._sanitize_error_message(stage.error_message)).strip().lower(),
+                    re.sub(r"\s+", " ", cls._sanitize_error_message(detail.get("js_error"))).strip().lower(),
+                    str(detail.get("http_status") or ""),
+                    str(detail.get("response_kind") or "").strip().lower(),
+                    str(detail.get("parse_status") or "").strip().lower(),
+                    str(detail.get("block_reason") or "").strip().lower(),
+                ]
+            )
+        payload = "\x1f".join(parts).encode("utf-8", errors="replace")
+        return hashlib.sha256(payload).hexdigest()[:16]
 
     @classmethod
     def _normalize_probe_mode(cls, probe_mode: str) -> str:

@@ -557,6 +557,173 @@ async def test_admin_service_keeps_single_transient_transport_failure_unknown_th
 
 
 @pytest.mark.asyncio
+async def test_admin_service_keeps_inconclusive_runtime_failure_unknown_before_degrading(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-inconclusive.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+    from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class InconclusiveProbeService:
+        async def probe_source(self, source, keyword_samples, probe_mode="full_chain"):
+            return SourceProbeEvidence(
+                source_id=source["id"],
+                source_name=source["bookSourceName"],
+                source_url=source["bookSourceUrl"],
+                probe_mode=probe_mode,
+                keyword=keyword_samples[0],
+                search=StageProbeResult(
+                    stage="search",
+                    status="failed",
+                    error_message="unsupported js stage: search",
+                ),
+                toc=StageProbeResult(stage="toc", status="skipped"),
+                content=StageProbeResult(stage="content", status="skipped"),
+            )
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "运行时不确定书源", "bookSourceUrl": "https://inconclusive.example", "enabled": True},
+        actor_id=1,
+    )
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=InconclusiveProbeService(),
+        classifier=SourceHealthClassifierService(),
+    )
+
+    first = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+    second = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+
+    assert first["snapshot"]["health_status"] == "unknown"
+    assert first["snapshot"]["failure_reason"] == "unknown_error"
+    assert first["snapshot"]["route_policy"] == "probe_only"
+    assert first["decision"]["stability_guard"] == "awaiting_confirmation"
+    assert second["snapshot"]["health_status"] == "degraded"
+
+
+@pytest.mark.asyncio
+async def test_admin_service_keeps_valid_empty_result_inconclusive_on_repeat(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-empty-result.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+    from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class EmptyResultProbeService:
+        async def probe_source(self, source, keyword_samples, probe_mode="full_chain"):
+            return SourceProbeEvidence(
+                source_id=source["id"],
+                source_name=source["bookSourceName"],
+                source_url=source["bookSourceUrl"],
+                probe_mode=probe_mode,
+                keyword=keyword_samples[0],
+                search=StageProbeResult(stage="search", status="ok", hit_count=1),
+                toc=StageProbeResult(
+                    stage="toc",
+                    status="failed",
+                    detail={
+                        "http_status": 200,
+                        "response_kind": "json",
+                        "parse_status": "empty_result",
+                        "empty_response_valid": True,
+                    },
+                ),
+                content=StageProbeResult(stage="content", status="skipped"),
+            )
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "合法空响应书源", "bookSourceUrl": "https://empty-result.example", "enabled": True},
+        actor_id=1,
+    )
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=EmptyResultProbeService(),
+        classifier=SourceHealthClassifierService(),
+    )
+
+    first = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+    second = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+
+    assert first["snapshot"]["health_status"] == "unknown"
+    assert second["snapshot"]["health_status"] == "unknown"
+    assert first["snapshot"]["failure_reason"] == "empty_result"
+    assert second["snapshot"]["route_policy"] == "probe_only"
+    assert first["decision"]["stability_guard"] == "inconclusive_empty_result"
+
+
+@pytest.mark.asyncio
+async def test_admin_service_does_not_confirm_different_unknown_errors(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-changing-errors.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+    from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class ChangingRuntimeFailureProbeService:
+        def __init__(self):
+            self.errors = [
+                "unsupported js stage: search",
+                "worker backend overloaded",
+            ]
+
+        async def probe_source(self, source, keyword_samples, probe_mode="full_chain"):
+            error = self.errors.pop(0)
+            return SourceProbeEvidence(
+                source_id=source["id"],
+                source_name=source["bookSourceName"],
+                source_url=source["bookSourceUrl"],
+                probe_mode=probe_mode,
+                keyword=keyword_samples[0],
+                search=StageProbeResult(stage="search", status="failed", error_message=error),
+                toc=StageProbeResult(stage="toc", status="skipped"),
+                content=StageProbeResult(stage="content", status="skipped"),
+            )
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "不同运行时错误书源", "bookSourceUrl": "https://changing-errors.example", "enabled": True},
+        actor_id=1,
+    )
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=ChangingRuntimeFailureProbeService(),
+        classifier=SourceHealthClassifierService(),
+    )
+
+    first = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+    second = await service.probe_book_source(source["id"], keyword_samples=["捞尸人"])
+
+    assert first["snapshot"]["health_status"] == "unknown"
+    assert second["snapshot"]["health_status"] == "unknown"
+    assert second["snapshot"]["failure_reason"] == "unknown_error"
+    assert second["decision"]["consecutive_failure_count"] == 1
+    assert second["decision"]["stability_guard"] == "awaiting_confirmation"
+
+
+@pytest.mark.asyncio
 async def test_admin_service_claims_a_lease_for_manual_probe_before_persisting(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-manual-lease.sqlite3"))
