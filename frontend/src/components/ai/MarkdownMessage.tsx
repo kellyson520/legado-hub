@@ -12,6 +12,20 @@ function isSafeHref(href: string): boolean {
   }
 }
 
+function normalizeMarkdown(content: string): string {
+  let inFence = false
+  return String(content || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => {
+      const fence = /^\s{0,3}(`{3,}|~{3,})/.test(line)
+      const normalized = inFence ? line : line.replace(/^(\s*)※\s?/, '$1- ')
+      if (fence) inFence = !inFence
+      return normalized
+    })
+    .join('\n')
+}
+
 export function MarkdownMessage({ content, className = '' }: { content: string; className?: string }) {
   return (
     <div className={`prose prose-sm max-w-none break-words text-foreground prose-headings:font-semibold prose-a:text-primary prose-a:underline-offset-4 prose-blockquote:border-primary/40 prose-blockquote:bg-muted/40 prose-blockquote:px-4 prose-blockquote:py-1 prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-pre:overflow-x-auto prose-pre:rounded-lg prose-pre:bg-slate-950 prose-pre:text-slate-100 prose-table:my-3 prose-th:bg-muted/60 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:align-top ${className}`}>
@@ -42,7 +56,7 @@ export function MarkdownMessage({ content, className = '' }: { content: string; 
           pre: ({ children, ...props }) => <pre {...props} className="max-h-96 overflow-auto">{children}</pre>,
         }}
       >
-        {content}
+        {normalizeMarkdown(content)}
       </ReactMarkdown>
     </div>
   )

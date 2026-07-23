@@ -171,6 +171,37 @@ async def test_failed_chapter_is_recorded_and_does_not_stop_following_chapters(i
 
 
 @pytest.mark.asyncio
+async def test_rebuild_knowledge_ignores_stale_completed_snapshots(index_service):
+    from app.domain.entities.novel_runtime import NovelIndexState
+
+    service, book_id = index_service
+    stale_snapshot = {
+        "chapter_id": 1,
+        "chapter_num": 1,
+        "content_hash": "old-hash",
+        "entities": [{"name": "旧人物", "entity_type": "character"}],
+    }
+    await service.repo.replace_book_knowledge("user:1", book_id, [stale_snapshot])
+    await service.repo.save_index_state(
+        NovelIndexState(
+            owner_scope="user:1",
+            book_id=book_id,
+            chapter_id=1,
+            content_hash="old-hash",
+            knowledge_version=service.knowledge_version,
+            extraction_status="completed",
+            extraction_payload=stale_snapshot,
+        )
+    )
+
+    await service._rebuild_knowledge("user:1", book_id)
+
+    refreshed = await service.repo.get_book_by_id("user:1", book_id)
+    assert refreshed.character_count == 0
+    assert refreshed.entity_count == 0
+
+
+@pytest.mark.asyncio
 async def test_vector_backend_failure_keeps_local_chapter_index_available(index_service):
     from app.services.novel_understanding.embedding import EmbeddingAdapter
     from app.services.novel_understanding.index_service import NovelIndexService

@@ -93,8 +93,15 @@ class BM25Index:
     @classmethod
     def _tokenize(cls, text: str) -> List[str]:
         """jieba 分词 + 过滤"""
-        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9]', ' ', text)
+        text = re.sub(r'[^\u4e00-\u9fffa-zA-Z0-9]', ' ', text)
         tokens = list(jieba.cut_for_search(text))
         # 过滤停用词和过短词
         stopwords = {'的', '了', '是', '在', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这'}
-        return [t.strip().lower() for t in tokens if len(t.strip()) > 1 and t.strip() not in stopwords]
+        normalized = [t.strip().lower() for t in tokens]
+        return [
+            token
+            for token in normalized
+            if token
+            and token not in stopwords
+            and (len(token) > 1 or bool(re.fullmatch(r"[\u4e00-\u9fff]", token)))
+        ]

@@ -22,3 +22,18 @@ test('Markdown 消息只允许安全链接协议', () => {
   expect(screen.queryByRole('link', { name: '危险' })).not.toBeInTheDocument()
   expect(screen.getByText('危险')).toBeInTheDocument()
 })
+
+test('Markdown 消息把旧式的行首※标记转换为列表', () => {
+  render(<MarkdownMessage content={'※ 林远\n※ 周宁'} />)
+
+  expect(screen.getByRole('list')).toBeInTheDocument()
+  expect(screen.getAllByRole('listitem')[0]).toHaveTextContent('林远')
+  expect(screen.queryByText('※ 林远')).not.toBeInTheDocument()
+})
+
+test('Markdown 消息保留代码块中的※字符', () => {
+  render(<MarkdownMessage content={'```text\n※ 这是代码中的原文\n```'} />)
+
+  expect(screen.getByText('※ 这是代码中的原文')).toBeInTheDocument()
+  expect(screen.queryByRole('list')).not.toBeInTheDocument()
+})

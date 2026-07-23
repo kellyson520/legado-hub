@@ -69,6 +69,12 @@ def _workspace_tool_names(identity) -> set[str]:
     return names
 
 
+def _principal_actor_id(identity) -> str:
+    """Use the same actor key that owner-scoped conversation storage derives."""
+    scope = owner_scope_for(identity)
+    return scope.split(":", 1)[1] if ":" in scope else scope
+
+
 @router.get("/tasks")
 async def list_ai_tasks(
     page: int = Query(default=1, ge=1),
@@ -99,7 +105,7 @@ async def list_conversations(
     search: str = Query(default="", max_length=200),
     identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
-    actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
+    actor_id = _principal_actor_id(identity)
     result = await build_ai_conversation_service().list_conversations_page(
         actor_id,
         page=page,
@@ -115,7 +121,7 @@ async def create_conversation(
     payload: ConversationCreateRequest,
     identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
-    actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
+    actor_id = _principal_actor_id(identity)
     data = await build_ai_conversation_service().create_conversation(
         actor_id,
         payload.title,
@@ -132,7 +138,7 @@ async def get_conversation(
     conversation_id: str,
     identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
-    actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
+    actor_id = _principal_actor_id(identity)
     data = build_ai_conversation_service().get_conversation(conversation_id, actor_id, owner_scope_for(identity))
     return ok(data=data, message="ai conversation loaded", meta={})
 
@@ -143,8 +149,20 @@ async def send_conversation_message(
     payload: ConversationMessageRequest,
     identity=Depends(require_principal_permission(Permission.AI_RUN)),
 ):
-    actor_id = str(getattr(identity, "user_id", None) or getattr(identity, "api_key_id"))
-    if payload.book_id is None:
+    actor_id = _principal_actor_id(identity)
+    bound_book_id = payload.book_id
+    bound_chapter_id = payload.chapter_id
+    if bound_book_id is None:
+        bound_conversation = build_ai_conversation_service().get_conversation(
+            conversation_id,
+            actor_id,
+            owner_scope_for(identity),
+        )
+        if isinstance(bound_conversation, dict):
+            bound_book_id = bound_conversation.get("book_id")
+            if bound_chapter_id is None:
+                bound_chapter_id = bound_conversation.get("chapter_id")
+    if bound_book_id is None:
         workspace = build_ai_workspace_service()
     else:
         workspace = build_ai_workspace_service(
@@ -160,8 +178,8 @@ async def send_conversation_message(
         allowed_tool_names=_workspace_tool_names(identity),
         owner_scope=owner_scope_for(identity),
         entrypoint=payload.entrypoint,
-        book_id=payload.book_id,
-        chapter_id=payload.chapter_id,
+        book_id=bound_book_id,
+        chapter_id=bound_chapter_id,
         request_model=payload.model,
         stream=payload.stream,
     )

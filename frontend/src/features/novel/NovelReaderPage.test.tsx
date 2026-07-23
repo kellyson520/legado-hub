@@ -75,6 +75,34 @@ test('阅读器显示当前章节并把阅读上下文传给助手', async () =>
   expect(await screen.findByText('阅读助手')).toBeInTheDocument()
 })
 
+test('阅读器助手把 Markdown 回复渲染为富文本', async () => {
+  novelMocks.sendNovelMessage.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'ok',
+    data: {
+      id: 'assistant-markdown',
+      role: 'assistant',
+      mode: 'chat',
+      content: '## 人物关系\n\n| 人物 | 关系 |\n| --- | --- |\n| 林远 | 同伴 |',
+      status: 'succeeded',
+      created_at: '2026-07-13T00:00:02Z',
+      tool_calls: [],
+    },
+    meta: {},
+    trace_id: null,
+  })
+
+  renderReader()
+  fireEvent.click(await screen.findByRole('button', { name: '问助手' }))
+  const input = await screen.findByLabelText('助手问题')
+  fireEvent.change(input, { target: { value: '分析人物关系' } })
+  fireEvent.click(screen.getByRole('button', { name: '发送问题' }))
+
+  expect(await screen.findByRole('table')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: '人物关系' })).toBeInTheDocument()
+})
+
 test('阅读器支持夜读主题和字号调整，并保存阅读偏好', async () => {
   renderReader()
   await screen.findByRole('heading', { name: '第二章' })

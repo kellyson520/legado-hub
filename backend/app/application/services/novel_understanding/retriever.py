@@ -69,7 +69,14 @@ class RAGRetriever:
             index = self._indexes.get(key, self._bm25)
 
         results: Dict[str, RetrievalResult] = {}
-        for doc_id, score in index.search(query, top_k=max(1, top_k * 2)):
+        chapter_cache = self._chapter_cache.get(key, {})
+        matched_chapters = index.search(query, top_k=max(1, top_k * 2)) if query else []
+        if not query:
+            matched_chapters = [
+                (chapter_id, 0.01)
+                for chapter_id in list(chapter_cache)[: max(1, top_k * 2)]
+            ]
+        for doc_id, score in matched_chapters:
             self._merge_result(
                 results,
                 RetrievalResult(
@@ -84,10 +91,11 @@ class RAGRetriever:
                 ),
             )
 
-        for item in await self._retrieve_kg(owner_scope, int(book_id), query, top_k=top_k):
-            self._merge_result(results, item, weight=self.WEIGHT_KG)
+        if query:
+            for item in await self._retrieve_kg(owner_scope, int(book_id), query, top_k=top_k):
+                self._merge_result(results, item, weight=self.WEIGHT_KG)
 
-        if self._vector_store is not None:
+        if self._vector_store is not None and query:
             try:
                 embedding = await self._embedding.embed(query)
                 if getattr(embedding, "semantic", False):
@@ -141,7 +149,6 @@ class RAGRetriever:
         sorted_results = sorted(results.values(), key=lambda item: item.score, reverse=True)
         book = await self._repo_call("get_book_by_id", owner_scope, int(book_id), legacy=(int(book_id),))
         book_title = book.book_name if book else ""
-        chapter_cache = self._chapter_cache.get(key, {})
         for result in sorted_results[: max(0, int(top_k))]:
             result.book_title = book_title
             if result.item_type == "chapter":
@@ -390,10 +397,10 @@ class RAGRetriever:
     @staticmethod
     def _normalize_retrieve_args(owner_scope, book_id, query):
         if owner_scope is None:
-            return "legacy", int(book_id), str(query or "")
+            return "legacy", int(book_id), str(query or "").strip()
         if query is None and isinstance(owner_scope, int) and isinstance(book_id, str):
-            return "legacy", int(owner_scope), book_id
-        return str(owner_scope), int(book_id), str(query or "")
+            return "legacy", int(owner_scope), book_id.strip()
+        return str(owner_scope), int(book_id), str(query or "").strip()
 
     @staticmethod
     def _chapter_index_text(chapter) -> str:

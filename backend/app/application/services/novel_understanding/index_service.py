@@ -367,15 +367,44 @@ class NovelIndexService:
         states = list_states(owner_scope, int(book_id))
         if inspect.isawaitable(states):
             states = await states
-        snapshots = [
-            state.extraction_payload
+        chapters = await self._chapters(owner_scope, int(book_id), None)
+        chapters_by_id = {
+            int(getattr(chapter, "id", 0) or 0): chapter
+            for chapter in chapters or []
+            if int(getattr(chapter, "id", 0) or 0)
+        }
+        if any(
+            state.extraction_status != "completed"
+            and isinstance(getattr(state, "extraction_payload", None), dict)
+            and state.extraction_payload
             for state in states or []
-            if state.extraction_payload
-            and (
-                state.extraction_status == "completed"
-                or state.extraction_status in {"failed", "running"}
+        ):
+            # Keep the last successful materialized projection while a
+            # changed chapter is being retried.  Replaying that payload would
+            # make old facts look current and deleting it would lose the last
+            # usable result.
+            return
+        snapshots = []
+        for state in states or []:
+            if state.extraction_status != "completed":
+                continue
+            if str(getattr(state, "knowledge_version", "") or "") != self.knowledge_version:
+                continue
+            payload = state.extraction_payload
+            if not isinstance(payload, dict):
+                continue
+            chapter_id = int(getattr(state, "chapter_id", 0) or payload.get("chapter_id", 0) or 0)
+            chapter = chapters_by_id.get(chapter_id)
+            if chapter is None:
+                continue
+            state_hash = str(getattr(state, "content_hash", "") or "")
+            payload_hash = str(payload.get("content_hash") or "")
+            current_hash = str(getattr(chapter, "raw_text_hash", "") or "") or self._hash(
+                str(getattr(chapter, "raw_text", "") or "")
             )
-        ]
+            if not state_hash or state_hash != payload_hash or state_hash != current_hash:
+                continue
+            snapshots.append(payload)
         await replace(owner_scope, int(book_id), snapshots)
 
     @classmethod
@@ -390,10 +419,14 @@ class NovelIndexService:
         structured_status: str,
         learning_profile_version: str = "",
     ) -> dict[str, Any]:
+        chapter_id = int(getattr(chapter, "id", 0) or 0)
+        chapter_num = int(getattr(chapter, "canonical_num", 0) or 0)
+        raw_text = str(getattr(chapter, "raw_text", "") or "")
+        content_hash = str(getattr(chapter, "raw_text_hash", "") or "") or cls._hash(raw_text)
         return {
-            "chapter_id": int(chapter.id),
-            "chapter_num": int(chapter.canonical_num),
-            "content_hash": chapter.raw_text_hash or cls._hash(chapter.raw_text or ""),
+            "chapter_id": chapter_id,
+            "chapter_num": chapter_num,
+            "content_hash": content_hash,
             "algorithm_version": "local-evidence-1",
             "learning_profile_version": learning_profile_version,
             "structured_status": structured_status,

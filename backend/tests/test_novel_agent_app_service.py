@@ -364,6 +364,331 @@ async def test_read_tool_is_scoped_and_runtime_records_accepted_result(service):
 
 
 @pytest.mark.asyncio
+async def test_character_tools_return_book_scoped_collections_when_name_is_omitted(service):
+    counts = await service.call_tool(
+        "user:1",
+        "character.count",
+        {"book_id": 7},
+        book_id=7,
+    )
+    aliases = await service.call_tool(
+        "user:1",
+        "character.aliases",
+        {"book_id": 7},
+        book_id=7,
+    )
+    relations = await service.call_tool(
+        "user:1",
+        "character.relations",
+        {"book_id": 7},
+        book_id=7,
+    )
+
+    assert counts["result"][0]["name"] == "林远"
+    assert counts["result"][0]["appearance_count"] == 3
+    assert aliases["result"][0]["aliases"] == ["林兄"]
+    assert relations["result"][0]["source_entity"] == "林远"
+
+
+@pytest.mark.asyncio
+async def test_novel_tools_rebuild_empty_projection_from_chapter_text():
+    import aiosqlite
+
+    from app.application.services.novel_agent_app_service import NovelAgentAppService
+    from app.application.services.novel_understanding.retriever import RAGRetriever
+    from app.domain.entities.novel import NovelBook, NovelChapter
+    from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRepository
+
+    db = await aiosqlite.connect(":memory:")
+    try:
+        with open("app/database_migrations/novel_schema.sql", encoding="utf-8") as schema:
+            await db.executescript(schema.read())
+        repo = SqliteNovelRepository(db)
+        book = await repo.save_book(
+            "user:1",
+            NovelBook(book_url="upload:test", book_name="测试书", total_chapters=1),
+        )
+        await repo.save_chapter(
+            "user:1",
+            NovelChapter(
+                book_id=book.id,
+                canonical_num=1,
+                chapter_title="相遇",
+                raw_text="林远走进青云宗，周宁在门前等他。林远与周宁并肩作战。",
+            ),
+        )
+        service = NovelAgentAppService(novel_repo=repo, retriever=RAGRetriever(repo))
+
+        profile = await service.call_tool(
+            "user:1",
+            "novel.get_entity_profile",
+            {"book_id": book.id, "name": "林远"},
+            book_id=book.id,
+        )
+        counts = await service.call_tool(
+            "user:1",
+            "character.count",
+            {"book_id": book.id},
+            book_id=book.id,
+        )
+        aliases = await service.call_tool(
+            "user:1",
+            "character.aliases",
+            {"book_id": book.id},
+            book_id=book.id,
+        )
+        relations = await service.call_tool(
+            "user:1",
+            "character.relations",
+            {"book_id": book.id},
+            book_id=book.id,
+        )
+        chapter_search = await service.call_tool(
+            "user:1",
+            "chapter.search",
+            {"book_id": book.id, "query": "林远"},
+            book_id=book.id,
+        )
+        semantic_search = await service.call_tool(
+            "user:1",
+            "semantic.search",
+            {"book_id": book.id, "query": "林远"},
+            book_id=book.id,
+        )
+
+        assert profile["result"]["name"] == "林远"
+        assert counts["result"]
+        assert aliases["result"]
+        assert relations["result"]
+        assert chapter_search["result"]
+        assert semantic_search["result"]
+        refreshed = await repo.get_book_by_id("user:1", book.id)
+        assert refreshed.character_count >= 2
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_local_fallback_does_not_replace_existing_projection():
+    from app.application.services.novel_agent_app_service import NovelAgentAppService
+    from app.domain.entities.novel import EntityType
+
+    class ExistingProjectionRepository(NovelRepository):
+        def __init__(self):
+            self.replace_calls = 0
+            self.existing = type(
+                "Entity",
+                (),
+                {
+                    "book_id": 7,
+                    "name": "玄天剑",
+                    "aliases": [],
+                    "entity_type": EntityType.ITEM,
+                    "description": "已有物品知识",
+                    "first_appearance_ch": 1,
+                    "last_appearance_ch": 1,
+                    "appearance_count": 1,
+                    "importance_score": 3,
+                    "attributes": {},
+                },
+            )()
+
+        async def list_entities(self, _owner_scope, _book_id, limit=50, offset=0, **_kwargs):
+            return [self.existing][offset : offset + limit]
+
+        async def list_index_states(self, _owner_scope, _book_id):
+            return []
+
+        async def get_chapters_by_book(self, _owner_scope, _book_id, **_kwargs):
+            return [Chapter(id=2, raw_text="林远走进青云宗，周宁在门前等他。林远与周宁并肩作战。")]
+
+        async def replace_book_knowledge(self, *_args, **_kwargs):
+            self.replace_calls += 1
+
+    repo = ExistingProjectionRepository()
+    service = NovelAgentAppService(novel_repo=repo)
+
+    result = await service.call_tool(
+        "user:1",
+        "character.count",
+        {"book_id": 7},
+        book_id=7,
+    )
+
+    assert result["result"]
+    assert any(item["name"] == "林远" for item in result["result"])
+    assert repo.replace_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_named_profile_falls_back_when_projection_contains_only_other_entities():
+    from app.application.services.novel_agent_app_service import NovelAgentAppService
+    from app.domain.entities.novel import EntityType
+
+    class MixedProjectionRepository(NovelRepository):
+        async def get_entity_by_name(self, *_args, **_kwargs):
+            return None
+
+        async def search_entities(self, *_args, **_kwargs):
+            return []
+
+        async def list_entities(self, _owner_scope, _book_id, limit=50, offset=0, **_kwargs):
+            return [
+                type(
+                    "Entity",
+                    (),
+                    {
+                        "book_id": 7,
+                        "name": "玄天剑",
+                        "aliases": [],
+                        "entity_type": EntityType.ITEM,
+                        "description": "物品",
+                        "first_appearance_ch": 1,
+                        "last_appearance_ch": 1,
+                        "appearance_count": 1,
+                        "importance_score": 3,
+                        "attributes": {},
+                    },
+                )()
+            ][offset : offset + limit]
+
+        async def list_index_states(self, _owner_scope, _book_id):
+            return []
+
+        async def get_events(self, *_args, **_kwargs):
+            return []
+
+        async def get_state_changes(self, *_args, **_kwargs):
+            return []
+
+        async def get_chapters_by_book(self, _owner_scope, _book_id, **_kwargs):
+            return [Chapter(id=2, raw_text="林远走进青云宗，周宁在门前等他。林远与周宁并肩作战。")]
+
+        async def replace_book_knowledge(self, *_args, **_kwargs):
+            raise AssertionError("existing projection must not be replaced")
+
+    service = NovelAgentAppService(novel_repo=MixedProjectionRepository())
+
+    result = await service.call_tool(
+        "user:1",
+        "novel.get_entity_profile",
+        {"book_id": 7, "name": "林远"},
+        book_id=7,
+    )
+
+    assert result["result"]["name"] == "林远"
+    assert result["result"].get("appearance_count", 0) > 0
+
+
+@pytest.mark.asyncio
+async def test_local_fallback_ignores_failed_or_stale_snapshot():
+    from hashlib import sha256
+
+    from app.application.services.novel_agent_app_service import NovelAgentAppService
+
+    class StaleSnapshotRepository(NovelRepository):
+        def __init__(self):
+            self.replace_calls = []
+
+        async def list_entities(self, *_args, **_kwargs):
+            return []
+
+        async def list_index_states(self, _owner_scope, _book_id):
+            return [
+                type(
+                    "IndexState",
+                    (),
+                    {
+                        "chapter_id": 2,
+                        "content_hash": "old-hash",
+                        "knowledge_version": "v2-local-evidence",
+                        "extraction_status": "failed",
+                        "extraction_payload": {
+                            "chapter_id": 2,
+                            "chapter_num": 2,
+                            "content_hash": "old-hash",
+                            "entities": [{"name": "旧人物", "entity_type": "character"}],
+                        },
+                    },
+                )()
+            ]
+
+        async def get_chapters_by_book(self, _owner_scope, _book_id, **_kwargs):
+            return [Chapter(id=2, raw_text="林远走进青云宗，周宁在门前等他。林远与周宁并肩作战。")]
+
+        async def get_events(self, *_args, **_kwargs):
+            return []
+
+        async def get_state_changes(self, *_args, **_kwargs):
+            return []
+
+        async def replace_book_knowledge(self, _owner_scope, _book_id, snapshots):
+            self.replace_calls.append(snapshots)
+
+    repo = StaleSnapshotRepository()
+    service = NovelAgentAppService(novel_repo=repo)
+
+    result = await service.call_tool(
+        "user:1",
+        "character.count",
+        {"book_id": 7},
+        book_id=7,
+    )
+
+    current_hash = sha256("林远走进青云宗，周宁在门前等他。林远与周宁并肩作战。".encode("utf-8")).hexdigest()
+    assert repo.replace_calls
+    assert repo.replace_calls[0][0]["content_hash"] == current_hash
+    assert result["result"]
+    assert all(item["name"] != "旧人物" for item in result["result"])
+
+
+@pytest.mark.asyncio
+async def test_local_fallback_persists_completed_states_for_reuse(monkeypatch):
+    from app.application.services.novel_agent_app_service import NovelAgentAppService
+    from app.application.services.novel_understanding.auto_extractor import AutoExtractor
+
+    class PersistedStateRepository(NovelRepository):
+        def __init__(self):
+            self.states = []
+
+        async def list_entities(self, *_args, **_kwargs):
+            return []
+
+        async def list_index_states(self, _owner_scope, _book_id):
+            return list(self.states)
+
+        async def get_events(self, *_args, **_kwargs):
+            return []
+
+        async def get_state_changes(self, *_args, **_kwargs):
+            return []
+
+        async def save_index_state(self, state):
+            self.states.append(state)
+
+        async def replace_book_knowledge(self, *_args, **_kwargs):
+            return None
+
+    calls = []
+    original = AutoExtractor.extract_with_evidence
+
+    def tracked_extract(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(AutoExtractor, "extract_with_evidence", tracked_extract)
+    repo = PersistedStateRepository()
+
+    first = NovelAgentAppService(novel_repo=repo)
+    await first.call_tool("user:1", "character.count", {"book_id": 7}, book_id=7)
+    second = NovelAgentAppService(novel_repo=repo)
+    await second.call_tool("user:1", "character.count", {"book_id": 7}, book_id=7)
+
+    assert len(repo.states) == 1
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_novel_read_tools_expose_evidence_and_knowledge_version(service):
     expected = {
         "novel.search_memory",

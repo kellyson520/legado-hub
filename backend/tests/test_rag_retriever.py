@@ -50,6 +50,20 @@ class TestBM25Index:
         assert "林远" in tokens
         assert "宗门" in tokens
 
+    def test_single_han_query_is_searchable(self):
+        idx = BM25Index()
+        idx.add_document(1, "甲在城门等候")
+        idx.add_document(2, "乙返回山谷")
+        idx.build()
+
+        results = idx.search("甲")
+        assert len(results) == 1
+        assert results[0][0] == 1
+        assert results[0][1] > 0
+
+    def test_extended_han_character_is_indexed(self):
+        assert "龦" in BM25Index._tokenize("龦")
+
 
 class TestEmbeddingAdapter:
     """Embedding 适配器测试"""
@@ -103,6 +117,24 @@ class TestRAGRetriever:
         results = await retriever.retrieve(book.id, "林远", top_k=5)
         assert len(results) > 0
         assert any("林远" in r.content for r in results)
+
+    async def test_empty_query_returns_first_chapter_evidence(self, retriever):
+        book = await retriever._repo.save_book(NovelBook(book_url="https://empty-query", book_name="测试书"))
+        await retriever._repo.save_chapter(
+            NovelChapter(
+                book_id=book.id,
+                canonical_full="C1",
+                canonical_num=1,
+                chapter_title="序章",
+                raw_text="林远在序章中出现。",
+            )
+        )
+
+        results = await retriever.retrieve(book.id, "", top_k=1)
+
+        assert len(results) == 1
+        assert "林远" in results[0].content
+        assert results[0].evidence
 
     async def test_character_context(self, retriever):
         book = await retriever._repo.save_book(NovelBook(book_url="https://test", book_name="测试书"))
