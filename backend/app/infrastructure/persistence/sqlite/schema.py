@@ -429,6 +429,7 @@ class SourceHealthProbeLeaseModel(Base):
 
     source_id = Column(Integer, primary_key=True)
     worker_id = Column(String, nullable=False, index=True)
+    lease_token = Column(String, nullable=True, index=True)
     claimed_at = Column(DateTime, nullable=False)
     lease_expires_at = Column(DateTime, nullable=False, index=True)
 

@@ -4,6 +4,7 @@ import asyncio
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from app.core.pagination import paginated_result
 from app.core.logging import get_logger
@@ -12,6 +13,7 @@ from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeR
 
 class SourceHealthAdminService:
     _PERSISTENCE_RESERVE_SECONDS = 0.05
+    _POST_DEADLINE_PERSISTENCE_TIMEOUT_SECONDS = 5.0
     _VALID_PROBE_MODES = frozenset({"full_chain", "search_only"})
     _TRANSIENT_BLOCK_REASONS = frozenset(
         {
@@ -30,6 +32,7 @@ class SourceHealthAdminService:
         self._probe_service = probe_service
         self._classifier = classifier
         self._logger = get_logger("source_health_admin_service")
+        self._probe_lease_context: dict[int, tuple[str, str, float | None]] = {}
 
     async def aclose(self):
         close = getattr(self._probe_service, "aclose", None)
@@ -79,118 +82,163 @@ class SourceHealthAdminService:
         source_id: int,
         keyword_samples: list[str],
         probe_mode: str = "full_chain",
+        *,
+        lease_worker_id: str | None = None,
+        lease_token: str | None = None,
+        lease_seconds: int = 1800,
+        write_deadline: float | None = None,
     ) -> dict:
         probe_mode = self._normalize_probe_mode(probe_mode)
-        source = (await self._source_repo.list_book_sources_full(ids=[source_id]))[0]
-        evidence = await self._probe_service.probe_source(
-            source,
-            keyword_samples=keyword_samples,
-            probe_mode=probe_mode,
-        )
-        decision = self._classifier.classify(evidence)
-        now = datetime.now(timezone.utc)
-        previous = self._health_repo.get_snapshot(source_id)
-        raw_is_healthy = decision.health_status == "healthy"
-        same_failure = bool(
-            previous
-            and previous.failure_reason
-            and previous.failure_reason == decision.failure_reason
-        )
-        consecutive_failures = 0 if raw_is_healthy else (
-            (previous.consecutive_failures if same_failure else 0) + 1
-        )
-        effective_health_status = decision.health_status
-        effective_route_policy = decision.route_policy
-        effective_route_score = decision.route_score
-        effective_confidence = decision.decision_confidence
-        decision_metadata = dict(decision.metadata or {})
-        decision_metadata.update(
-            {
-                "raw_health_status": decision.health_status,
-                "consecutive_failure_count": consecutive_failures,
-            }
-        )
-        if (
-            decision.health_status == "blocked"
-            and decision.failure_reason in self._TRANSIENT_BLOCK_REASONS
-            and consecutive_failures < 2
-        ):
-            effective_health_status = "unknown"
-            effective_route_policy = "probe_only"
-            effective_route_score = 10.0
-            effective_confidence = "low"
-            decision_metadata["stability_guard"] = "awaiting_confirmation"
+        sources = await self._source_repo.list_book_sources_full(ids=[source_id])
+        if not sources:
+            raise ValueError(f"book source not found: {source_id}")
 
-        is_healthy = effective_health_status == "healthy"
-        consecutive_successes = (
-            ((previous.consecutive_successes if previous and is_healthy else 0) + 1)
-            if is_healthy
-            else 0
-        )
-
-        snapshot = SourceHealthSnapshot(
-            source_id=source_id,
-            source_name=source["bookSourceName"],
-            source_url=source["bookSourceUrl"],
-            health_status=effective_health_status,
-            search_status=decision.search_status,
-            toc_status=decision.toc_status,
-            content_status=decision.content_status,
-            failure_reason=decision.failure_reason,
-            decision_confidence=effective_confidence,
-            route_policy=effective_route_policy,
-            route_score=effective_route_score,
-            consecutive_failures=consecutive_failures,
-            consecutive_successes=consecutive_successes,
-            last_success_at=now if is_healthy else (previous.last_success_at if previous else None),
-            last_probe_at=now,
-            next_probe_at=now + timedelta(minutes=decision_metadata.get("next_probe_after_minutes", 15)),
-            metadata=decision_metadata,
-        )
-        run = SourceProbeRun(
-            source_id=source_id,
-            source_name=source["bookSourceName"],
-            probe_mode=probe_mode,
-            keyword=evidence.keyword,
-            overall_status=effective_health_status,
-            failure_reason=decision.failure_reason,
-            search_result=evidence.search.__dict__,
-            toc_result=evidence.toc.__dict__,
-            content_result=evidence.content.__dict__,
-            summary={
-                "route_policy": effective_route_policy,
-                "route_score": effective_route_score,
-                "raw_health_status": decision.health_status,
-                "stability_guard": decision_metadata.get("stability_guard", ""),
-                "attempted_keywords": evidence.attempted_keywords,
-                "attempts": evidence.attempts,
-            },
-        )
-        error_msg = (
-            f"{decision.failure_reason}:{effective_confidence}"
-            if decision.failure_reason
-            else ""
-        )
-        atomic_writer = getattr(self._health_repo, "record_probe_result", None)
-        if callable(atomic_writer):
-            snapshot, _ = await asyncio.to_thread(
-                atomic_writer,
-                snapshot,
-                run,
-                source_status=effective_health_status,
-                error_msg=error_msg,
-                last_check_time=now,
+        context = self._probe_lease_context.get(int(source_id))
+        owned_lease = False
+        if lease_token is None and context is not None:
+            lease_worker_id, lease_token, context_deadline = context
+            write_deadline = write_deadline if write_deadline is not None else context_deadline
+        if lease_token is None:
+            lease_worker_id = lease_worker_id or f"manual-source-health-{uuid4().hex}"
+            claimed = self._claim_probe_source_leases(
+                [source_id],
+                worker_id=lease_worker_id,
+                lease_seconds=lease_seconds,
             )
-        else:
-            snapshot = self._health_repo.upsert_snapshot(snapshot)
-            self._health_repo.record_probe_run(run)
-            await self._source_repo.update_book_source_health_fields(
+            if claimed is not None:
+                lease_token = claimed.get(int(source_id))
+                if not lease_token:
+                    raise RuntimeError("source probe lease is busy")
+                owned_lease = True
+
+        try:
+            source = sources[0]
+            evidence = await self._probe_service.probe_source(
+                source,
+                keyword_samples=keyword_samples,
+                probe_mode=probe_mode,
+            )
+            decision = self._classifier.classify(evidence)
+            now = datetime.now(timezone.utc)
+            previous = self._health_repo.get_snapshot(source_id)
+            raw_is_healthy = decision.health_status == "healthy"
+            same_failure = bool(
+                previous
+                and previous.failure_reason
+                and previous.failure_reason == decision.failure_reason
+            )
+            consecutive_failures = 0 if raw_is_healthy else (
+                (previous.consecutive_failures if same_failure else 0) + 1
+            )
+            effective_health_status = decision.health_status
+            effective_route_policy = decision.route_policy
+            effective_route_score = decision.route_score
+            effective_confidence = decision.decision_confidence
+            decision_metadata = dict(decision.metadata or {})
+            decision_metadata.update(
+                {
+                    "raw_health_status": decision.health_status,
+                    "consecutive_failure_count": consecutive_failures,
+                }
+            )
+            if (
+                decision.health_status == "blocked"
+                and decision.failure_reason in self._TRANSIENT_BLOCK_REASONS
+                and consecutive_failures < 2
+            ):
+                effective_health_status = "unknown"
+                effective_route_policy = "probe_only"
+                effective_route_score = 10.0
+                effective_confidence = "low"
+                decision_metadata["stability_guard"] = "awaiting_confirmation"
+
+            is_healthy = effective_health_status == "healthy"
+            consecutive_successes = (
+                ((previous.consecutive_successes if previous and is_healthy else 0) + 1)
+                if is_healthy
+                else 0
+            )
+
+            snapshot = SourceHealthSnapshot(
                 source_id=source_id,
-                source_status=effective_health_status,
-                error_msg=error_msg,
-                last_check_time=now,
+                source_name=source["bookSourceName"],
+                source_url=source["bookSourceUrl"],
+                health_status=effective_health_status,
+                search_status=decision.search_status,
+                toc_status=decision.toc_status,
+                content_status=decision.content_status,
+                failure_reason=decision.failure_reason,
+                decision_confidence=effective_confidence,
+                route_policy=effective_route_policy,
+                route_score=effective_route_score,
+                consecutive_failures=consecutive_failures,
+                consecutive_successes=consecutive_successes,
+                last_success_at=now if is_healthy else (previous.last_success_at if previous else None),
+                last_probe_at=now,
+                next_probe_at=now + timedelta(minutes=decision_metadata.get("next_probe_after_minutes", 15)),
+                metadata=decision_metadata,
             )
-        return {"snapshot": self._snapshot_to_dict(snapshot), "decision": decision_metadata}
+            run = SourceProbeRun(
+                source_id=source_id,
+                source_name=source["bookSourceName"],
+                probe_mode=probe_mode,
+                keyword=evidence.keyword,
+                overall_status=effective_health_status,
+                failure_reason=decision.failure_reason,
+                search_result=evidence.search.__dict__,
+                toc_result=evidence.toc.__dict__,
+                content_result=evidence.content.__dict__,
+                summary={
+                    "route_policy": effective_route_policy,
+                    "route_score": effective_route_score,
+                    "raw_health_status": decision.health_status,
+                    "stability_guard": decision_metadata.get("stability_guard", ""),
+                    "attempted_keywords": evidence.attempted_keywords,
+                    "attempts": evidence.attempts,
+                },
+            )
+            error_msg = (
+                f"{decision.failure_reason}:{effective_confidence}"
+                if decision.failure_reason
+                else ""
+            )
+            atomic_writer = getattr(self._health_repo, "record_probe_result", None)
+            if callable(atomic_writer):
+                writer_kwargs = {
+                    "source_status": effective_health_status,
+                    "error_msg": error_msg,
+                    "last_check_time": now,
+                }
+                if lease_worker_id and lease_token:
+                    writer_kwargs.update(
+                        {"worker_id": lease_worker_id, "lease_token": lease_token}
+                    )
+                    if write_deadline is not None:
+                        writer_kwargs["write_deadline"] = write_deadline
+                snapshot, _ = await self._run_atomic_writer(
+                    atomic_writer,
+                    snapshot,
+                    run,
+                    deadline=write_deadline,
+                    **writer_kwargs,
+                )
+            else:
+                snapshot = self._health_repo.upsert_snapshot(snapshot)
+                self._health_repo.record_probe_run(run)
+                await self._source_repo.update_book_source_health_fields(
+                    source_id=source_id,
+                    source_status=effective_health_status,
+                    error_msg=error_msg,
+                    last_check_time=now,
+                )
+            return {"snapshot": self._snapshot_to_dict(snapshot), "decision": decision_metadata}
+        finally:
+            if owned_lease and lease_worker_id and lease_token:
+                self.release_probe_claims(
+                    [source_id],
+                    worker_id=lease_worker_id,
+                    lease_tokens={int(source_id): lease_token},
+                )
 
     async def probe_book_sources(
         self,
@@ -198,12 +246,34 @@ class SourceHealthAdminService:
         keyword_samples: list[str],
         probe_mode: str = "full_chain",
         timeout_seconds: float | None = None,
+        lease_worker_id: str | None = None,
+        lease_tokens: dict[int, str] | None = None,
+        lease_seconds: int = 1800,
     ) -> dict:
         probe_mode = self._normalize_probe_mode(probe_mode)
         source_ids = list(source_ids or [])
         results = []
         failed = 0
         deferred_source_ids: list[int] = []
+        batch_worker_id = lease_worker_id or f"batch-source-health-{uuid4().hex}"
+        active_lease_tokens = {int(key): str(value) for key, value in (lease_tokens or {}).items()}
+        owned_lease_tokens: dict[int, str] = {}
+        claim_method = getattr(self._health_repo, "claim_probe_source_leases", None)
+        if callable(claim_method):
+            missing_ids = [source_id for source_id in source_ids if source_id not in active_lease_tokens]
+            if missing_ids:
+                claimed = claim_method(
+                    missing_ids,
+                    worker_id=batch_worker_id,
+                    lease_seconds=lease_seconds,
+                )
+                active_lease_tokens.update(claimed)
+                owned_lease_tokens.update(claimed)
+            deferred_source_ids.extend(
+                int(source_id)
+                for source_id in source_ids
+                if source_id not in active_lease_tokens
+            )
         deadline = (
             time.monotonic() + max(float(timeout_seconds), 0.0)
             if timeout_seconds is not None
@@ -214,6 +284,9 @@ class SourceHealthAdminService:
             set_deadline(deadline)
         try:
             for index, source_id in enumerate(source_ids):
+                source_id = int(source_id)
+                if source_id not in active_lease_tokens and callable(claim_method):
+                    continue
                 remaining = deadline - time.monotonic() if deadline is not None else None
                 if remaining is not None and remaining <= 0:
                     deferred_source_ids.extend(int(item) for item in source_ids[index:])
@@ -225,6 +298,11 @@ class SourceHealthAdminService:
                         break
                     probe_timeout = remaining - self._PERSISTENCE_RESERVE_SECONDS
                 try:
+                    self._probe_lease_context[source_id] = (
+                        batch_worker_id,
+                        active_lease_tokens.get(source_id, ""),
+                        deadline - self._PERSISTENCE_RESERVE_SECONDS if deadline is not None else None,
+                    )
                     call = self.probe_book_source(
                         source_id,
                         keyword_samples=keyword_samples,
@@ -248,6 +326,8 @@ class SourceHealthAdminService:
                         failure_reason="probe_timeout",
                         error_message="source probe batch timeout",
                         deadline=deadline,
+                        worker_id=batch_worker_id,
+                        lease_token=active_lease_tokens.get(source_id),
                     )
                     results.append(
                         {
@@ -266,6 +346,8 @@ class SourceHealthAdminService:
                         failure_reason="probe_exception",
                         error_message=safe_error,
                         deadline=deadline,
+                        worker_id=batch_worker_id,
+                        lease_token=active_lease_tokens.get(source_id),
                     )
                     results.append(
                         {
@@ -274,16 +356,24 @@ class SourceHealthAdminService:
                             "error": safe_error,
                         }
                     )
+                finally:
+                    self._probe_lease_context.pop(source_id, None)
         finally:
             if deadline is not None and callable(set_deadline):
                 set_deadline(None)
+            if owned_lease_tokens:
+                self.release_probe_claims(
+                    list(owned_lease_tokens),
+                    worker_id=batch_worker_id,
+                    lease_tokens=owned_lease_tokens,
+                )
         return {
             "results": results,
             "total": len(source_ids),
             "succeeded": len(results) - failed,
             "failed": failed,
-            "deferred": len(deferred_source_ids),
-            "deferred_source_ids": deferred_source_ids,
+            "deferred": len(dict.fromkeys(deferred_source_ids)),
+            "deferred_source_ids": list(dict.fromkeys(deferred_source_ids)),
         }
 
     async def _record_probe_failure_bounded(
@@ -295,6 +385,8 @@ class SourceHealthAdminService:
         failure_reason: str,
         error_message: str,
         deadline: float | None,
+        worker_id: str | None = None,
+        lease_token: str | None = None,
     ) -> None:
         if deadline is None:
             await self._record_probe_failure(
@@ -303,15 +395,38 @@ class SourceHealthAdminService:
                 probe_mode=probe_mode,
                 failure_reason=failure_reason,
                 error_message=error_message,
+                worker_id=worker_id,
+                lease_token=lease_token,
             )
             return
 
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        write_deadline = deadline - self._PERSISTENCE_RESERVE_SECONDS
+        write_remaining = write_deadline - time.monotonic()
+        if remaining <= 0 or write_remaining <= 0:
             self._logger.warning(
-                "probe failure persistence skipped after batch deadline",
+                "probe failure persistence is using post-deadline grace period",
                 extra={"source_id": source_id, "failure_reason": failure_reason},
             )
+            try:
+                await asyncio.wait_for(
+                    self._record_probe_failure(
+                        source_id,
+                        keyword_samples=keyword_samples,
+                        probe_mode=probe_mode,
+                        failure_reason=failure_reason,
+                        error_message=error_message,
+                        worker_id=worker_id,
+                        lease_token=lease_token,
+                        write_deadline=None,
+                    ),
+                    timeout=self._POST_DEADLINE_PERSISTENCE_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                self._logger.error(
+                    "probe failure persistence exceeded post-deadline grace period",
+                    extra={"source_id": source_id, "failure_reason": failure_reason},
+                )
             return
         try:
             await asyncio.wait_for(
@@ -321,8 +436,11 @@ class SourceHealthAdminService:
                     probe_mode=probe_mode,
                     failure_reason=failure_reason,
                     error_message=error_message,
+                    worker_id=worker_id,
+                    lease_token=lease_token,
+                    write_deadline=write_deadline,
                 ),
-                timeout=remaining,
+                timeout=write_remaining,
             )
         except asyncio.TimeoutError:
             self._logger.warning(
@@ -338,6 +456,9 @@ class SourceHealthAdminService:
         probe_mode: str,
         failure_reason: str,
         error_message: str,
+        worker_id: str | None = None,
+        lease_token: str | None = None,
+        write_deadline: float | None = None,
     ) -> None:
         """Persist an inconclusive probe so it is not reported as never attempted."""
         if self._source_repo is None or self._health_repo is None:
@@ -348,7 +469,11 @@ class SourceHealthAdminService:
                 return
             source = sources[0]
             now = datetime.now(timezone.utc)
-            previous = await asyncio.to_thread(self._health_repo.get_snapshot, source_id)
+            context = self._probe_lease_context.get(int(source_id))
+            worker_id = worker_id or (context[0] if context else None)
+            lease_token = lease_token or (context[1] if context else None)
+            write_deadline = write_deadline if write_deadline is not None else (context[2] if context else None)
+            previous = self._health_repo.get_snapshot(source_id)
             same_failure = bool(previous and previous.failure_reason == failure_reason)
             consecutive_failures = (previous.consecutive_failures if same_failure else 0) + 1
             safe_error = self._sanitize_error_message(error_message or failure_reason)
@@ -393,23 +518,33 @@ class SourceHealthAdminService:
             )
             atomic_writer = getattr(self._health_repo, "record_probe_failure", None)
             if callable(atomic_writer):
-                await asyncio.to_thread(
+                writer_kwargs = {
+                    "source_status": "unknown",
+                    "error_msg": f"{failure_reason}:low",
+                    "last_check_time": now,
+                }
+                if worker_id and lease_token:
+                    writer_kwargs.update({"worker_id": worker_id, "lease_token": lease_token})
+                    if write_deadline is not None:
+                        writer_kwargs["write_deadline"] = write_deadline
+                await self._run_atomic_writer(
                     atomic_writer,
                     snapshot,
                     run,
-                    source_status="unknown",
-                    error_msg=f"{failure_reason}:low",
-                    last_check_time=now,
+                    deadline=write_deadline,
+                    **writer_kwargs,
                 )
             else:
-                await asyncio.to_thread(self._health_repo.upsert_snapshot, snapshot)
-                await asyncio.to_thread(self._health_repo.record_probe_run, run)
+                self._health_repo.upsert_snapshot(snapshot)
+                self._health_repo.record_probe_run(run)
                 await self._source_repo.update_book_source_health_fields(
                     source_id=source_id,
                     source_status="unknown",
                     error_msg=f"{failure_reason}:low",
                     last_check_time=now,
                 )
+        except TimeoutError:
+            raise
         except Exception as exc:
             self._logger.warning(
                 "probe failure diagnostics persistence failed",
@@ -420,6 +555,34 @@ class SourceHealthAdminService:
                 },
             )
             return
+
+    @staticmethod
+    async def _run_atomic_writer(writer, snapshot, run, *, deadline: float | None, **kwargs):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise asyncio.TimeoutError("probe persistence deadline exceeded")
+        future = asyncio.create_task(asyncio.to_thread(writer, snapshot, run, **kwargs))
+        try:
+            if deadline is None:
+                return await asyncio.shield(future)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise asyncio.TimeoutError("probe persistence deadline exceeded")
+            try:
+                return await asyncio.wait_for(asyncio.shield(future), timeout=remaining)
+            except asyncio.TimeoutError:
+                # The repository receives the same deadline and must roll back
+                # if SQLite only becomes writable after it has elapsed. Drain
+                # the worker so cancellation cannot leave a late DB side effect.
+                return await asyncio.shield(future)
+        except asyncio.CancelledError:
+            try:
+                result = await asyncio.shield(future)
+            except BaseException:
+                raise
+            # The database operation may have completed successfully at the
+            # timeout boundary. Preserve that committed result instead of
+            # recording a second timeout state over it.
+            return result
 
     @staticmethod
     def _sanitize_error_message(error_message: object) -> str:
@@ -458,10 +621,54 @@ class SourceHealthAdminService:
             lease_seconds=lease_seconds,
         )
 
-    def release_probe_claims(self, source_ids: list[int], *, worker_id: str) -> None:
+    def claim_probe_candidate_leases(
+        self,
+        limit: int | None = 20,
+        *,
+        worker_id: str,
+        lease_seconds: int = 1800,
+    ) -> dict[int, str] | None:
+        claim = getattr(self._health_repo, "claim_probe_candidate_leases", None)
+        if not callable(claim):
+            return None
+        return {
+            int(source_id): str(token)
+            for source_id, token in claim(
+                limit=limit,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+            ).items()
+        }
+
+    def release_probe_claims(
+        self,
+        source_ids: list[int],
+        *,
+        worker_id: str,
+        lease_tokens: dict[int, str] | None = None,
+    ) -> None:
         release = getattr(self._health_repo, "release_probe_claims", None)
         if callable(release):
-            release(source_ids, worker_id=worker_id)
+            release(source_ids, worker_id=worker_id, lease_tokens=lease_tokens)
+
+    def _claim_probe_source_leases(
+        self,
+        source_ids: list[int],
+        *,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> dict[int, str] | None:
+        claim = getattr(self._health_repo, "claim_probe_source_leases", None)
+        if not callable(claim):
+            return None
+        return {
+            int(source_id): str(token)
+            for source_id, token in claim(
+                source_ids,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+            ).items()
+        }
 
     async def recover_source(self, source_id: int) -> dict:
         source = (await self._source_repo.list_book_sources_full(ids=[source_id]))[0]

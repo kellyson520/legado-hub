@@ -451,6 +451,77 @@ async def test_probe_service_records_toc_transport_evidence_when_directory_is_em
 
 
 @pytest.mark.asyncio
+async def test_probe_service_marks_valid_empty_json_toc_as_inconclusive_result():
+    from app.application.services.source_probe_service import SourceProbeService
+    from app.infrastructure.legado.engine.http_client import HttpResponse
+
+    class EmptyJsonFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://api.example.com/detail"}]
+
+        async def get_toc(self, source, book_url):
+            return []
+
+        async def _request_configured_url(self, raw_url, headers, base_url):
+            return (
+                HttpResponse(
+                    url=raw_url,
+                    status=200,
+                    is_json=True,
+                    text='{"data": []}',
+                ),
+                raw_url,
+            )
+
+    probe = await SourceProbeService(fetcher=EmptyJsonFetcher()).probe_source(
+        source={
+            "id": 109,
+            "bookSourceName": "合法空 JSON 书源",
+            "bookSourceUrl": "https://api.example.com",
+        },
+        keyword_samples=["捞尸人"],
+        probe_mode="full_chain",
+    )
+
+    assert probe.toc.status == "failed"
+    assert probe.toc.detail["parse_status"] == "empty_result"
+    assert probe.toc.detail["empty_response_valid"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "null",
+        '{"success": true, "result": []}',
+        '({"result": []})',
+    ],
+)
+async def test_probe_service_accepts_common_empty_json_shapes_as_inconclusive_result(payload):
+    from app.application.services.source_probe_service import SourceProbeService
+    from app.infrastructure.legado.engine.http_client import HttpResponse
+
+    class EmptyShapeFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://api.example.com/detail"}]
+
+        async def get_toc(self, source, book_url):
+            return []
+
+        async def _request_configured_url(self, raw_url, headers, base_url):
+            return HttpResponse(url=raw_url, status=200, is_json=True, text=payload), raw_url
+
+    probe = await SourceProbeService(fetcher=EmptyShapeFetcher()).probe_source(
+        source={"id": 117, "bookSourceName": "常见空响应书源", "bookSourceUrl": "https://api.example.com"},
+        keyword_samples=["捞尸人"],
+        probe_mode="full_chain",
+    )
+
+    assert probe.toc.detail["parse_status"] == "empty_result"
+    assert probe.toc.detail["empty_response_valid"] is True
+
+
+@pytest.mark.asyncio
 async def test_content_verification_shell_is_classified_as_access_blocked():
     from app.application.services.source_probe_service import SourceProbeService
     from app.infrastructure.legado.engine.http_client import HttpResponse
@@ -480,6 +551,174 @@ async def test_content_verification_shell_is_classified_as_access_blocked():
 
     assert evidence.content.detail['block_reason'] == 'verification_wall'
     assert evidence.content.detail['parse_status'] == 'content_access_blocked'
+
+
+@pytest.mark.asyncio
+async def test_probe_service_does_not_treat_captcha_word_in_novel_content_as_access_wall():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class NovelContentFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return [{"title": "第一章", "url": "https://example.test/book/1/1"}]
+
+        async def get_content(self, source, chapter_url):
+            return {"title": "第一章", "content": "正文提到 captcha challenge 只是一个剧情术语。"}
+
+    evidence = await SourceProbeService(fetcher=NovelContentFetcher()).probe_source(
+        source={"id": 110, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+    )
+
+    assert evidence.content.status == "ok"
+    assert "parse_status" not in evidence.content.detail
+
+
+@pytest.mark.asyncio
+async def test_probe_service_does_not_treat_challenge_brand_word_in_html_novel_body_as_wall():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class HtmlNovelContentFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return [{"title": "第一章", "url": "https://example.test/book/1/1"}]
+
+        async def get_content(self, source, chapter_url):
+            return {"title": "第一章", "content": "<div>正文讨论 Cloudflare 这个品牌，但不是验证页面。</div>"}
+
+    evidence = await SourceProbeService(fetcher=HtmlNovelContentFetcher()).probe_source(
+        source={"id": 113, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+    )
+
+    assert evidence.content.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_probe_service_does_not_treat_captcha_challenge_words_in_html_novel_body_as_wall():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class HtmlCaptchaNovelContentFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return [{"title": "第一章", "url": "https://example.test/book/1/1"}]
+
+        async def get_content(self, source, chapter_url):
+            return {"title": "第一章", "content": "<div>正文提到 captcha challenge 只是剧情术语，不是验证页。</div>"}
+
+    evidence = await SourceProbeService(fetcher=HtmlCaptchaNovelContentFetcher()).probe_source(
+        source={"id": 116, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+    )
+
+    assert evidence.content.status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_probe_service_does_not_treat_verification_phrase_in_html_novel_body_as_wall():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class HtmlPhraseNovelContentFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return [{"title": "第一章", "url": "https://example.test/book/1/1"}]
+
+        async def get_content(self, source, chapter_url):
+            return {"title": "第一章", "content": "<div>角色在台词里说 verify you are human，但这是小说正文。</div>"}
+
+    evidence = await SourceProbeService(fetcher=HtmlPhraseNovelContentFetcher()).probe_source(
+        source={"id": 115, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+    )
+
+    assert evidence.content.status == "ok"
+
+
+def test_probe_service_requires_html_evidence_before_stopping_on_challenge_markers():
+    from app.application.services.source_probe_service import SourceProbeService
+    from app.domain.entities.source_health import SourceProbeEvidence, StageProbeResult
+
+    evidence = SourceProbeEvidence(
+        source_id=111,
+        source_name="合法 JSON 元数据书源",
+        source_url="https://example.test",
+        probe_mode="search_only",
+        keyword="sample",
+        search=StageProbeResult(
+            stage="search",
+            status="failed",
+            detail={
+                "http_status": 200,
+                "response_kind": "json",
+                "response_preview": '{"note":"cloudflare is mentioned in metadata"}',
+            },
+        ),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    assert SourceProbeService._has_conclusive_transport_failure(evidence) is False
+
+    evidence.search.detail["response_kind"] = "html"
+    evidence.search.detail["response_preview"] = "<div>正文讨论 Cloudflare 这个品牌，但不是验证页面。</div>"
+
+    assert SourceProbeService._has_conclusive_transport_failure(evidence) is False
+
+
+@pytest.mark.asyncio
+async def test_probe_service_keeps_uninstrumented_empty_js_stage_inconclusive():
+    from app.application.services.source_probe_service import SourceProbeService
+
+    class EmptyJsFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return []
+
+    evidence = await SourceProbeService(fetcher=EmptyJsFetcher()).probe_source(
+        source={"id": 112, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+    )
+
+    assert evidence.toc.detail["parse_status"] == "empty_result"
+
+
+@pytest.mark.asyncio
+async def test_probe_service_accepts_empty_javascript_object_response_as_inconclusive():
+    from app.application.services.source_probe_service import SourceProbeService
+    from app.infrastructure.legado.engine.http_client import HttpResponse
+
+    class EmptyJavascriptFetcher:
+        async def search(self, source, keyword, page=1):
+            return [{"name": keyword, "bookUrl": "https://example.test/book/1"}]
+
+        async def get_toc(self, source, book_url):
+            return []
+
+        async def _request_configured_url(self, raw_url, headers, base_url):
+            return HttpResponse(url=raw_url, status=200, text="({})"), raw_url
+
+    evidence = await SourceProbeService(fetcher=EmptyJavascriptFetcher()).probe_source(
+        source={"id": 114, "bookSourceUrl": "https://example.test"},
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+    )
+
+    assert evidence.toc.detail["parse_status"] == "empty_result"
 
 
 @pytest.mark.asyncio

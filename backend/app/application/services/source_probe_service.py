@@ -213,10 +213,6 @@ class SourceProbeService:
             "worker_io_error",
             "js_runtime_error",
             "token=undefined",
-            "just a moment",
-            "cloudflare",
-            "captcha",
-            "access denied",
         )
         for stage in (evidence.search, evidence.toc, evidence.content):
             if stage.status != "failed":
@@ -231,11 +227,13 @@ class SourceProbeService:
                 return True
             if str(detail.get("block_reason") or "").lower() == "verification_wall":
                 return True
+            if _looks_like_verification_diagnostic(detail):
+                return True
             diagnostic = " ".join(
                 str(value)
                 for value in (
                     stage.error_message,
-                    detail.get("response_preview"),
+                    detail.get("http_error"),
                     detail.get("js_error"),
                 )
                 if value
@@ -510,7 +508,10 @@ class SourceProbeService:
     ) -> dict:
         request = getattr(self._fetcher, "_request_configured_url", None)
         if request is None or not raw_url:
-            return {"parse_status": parse_status}
+            return {
+                "parse_status": "empty_result" if parse_status == "empty" else parse_status,
+                **({"empty_response_valid": True} if parse_status == "empty" else {}),
+            }
 
         try:
             response, _ = await request(
@@ -543,14 +544,24 @@ class SourceProbeService:
                 or 'getcookie("getsite")' in (response.text or "").lower()
             )
         )
+        empty_response_valid = (
+            parse_status == "empty"
+            and 200 <= int(getattr(response, "status", 0) or 0) < 300
+            and (
+                response_kind in {"json", "text"}
+                and _is_valid_empty_json_payload(response.text or "")
+            )
+        )
+        effective_parse_status = "empty_result" if empty_response_valid else parse_status
         return {
             "http_status": response.status,
             "http_error": response.error or "",
             "response_kind": response_kind,
             "response_preview": response_preview,
             "expected_response_kind": "json",
-            "parse_status": "content_access_blocked" if is_verification_wall else parse_status,
+            "parse_status": "content_access_blocked" if is_verification_wall else effective_parse_status,
             **({"block_reason": "verification_wall"} if is_verification_wall else {}),
+            **({"empty_response_valid": True} if empty_response_valid else {}),
             "http_elapsed_ms": response.elapsed_ms,
         }
 
@@ -568,11 +579,19 @@ def _safe_preview(value: object, limit: int = 300) -> str:
 
 
 def _looks_like_access_wall(content: str) -> bool:
+    stripped = content.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            json.loads(stripped)
+            return False
+        except (TypeError, json.JSONDecodeError):
+            pass
     sample = BeautifulSoup(content[:4000], "lxml").get_text(" ", strip=True).lower()
+    has_challenge_markup = bool(
+        re.search(r"<\s*(?:form|iframe|input|script|noscript|meta)\b", content[:4000], re.IGNORECASE)
+    )
     strong_markers = (
         "just a moment",
-        "cloudflare",
-        "access denied",
         "verify you are human",
         "enable javascript and cookies",
         "getcookie(\"getsite\")",
@@ -582,12 +601,104 @@ def _looks_like_access_wall(content: str) -> bool:
         "访问验证",
     )
     if any(marker in sample for marker in strong_markers):
-        return True
+        if "just a moment" in sample:
+            return sample.strip() in {"just a moment", "just a moment..."} or has_challenge_markup
+        exact_phrases = {"verify you are human", "安全验证", "人机验证", "访问验证"}
+        return sample.strip() in exact_phrases or has_challenge_markup
+    if "cloudflare" in sample or "access denied" in sample:
+        challenge_context = (
+            "ray id",
+            "checking your browser",
+            "security verification",
+            "request id",
+        )
+        return sample.strip() in {"cloudflare", "access denied"} or any(
+            marker in sample for marker in challenge_context
+        )
     return (
         "captcha" in sample
         and len(sample) <= 1200
+        and has_challenge_markup
         and any(marker in sample for marker in ("/captcha", "enter captcha", "verify", "challenge", "human", "robot"))
     )
+
+
+def _looks_like_verification_diagnostic(detail: dict) -> bool:
+    if str(detail.get("response_kind") or "").lower() != "html":
+        return False
+    preview = str(detail.get("response_preview") or "").lower()
+    strong_markers = (
+        "just a moment",
+        "verify you are human",
+        "enable javascript and cookies",
+        "cf-chl-",
+        "安全验证",
+        "人机验证",
+        "访问验证",
+    )
+    captcha_context = ("/captcha", "enter captcha", "verify", "challenge", "human", "robot")
+    visible_preview = re.sub(r"<[^>]+>", " ", preview).strip()
+    has_challenge_markup = bool(
+        re.search(r"<\s*(?:form|iframe|input|script|noscript|meta)\b", preview)
+    )
+    try:
+        http_status = int(detail.get("http_status"))
+    except (TypeError, ValueError):
+        http_status = 0
+    if "just a moment" in preview:
+        return (
+            http_status >= 400
+            or visible_preview in {"just a moment", "just a moment..."}
+            or has_challenge_markup
+        )
+    if any(marker in preview for marker in strong_markers if marker != "just a moment"):
+        exact_phrases = {"verify you are human", "安全验证", "人机验证", "访问验证"}
+        if visible_preview in exact_phrases or has_challenge_markup or http_status >= 400:
+            return True
+    return bool(
+        (
+            ("cloudflare" in preview or "access denied" in preview)
+            and (
+                http_status >= 400
+                or any(
+                    marker in preview
+                    for marker in ("ray id", "checking your browser", "security verification", "request id")
+                )
+            )
+        )
+        or (
+            "captcha" in preview
+            and has_challenge_markup
+            and any(marker in preview for marker in captcha_context)
+        )
+    )
+
+
+def _is_valid_empty_json_payload(content: str) -> bool:
+    candidate = content.strip()
+    if not candidate:
+        return True
+    if candidate.startswith("(") and candidate.endswith(")"):
+        candidate = candidate[1:-1].strip()
+    try:
+        value = json.loads(candidate)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if value is None or value == [] or value == {}:
+        return True
+    if not isinstance(value, dict):
+        return False
+    hard_error_keys = {"error", "errmsg", "error_msg"}
+    if any(key in hard_error_keys for key in (str(item).lower() for item in value)):
+        return False
+    for key in ("status", "code"):
+        if key not in value:
+            continue
+        normalized = str(value[key]).strip().lower()
+        if normalized not in {"0", "200", "ok", "success", "true"}:
+            return False
+    empty_keys = {"data", "items", "results", "result", "books", "chapters", "list", "rows"}
+    return any(key in empty_keys and value[key] in ([], {}, "", None, 0) for key in value)
 
 
 def _looks_like_error_payload(content: str) -> bool:

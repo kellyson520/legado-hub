@@ -30,6 +30,25 @@ def _ensure_sqlite_source_columns() -> None:
                 connection.exec_driver_sql(f"ALTER TABLE book_sources ADD COLUMN {column} {ddl}")
 
 
+def _ensure_sqlite_source_health_lease_columns() -> None:
+    with engine.begin() as connection:
+        rows = connection.exec_driver_sql("PRAGMA table_info(source_health_probe_leases)").fetchall()
+        if not rows:
+            return
+        columns = {row[1] for row in rows}
+        if "lease_token" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE source_health_probe_leases ADD COLUMN lease_token VARCHAR"
+            )
+        connection.exec_driver_sql(
+            "DELETE FROM source_health_probe_leases WHERE lease_token IS NULL"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_source_health_probe_leases_lease_token "
+            "ON source_health_probe_leases (lease_token)"
+        )
+
+
 def _ensure_sqlite_user_columns() -> None:
     required_columns = {
         "display_name": "VARCHAR NOT NULL DEFAULT ''",
@@ -377,6 +396,7 @@ def bootstrap_sqlite() -> None:
     _ensure_sqlite_user_columns()
     _ensure_sqlite_api_key_columns()
     _ensure_sqlite_source_columns()
+    _ensure_sqlite_source_health_lease_columns()
     _ensure_sqlite_job_columns()
     _ensure_sqlite_translation_columns()
     _ensure_sqlite_provider_columns()

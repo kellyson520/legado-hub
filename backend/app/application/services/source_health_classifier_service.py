@@ -126,6 +126,8 @@ class SourceHealthClassifierService:
             for detail, status in zip(details, stage_http_statuses)
         ):
             return "html_instead_of_json"
+        if any(str(detail.get("parse_status") or "").lower() == "empty_result" for detail in details):
+            return "empty_result"
         if any(str(detail.get("parse_status") or "").lower() == "empty" for detail in details):
             return "parse_empty"
         if evidence.search.status == "failed" and evidence.search.hit_count == 0:
@@ -155,8 +157,6 @@ class SourceHealthClassifierService:
     def _has_verification_wall_evidence(details: list[dict]) -> bool:
         strong_markers = (
             "just a moment",
-            "cloudflare",
-            "access denied",
             "verify you are human",
             "enable javascript and cookies",
             "cf-chl-",
@@ -173,9 +173,48 @@ class SourceHealthClassifierService:
             if str(detail.get("response_kind") or "").lower() != "html":
                 continue
             preview = str(detail.get("response_preview") or "").lower()
+            visible_preview = re.sub(r"<[^>]+>", " ", preview).strip()
+            has_challenge_markup = bool(
+                re.search(r"<\s*(?:form|iframe|input|script|noscript|meta)\b", preview)
+            )
             if any(marker in preview for marker in strong_markers):
-                return True
-            if "captcha" in preview and any(marker in preview for marker in captcha_context):
+                if "just a moment" in preview:
+                    try:
+                        status = int(detail.get("http_status"))
+                    except (TypeError, ValueError):
+                        status = 0
+                    if (
+                        status >= 400
+                        or visible_preview in {"just a moment", "just a moment..."}
+                        or has_challenge_markup
+                    ):
+                        return True
+                    continue
+                exact_phrases = {"verify you are human", "安全验证", "人机验证", "访问验证"}
+                try:
+                    status = int(detail.get("http_status"))
+                except (TypeError, ValueError):
+                    status = 0
+                if visible_preview in exact_phrases or has_challenge_markup or status >= 400:
+                    return True
+            if "cloudflare" in preview or "access denied" in preview:
+                try:
+                    status = int(detail.get("http_status"))
+                except (TypeError, ValueError):
+                    status = 0
+                challenge_context = (
+                    "ray id",
+                    "checking your browser",
+                    "security verification",
+                    "request id",
+                )
+                if status >= 400 or any(marker in preview for marker in challenge_context):
+                    return True
+            if (
+                "captcha" in preview
+                and has_challenge_markup
+                and any(marker in preview for marker in captcha_context)
+            ):
                 return True
         return False
 
@@ -214,6 +253,8 @@ class SourceHealthClassifierService:
         if evidence.search.status == "ok" and (
             evidence.toc.status == "failed" or evidence.content.status == "failed"
         ):
+            if failure_reason == "empty_result":
+                return "unknown"
             return "degraded"
         # A fixed probe title may simply be absent from a valid source. Without
         # transport or parser evidence, no result is inconclusive rather than a

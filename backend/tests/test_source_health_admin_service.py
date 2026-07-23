@@ -557,6 +557,51 @@ async def test_admin_service_keeps_single_transient_transport_failure_unknown_th
 
 
 @pytest.mark.asyncio
+async def test_admin_service_claims_a_lease_for_manual_probe_before_persisting(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-manual-lease.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+    from app.application.services.source_health_models import SourceProbeEvidence, StageProbeResult
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    class HealthyProbeService:
+        async def probe_source(self, source, keyword_samples, probe_mode="full_chain"):
+            return SourceProbeEvidence(
+                source_id=source["id"],
+                source_name=source["bookSourceName"],
+                source_url=source["bookSourceUrl"],
+                probe_mode=probe_mode,
+                keyword=keyword_samples[0],
+                search=StageProbeResult(stage="search", status="ok", hit_count=1),
+                toc=StageProbeResult(stage="toc", status="ok", hit_count=1),
+                content=StageProbeResult(stage="content", status="ok"),
+            )
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "手动租约源", "bookSourceUrl": "https://manual-lease.example", "enabled": True},
+        actor_id=1,
+    )
+    service = SourceHealthAdminService(
+        source_repo=source_repo,
+        health_repo=health_repo,
+        probe_service=HealthyProbeService(),
+        classifier=SourceHealthClassifierService(),
+    )
+
+    result = await service.probe_book_source(source["id"], keyword_samples=["sample"])
+
+    assert result["snapshot"]["health_status"] == "healthy"
+    assert health_repo.get_snapshot(source["id"]).health_status == "healthy"
+
+
+@pytest.mark.asyncio
 async def test_admin_service_keeps_single_waf_failure_unknown_then_confirms_it(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-waf-stability.sqlite3"))
@@ -714,7 +759,7 @@ async def test_admin_service_defers_remaining_sources_when_batch_deadline_expire
 
 
 @pytest.mark.asyncio
-async def test_admin_service_bounds_timeout_failure_persistence_by_batch_deadline():
+async def test_admin_service_persists_timeout_failure_with_post_deadline_grace_period():
     from time import monotonic
 
     from app.application.services.source_health_admin_service import SourceHealthAdminService
@@ -726,6 +771,7 @@ async def test_admin_service_bounds_timeout_failure_persistence_by_batch_deadlin
         classifier=None,
     )
     calls = []
+    persistence_calls = []
 
     async def slow_probe(source_id, keyword_samples, probe_mode="full_chain"):
         calls.append(source_id)
@@ -733,6 +779,7 @@ async def test_admin_service_bounds_timeout_failure_persistence_by_batch_deadlin
         return {"snapshot": {"source_id": source_id}}
 
     async def slow_failure_persistence(*args, **kwargs):
+        persistence_calls.append(args[0])
         await asyncio.sleep(0.2)
 
     service.probe_book_source = slow_probe
@@ -746,10 +793,46 @@ async def test_admin_service_bounds_timeout_failure_persistence_by_batch_deadlin
     )
     elapsed = monotonic() - started
 
-    assert elapsed < 0.18
+    assert elapsed < 0.5
     assert calls == [1]
     assert result["failed"] == 1
     assert result["deferred_source_ids"] == [2]
+    assert persistence_calls == [1]
+
+
+@pytest.mark.asyncio
+async def test_admin_service_persists_timeout_failure_after_batch_deadline(monkeypatch):
+    import time
+
+    from app.application.services.source_health_admin_service import SourceHealthAdminService
+
+    service = SourceHealthAdminService(
+        source_repo=None,
+        health_repo=None,
+        probe_service=None,
+        classifier=None,
+    )
+    calls = []
+
+    async def record_probe_failure(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(service, "_record_probe_failure", record_probe_failure)
+
+    await service._record_probe_failure_bounded(
+        7,
+        keyword_samples=["sample"],
+        probe_mode="full_chain",
+        failure_reason="probe_timeout",
+        error_message="source probe batch timeout",
+        deadline=time.monotonic() - 1,
+        worker_id="worker-a",
+        lease_token="token-a",
+    )
+
+    assert calls
+    assert calls[0][1]["worker_id"] == "worker-a"
+    assert calls[0][1]["lease_token"] == "token-a"
 
 
 @pytest.mark.asyncio

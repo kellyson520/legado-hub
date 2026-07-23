@@ -51,6 +51,9 @@ class SourceHealthRepository(ABC):
         source_status: str,
         error_msg: str,
         last_check_time: datetime,
+        worker_id: str,
+        lease_token: str,
+        write_deadline: float | None = None,
     ) -> tuple[SourceHealthSnapshot, SourceProbeRun]:
         raise NotImplementedError
 
@@ -62,6 +65,9 @@ class SourceHealthRepository(ABC):
         source_status: str,
         error_msg: str,
         last_check_time: datetime,
+        worker_id: str,
+        lease_token: str,
+        write_deadline: float | None = None,
     ) -> tuple[SourceHealthSnapshot, SourceProbeRun]:
         raise NotImplementedError
 
@@ -81,5 +87,29 @@ class SourceHealthRepository(ABC):
     ) -> list[int]:
         raise NotImplementedError
 
-    def release_probe_claims(self, source_ids: list[int], *, worker_id: str) -> None:
+    def claim_probe_candidate_leases(
+        self,
+        limit: int | None = 20,
+        *,
+        worker_id: str,
+        lease_seconds: int = 1800,
+    ) -> dict[int, str]:
+        raise NotImplementedError
+
+    def claim_probe_source_leases(
+        self,
+        source_ids: list[int],
+        *,
+        worker_id: str,
+        lease_seconds: int = 1800,
+    ) -> dict[int, str]:
+        raise NotImplementedError
+
+    def release_probe_claims(
+        self,
+        source_ids: list[int],
+        *,
+        worker_id: str,
+        lease_tokens: dict[int, str] | None = None,
+    ) -> None:
         raise NotImplementedError

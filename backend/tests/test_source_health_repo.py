@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 
 def test_source_health_repository_persists_snapshot_and_probe_history(monkeypatch, tmp_path):
     monkeypatch.setenv("APP_ENV", "test")
@@ -132,6 +134,12 @@ async def test_source_health_repository_records_failure_atomically(monkeypatch, 
         {"bookSourceName": "原子失败源", "bookSourceUrl": "https://atomic.example", "enabled": True},
         actor_id=1,
     )
+    lease = health_repo.claim_probe_source_leases(
+        source_ids=[source["id"]],
+        worker_id="failure-worker",
+        lease_seconds=60,
+    )
+    lease_token = lease[source["id"]]
     now = datetime.now(timezone.utc)
     snapshot = SourceHealthSnapshot(
         source_id=source["id"],
@@ -161,6 +169,8 @@ async def test_source_health_repository_records_failure_atomically(monkeypatch, 
     health_repo.record_probe_failure(
         snapshot,
         run,
+        worker_id="failure-worker",
+        lease_token=lease_token,
         source_status="unknown",
         error_msg="probe_exception:low",
         last_check_time=now,
@@ -191,6 +201,12 @@ async def test_source_health_repository_records_success_atomically(monkeypatch, 
         {"bookSourceName": "原子成功源", "bookSourceUrl": "https://success-atomic.example", "enabled": True},
         actor_id=1,
     )
+    lease = health_repo.claim_probe_source_leases(
+        source_ids=[source["id"]],
+        worker_id="success-worker",
+        lease_seconds=60,
+    )
+    lease_token = lease[source["id"]]
     now = datetime.now(timezone.utc)
     snapshot = SourceHealthSnapshot(
         source_id=source["id"],
@@ -220,6 +236,8 @@ async def test_source_health_repository_records_success_atomically(monkeypatch, 
     health_repo.record_probe_result(
         snapshot,
         run,
+        worker_id="success-worker",
+        lease_token=lease_token,
         source_status="healthy",
         error_msg="",
         last_check_time=now,
@@ -232,6 +250,148 @@ async def test_source_health_repository_records_success_atomically(monkeypatch, 
     assert runs and runs[0].overall_status == "healthy"
     assert source_after["sourceStatus"] == "healthy"
     assert source_after["errorMsg"] == ""
+
+
+async def test_source_health_repository_rejects_result_from_wrong_probe_lease(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-lease-token.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "租约源", "bookSourceUrl": "https://lease.example", "enabled": True},
+        actor_id=1,
+    )
+    lease = health_repo.claim_probe_source_leases(
+        source_ids=[source["id"]],
+        worker_id="current-worker",
+        lease_seconds=60,
+    )
+    now = datetime.now(timezone.utc)
+    snapshot = SourceHealthSnapshot(
+        source_id=source["id"],
+        source_name=source["bookSourceName"],
+        source_url=source["bookSourceUrl"],
+        health_status="healthy",
+        search_status="ok",
+        toc_status="ok",
+        content_status="ok",
+        route_policy="allow",
+        route_score=100,
+        last_probe_at=now,
+        next_probe_at=now,
+    )
+    run = SourceProbeRun(
+        source_id=source["id"],
+        source_name=source["bookSourceName"],
+        probe_mode="full_chain",
+        keyword="sample",
+        overall_status="healthy",
+        failure_reason="",
+        created_at=now,
+    )
+
+    with pytest.raises(PermissionError, match="lease"):
+        health_repo.record_probe_result(
+            snapshot,
+            run,
+            worker_id="stale-worker",
+            lease_token=lease[source["id"]],
+            source_status="healthy",
+            error_msg="",
+            last_check_time=now,
+        )
+
+
+async def test_source_health_repository_does_not_claim_disabled_source_for_probe(monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-disabled-lease.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    disabled = await source_repo.create_book_source(
+        {"bookSourceName": "禁用源", "bookSourceUrl": "https://disabled-lease.example", "enabled": False},
+        actor_id=1,
+    )
+
+    assert health_repo.claim_probe_source_leases(
+        [disabled["id"]],
+        worker_id="disabled-worker",
+        lease_seconds=60,
+    ) == {}
+
+
+async def test_source_health_repository_rejects_probe_write_after_deadline(monkeypatch, tmp_path):
+    import time
+
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "source-health-write-deadline.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.domain.entities.source_health import SourceHealthSnapshot, SourceProbeRun
+    from app.infrastructure.persistence.factory import build_source_health_repository, build_source_repository
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+
+    bootstrap_sqlite()
+    source_repo = build_source_repository()
+    health_repo = build_source_health_repository()
+    source = await source_repo.create_book_source(
+        {"bookSourceName": "截止源", "bookSourceUrl": "https://deadline.example", "enabled": True},
+        actor_id=1,
+    )
+    lease = health_repo.claim_probe_source_leases(
+        [source["id"]],
+        worker_id="deadline-worker",
+        lease_seconds=60,
+    )
+    now = datetime.now(timezone.utc)
+    snapshot = SourceHealthSnapshot(
+        source_id=source["id"],
+        source_name=source["bookSourceName"],
+        source_url=source["bookSourceUrl"],
+        health_status="healthy",
+        search_status="ok",
+        toc_status="ok",
+        content_status="ok",
+        route_policy="allow",
+        route_score=100,
+        last_probe_at=now,
+        next_probe_at=now,
+    )
+    run = SourceProbeRun(
+        source_id=source["id"],
+        source_name=source["bookSourceName"],
+        probe_mode="full_chain",
+        keyword="sample",
+        overall_status="healthy",
+        failure_reason="",
+        created_at=now,
+    )
+
+    with pytest.raises(TimeoutError, match="deadline"):
+        health_repo.record_probe_result(
+            snapshot,
+            run,
+            worker_id="deadline-worker",
+            lease_token=lease[source["id"]],
+            write_deadline=time.monotonic() - 1,
+            source_status="healthy",
+            error_msg="",
+            last_check_time=now,
+        )
+
+    assert health_repo.get_snapshot(source["id"]) is None
 
 
 async def test_source_health_repository_claims_due_candidates_without_overlap(monkeypatch, tmp_path):

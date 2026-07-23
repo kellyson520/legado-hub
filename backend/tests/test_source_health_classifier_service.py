@@ -338,6 +338,120 @@ def test_classifier_does_not_treat_captcha_word_in_valid_json_as_a_verification_
     assert decision.health_status == "unknown"
 
 
+def test_classifier_keeps_valid_empty_json_chain_inconclusive():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=6,
+        source_name="合法空目录书源",
+        source_url="https://example.test",
+        probe_mode="full_chain",
+        keyword="sample",
+        search=StageProbeResult(stage="search", status="ok", hit_count=1),
+        toc=StageProbeResult(
+            stage="toc",
+            status="failed",
+            detail={
+                "http_status": 200,
+                "response_kind": "json",
+                "parse_status": "empty_result",
+                "empty_response_valid": True,
+            },
+        ),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.failure_reason == "empty_result"
+    assert decision.health_status == "unknown"
+    assert decision.route_policy == "probe_only"
+
+
+def test_classifier_does_not_treat_challenge_brand_word_in_html_metadata_as_waf():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=7,
+        source_name="正文 HTML 书源",
+        source_url="https://example.test",
+        probe_mode="search_only",
+        keyword="sample",
+        search=StageProbeResult(
+            stage="search",
+            status="failed",
+            detail={
+                "http_status": 200,
+                "response_kind": "html",
+                "response_preview": "<div>正文讨论 Cloudflare 这个品牌，但不是验证页面。</div>",
+            },
+        ),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.failure_reason == "keyword_no_result"
+    assert decision.health_status == "unknown"
+
+
+def test_classifier_does_not_treat_verification_phrase_in_html_metadata_as_waf():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=8,
+        source_name="正文短语书源",
+        source_url="https://example.test",
+        probe_mode="search_only",
+        keyword="sample",
+        search=StageProbeResult(
+            stage="search",
+            status="failed",
+            detail={
+                "http_status": 200,
+                "response_kind": "html",
+                "response_preview": "<div>正文台词 verify you are human，但这不是验证页。</div>",
+            },
+        ),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.failure_reason == "keyword_no_result"
+    assert decision.health_status == "unknown"
+
+
+def test_classifier_does_not_treat_just_a_moment_in_html_novel_text_as_waf():
+    from app.application.services.source_health_classifier_service import SourceHealthClassifierService
+
+    evidence = SourceProbeEvidence(
+        source_id=9,
+        source_name="正文短语书源",
+        source_url="https://example.test",
+        probe_mode="search_only",
+        keyword="sample",
+        search=StageProbeResult(
+            stage="search",
+            status="failed",
+            detail={
+                "http_status": 200,
+                "response_kind": "html",
+                "response_preview": "<div>小说正文写道：just a moment... 但这不是验证页。</div>",
+            },
+        ),
+        toc=StageProbeResult(stage="toc", status="skipped"),
+        content=StageProbeResult(stage="content", status="skipped"),
+    )
+
+    decision = SourceHealthClassifierService().classify(evidence)
+
+    assert decision.failure_reason == "keyword_no_result"
+    assert decision.health_status == "unknown"
+
+
 def test_classifier_does_not_call_full_chain_healthy_when_later_stages_were_skipped():
     from app.application.services.source_health_classifier_service import SourceHealthClassifierService
 

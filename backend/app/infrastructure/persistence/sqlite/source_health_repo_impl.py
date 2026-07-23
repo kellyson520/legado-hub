@@ -1,5 +1,7 @@
 import json
+import time
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from sqlalchemy import and_, case, func, or_, text
 
@@ -364,6 +366,9 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
         source_status: str,
         error_msg: str,
         last_check_time: datetime,
+        worker_id: str,
+        lease_token: str,
+        write_deadline: float | None = None,
     ) -> tuple[SourceHealthSnapshot, SourceProbeRun]:
         return self._record_probe_state(
             snapshot,
@@ -371,6 +376,9 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             source_status=source_status,
             error_msg=error_msg,
             last_check_time=last_check_time,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            write_deadline=write_deadline,
         )
 
     def record_probe_result(
@@ -381,6 +389,9 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
         source_status: str,
         error_msg: str,
         last_check_time: datetime,
+        worker_id: str,
+        lease_token: str,
+        write_deadline: float | None = None,
     ) -> tuple[SourceHealthSnapshot, SourceProbeRun]:
         return self._record_probe_state(
             snapshot,
@@ -388,6 +399,9 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             source_status=source_status,
             error_msg=error_msg,
             last_check_time=last_check_time,
+            worker_id=worker_id,
+            lease_token=lease_token,
+            write_deadline=write_deadline,
         )
 
     def _record_probe_state(
@@ -398,9 +412,26 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
         source_status: str,
         error_msg: str,
         last_check_time: datetime,
+        worker_id: str,
+        lease_token: str,
+        write_deadline: float | None = None,
     ) -> tuple[SourceHealthSnapshot, SourceProbeRun]:
         db = self._db()
         try:
+            if write_deadline is not None and time.monotonic() >= write_deadline:
+                raise TimeoutError("probe write deadline exceeded")
+            # Validate and persist under the same SQLite write lock. A worker
+            # whose lease expires while waiting cannot commit a late result
+            # after another worker has reclaimed the source.
+            db.execute(text("BEGIN IMMEDIATE"))
+            if write_deadline is not None and time.monotonic() >= write_deadline:
+                raise TimeoutError("probe write deadline exceeded")
+            self._assert_probe_lease(
+                db,
+                source_id=snapshot.source_id,
+                worker_id=worker_id,
+                lease_token=lease_token,
+            )
             source = db.query(BookSourceModel).filter(BookSourceModel.id == snapshot.source_id).first()
             if source is None:
                 raise ValueError(f"book source not found: {snapshot.source_id}")
@@ -420,6 +451,8 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             source.sourceStatus = source_status
             source.errorMsg = error_msg
             source.lastCheckTime = last_check_time
+            if write_deadline is not None and time.monotonic() >= write_deadline:
+                raise TimeoutError("probe write deadline exceeded")
             db.commit()
             db.refresh(row)
             db.refresh(run_row)
@@ -429,6 +462,27 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
             raise
         finally:
             self._close(db)
+
+    @staticmethod
+    def _assert_probe_lease(db, *, source_id: int, worker_id: str, lease_token: str) -> None:
+        if not str(worker_id or "").strip() or not str(lease_token or "").strip():
+            raise PermissionError("probe lease is required")
+        lease = (
+            db.query(SourceHealthProbeLeaseModel)
+            .filter(
+                SourceHealthProbeLeaseModel.source_id == int(source_id),
+                SourceHealthProbeLeaseModel.worker_id == str(worker_id),
+                SourceHealthProbeLeaseModel.lease_token == str(lease_token),
+            )
+            .first()
+        )
+        if lease is None:
+            raise PermissionError("probe lease is not held by this worker")
+        expires_at = lease.lease_expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at is None or expires_at <= datetime.now(timezone.utc):
+            raise PermissionError("probe lease has expired")
 
     def list_probe_runs(self, source_id: int, limit: int = 20) -> list[SourceProbeRun]:
         db = self._db()
@@ -490,9 +544,24 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
         worker_id: str,
         lease_seconds: int = 1800,
     ) -> list[int]:
+        return list(
+            self.claim_probe_candidate_leases(
+                limit=limit,
+                worker_id=worker_id,
+                lease_seconds=lease_seconds,
+            ).keys()
+        )
+
+    def claim_probe_candidate_leases(
+        self,
+        limit: int | None = 20,
+        *,
+        worker_id: str,
+        lease_seconds: int = 1800,
+    ) -> dict[int, str]:
         normalized_limit = None if limit is None else max(int(limit), 0)
         if normalized_limit == 0:
-            return []
+            return {}
         if not str(worker_id or "").strip():
             raise ValueError("worker_id is required")
 
@@ -500,79 +569,153 @@ class SQLiteSourceHealthRepository(SourceHealthRepository):
         expires_at = now + timedelta(seconds=max(int(lease_seconds), 1))
         db = self._db()
         try:
-            # SQLite has no row-level SELECT FOR UPDATE.  An immediate write
-            # transaction makes candidate selection and lease insertion one
-            # compare-and-set operation across scheduler/manual callers.
             db.execute(text("BEGIN IMMEDIATE"))
-            db.query(SourceHealthProbeLeaseModel).filter(
-                SourceHealthProbeLeaseModel.lease_expires_at <= now,
-            ).delete(synchronize_session=False)
-
-            unprobed_first = case(
-                (SourceHealthSnapshotModel.source_id.is_(None), 0),
-                else_=1,
-            )
-            no_probe_time_first = case(
-                (SourceHealthSnapshotModel.last_probe_at.is_(None), 0),
-                else_=1,
-            )
-            active_lease = and_(
-                SourceHealthProbeLeaseModel.source_id == BookSourceModel.id,
-                SourceHealthProbeLeaseModel.lease_expires_at > now,
-            )
-            query = (
-                db.query(BookSourceModel.id)
-                .outerjoin(
-                    SourceHealthSnapshotModel,
-                    SourceHealthSnapshotModel.source_id == BookSourceModel.id,
-                )
-                .outerjoin(SourceHealthProbeLeaseModel, active_lease)
-                .filter(BookSourceModel.enabled == True)
-                .filter(SourceHealthProbeLeaseModel.source_id.is_(None))
-                .filter(
-                    or_(
-                        SourceHealthSnapshotModel.source_id.is_(None),
-                        SourceHealthSnapshotModel.next_probe_at.is_(None),
-                        SourceHealthSnapshotModel.next_probe_at <= now,
-                    )
-                )
-                .order_by(
-                    unprobed_first.asc(),
-                    no_probe_time_first.asc(),
-                    SourceHealthSnapshotModel.last_probe_at.asc(),
-                    BookSourceModel.id.asc(),
-                )
-            )
-            if normalized_limit is not None:
-                query = query.limit(normalized_limit)
-            source_ids = [int(row[0]) for row in query.all()]
+            self._delete_expired_leases(db, now)
+            source_ids = self._select_due_source_ids(db, now, limit=normalized_limit)
+            leases = {}
             for source_id in source_ids:
+                token = uuid4().hex
+                leases[source_id] = token
                 db.add(
                     SourceHealthProbeLeaseModel(
                         source_id=source_id,
                         worker_id=str(worker_id),
+                        lease_token=token,
                         claimed_at=now,
                         lease_expires_at=expires_at,
                     )
                 )
             db.commit()
-            return source_ids
+            return leases
         except Exception:
             db.rollback()
             raise
         finally:
             self._close(db)
 
-    def release_probe_claims(self, source_ids: list[int], *, worker_id: str) -> None:
+    def claim_probe_source_leases(
+        self,
+        source_ids: list[int],
+        *,
+        worker_id: str,
+        lease_seconds: int = 1800,
+    ) -> dict[int, str]:
+        normalized_ids = list(dict.fromkeys(int(source_id) for source_id in source_ids or []))
+        if not normalized_ids:
+            return {}
+        if not str(worker_id or "").strip():
+            raise ValueError("worker_id is required")
+
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=max(int(lease_seconds), 1))
+        db = self._db()
+        try:
+            db.execute(text("BEGIN IMMEDIATE"))
+            self._delete_expired_leases(db, now)
+            active_lease = and_(
+                SourceHealthProbeLeaseModel.source_id == BookSourceModel.id,
+                SourceHealthProbeLeaseModel.lease_expires_at > now,
+            )
+            rows = (
+                db.query(BookSourceModel.id)
+                .outerjoin(SourceHealthProbeLeaseModel, active_lease)
+                .filter(BookSourceModel.id.in_(normalized_ids))
+                .filter(BookSourceModel.enabled == True)
+                .filter(SourceHealthProbeLeaseModel.source_id.is_(None))
+                .all()
+            )
+            available = {int(row[0]) for row in rows}
+            leases = {}
+            for source_id in normalized_ids:
+                if source_id not in available:
+                    continue
+                token = uuid4().hex
+                leases[source_id] = token
+                db.add(
+                    SourceHealthProbeLeaseModel(
+                        source_id=source_id,
+                        worker_id=str(worker_id),
+                        lease_token=token,
+                        claimed_at=now,
+                        lease_expires_at=expires_at,
+                    )
+                )
+            db.commit()
+            return leases
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            self._close(db)
+
+    @staticmethod
+    def _delete_expired_leases(db, now: datetime) -> None:
+        db.query(SourceHealthProbeLeaseModel).filter(
+            SourceHealthProbeLeaseModel.lease_expires_at <= now,
+        ).delete(synchronize_session=False)
+
+    @staticmethod
+    def _select_due_source_ids(db, now: datetime, *, limit: int | None) -> list[int]:
+        unprobed_first = case(
+            (SourceHealthSnapshotModel.source_id.is_(None), 0),
+            else_=1,
+        )
+        no_probe_time_first = case(
+            (SourceHealthSnapshotModel.last_probe_at.is_(None), 0),
+            else_=1,
+        )
+        active_lease = and_(
+            SourceHealthProbeLeaseModel.source_id == BookSourceModel.id,
+            SourceHealthProbeLeaseModel.lease_expires_at > now,
+        )
+        query = (
+            db.query(BookSourceModel.id)
+            .outerjoin(
+                SourceHealthSnapshotModel,
+                SourceHealthSnapshotModel.source_id == BookSourceModel.id,
+            )
+            .outerjoin(SourceHealthProbeLeaseModel, active_lease)
+            .filter(BookSourceModel.enabled == True)
+            .filter(SourceHealthProbeLeaseModel.source_id.is_(None))
+            .filter(
+                or_(
+                    SourceHealthSnapshotModel.source_id.is_(None),
+                    SourceHealthSnapshotModel.next_probe_at.is_(None),
+                    SourceHealthSnapshotModel.next_probe_at <= now,
+                )
+            )
+            .order_by(
+                unprobed_first.asc(),
+                no_probe_time_first.asc(),
+                SourceHealthSnapshotModel.last_probe_at.asc(),
+                BookSourceModel.id.asc(),
+            )
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        return [int(row[0]) for row in query.all()]
+
+    def release_probe_claims(
+        self,
+        source_ids: list[int],
+        *,
+        worker_id: str,
+        lease_tokens: dict[int, str] | None = None,
+    ) -> None:
         normalized_ids = [int(source_id) for source_id in source_ids or []]
         if not normalized_ids:
             return
         db = self._db()
         try:
-            db.query(SourceHealthProbeLeaseModel).filter(
-                SourceHealthProbeLeaseModel.source_id.in_(normalized_ids),
-                SourceHealthProbeLeaseModel.worker_id == str(worker_id),
-            ).delete(synchronize_session=False)
+            for source_id in normalized_ids:
+                query = db.query(SourceHealthProbeLeaseModel).filter(
+                    SourceHealthProbeLeaseModel.source_id == source_id,
+                    SourceHealthProbeLeaseModel.worker_id == str(worker_id),
+                )
+                token = (lease_tokens or {}).get(source_id)
+                if token:
+                    query = query.filter(SourceHealthProbeLeaseModel.lease_token == str(token))
+                query.delete(synchronize_session=False)
             db.commit()
         except Exception:
             db.rollback()

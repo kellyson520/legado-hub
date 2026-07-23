@@ -469,17 +469,25 @@ async def run_smart_source_health_probe_job(
     services = [service]
     claim_worker_id = f"source-health-{uuid4().hex}"
     claimed_source_ids: list[int] = []
+    claimed_lease_tokens: dict[int, str] = {}
 
     def acquire_candidate_ids(limit: int | None, lease_seconds: int) -> list[int]:
-        claim = getattr(service, "claim_probe_candidate_ids", None)
-        if callable(claim):
-            source_ids = [int(source_id) for source_id in claim(
+        claim_leases = getattr(service, "claim_probe_candidate_leases", None)
+        if callable(claim_leases):
+            claimed = claim_leases(
                 limit=limit,
                 worker_id=claim_worker_id,
                 lease_seconds=lease_seconds,
-            )]
-            claimed_source_ids.extend(source_ids)
-            return source_ids
+            )
+            if claimed is not None:
+                leases = {
+                    int(source_id): str(token)
+                    for source_id, token in claimed.items()
+                }
+                source_ids = list(leases)
+                claimed_lease_tokens.update(leases)
+                claimed_source_ids.extend(source_ids)
+                return source_ids
         return [int(source_id) for source_id in service.list_probe_candidate_ids(limit=limit)]
 
     try:
@@ -498,7 +506,7 @@ async def run_smart_source_health_probe_job(
             }
 
         if timeout_seconds is None:
-            source_ids = acquire_candidate_ids(batch_size, lease_seconds=300)
+            source_ids = acquire_candidate_ids(batch_size, lease_seconds=1800)
             if not source_ids:
                 return {
                     "results": [],
@@ -510,10 +518,20 @@ async def run_smart_source_health_probe_job(
                     "keyword_samples": keywords,
                     "source_ids": [],
                 }
+            probe_options = {}
+            if claimed_lease_tokens:
+                probe_options = {
+                    "lease_worker_id": claim_worker_id,
+                    "lease_tokens": {
+                        source_id: claimed_lease_tokens[source_id] for source_id in source_ids
+                    },
+                    "lease_seconds": 1800,
+                }
             result = await service.probe_book_sources(
                 source_ids,
                 keyword_samples=keywords,
                 probe_mode=probe_mode,
+                **probe_options,
             )
             return {**result, "keyword_samples": keywords, "source_ids": source_ids}
 
@@ -560,11 +578,21 @@ async def run_smart_source_health_probe_job(
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return worker_results
+                probe_options = {}
+                if claimed_lease_tokens:
+                    probe_options = {
+                        "lease_worker_id": claim_worker_id,
+                        "lease_tokens": {
+                            source_id: claimed_lease_tokens[source_id] for source_id in batch_ids
+                        },
+                        "lease_seconds": max(int(remaining) + 60, 60),
+                    }
                 batch_result = await worker_service.probe_book_sources(
                     batch_ids,
                     keyword_samples=keywords,
                     probe_mode=probe_mode,
                     timeout_seconds=remaining,
+                    **probe_options,
                 )
                 worker_results.append(batch_result)
                 if batch_result.get("deferred"):
@@ -641,7 +669,14 @@ async def run_smart_source_health_probe_job(
         release = getattr(service, "release_probe_claims", None)
         if claimed_source_ids and callable(release):
             try:
-                release(claimed_source_ids, worker_id=claim_worker_id)
+                if claimed_lease_tokens:
+                    release(
+                        claimed_source_ids,
+                        worker_id=claim_worker_id,
+                        lease_tokens=claimed_lease_tokens,
+                    )
+                else:
+                    release(claimed_source_ids, worker_id=claim_worker_id)
             except Exception as exc:
                 logger.warning(
                     "source health probe lease release failed",
