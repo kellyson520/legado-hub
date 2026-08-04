@@ -86,9 +86,9 @@ class NativeRuntimeClient:
                 deadline = time.monotonic() + (timeout if timeout is not None else self.response_timeout)
                 while True:
                     remaining = deadline - time.monotonic()
-                    raw = self._readline(process, remaining)
+                    raw, reached_eof = self._readline(process, remaining)
                     if raw is None:
-                        process_was_dead = process.poll() is not None
+                        process_was_dead = reached_eof or process.poll() is not None
                         self._restart_after_failure()
                         if _retry_after_eof and process_was_dead:
                             return self.call(operation, payload, timeout, _retry_after_eof=False)
@@ -206,20 +206,20 @@ class NativeRuntimeClient:
         self._stderr_thread.start()
         return process
 
-    def _readline(self, process: subprocess.Popen[bytes], timeout: float) -> bytes | None:
+    def _readline(self, process: subprocess.Popen[bytes], timeout: float) -> tuple[bytes | None, bool]:
         assert process.stdout is not None
         deadline = time.monotonic() + max(timeout, 0.01)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                return None
+                return None, False
             ready, _, _ = select.select([process.stdout], [], [], remaining)
             if not ready:
-                return None
+                return None, False
             line = process.stdout.readline()
             if not line:
-                return None
-            return line.rstrip(b"\r\n")
+                return None, True
+            return line.rstrip(b"\r\n"), False
 
     def _drain_stderr(self, process: subprocess.Popen[bytes]) -> None:
         if process.stderr is None:

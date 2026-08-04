@@ -31,6 +31,34 @@ def test_client_restarts_after_eof(fake_runtime_command):
         client.close()
 
 
+def test_client_restarts_when_runtime_closes_stdout_before_exit(tmp_path):
+    script = tmp_path / "eof_runtime.py"
+    marker = tmp_path / "ready"
+    script.write_text(
+        "import json, os, pathlib, sys, time\n"
+        "marker = pathlib.Path(sys.argv[1])\n"
+        "if not marker.exists():\n"
+        "    marker.touch()\n"
+        "    os.close(1)\n"
+        "    time.sleep(2)\n"
+        "else:\n"
+        "    for line in sys.stdin:\n"
+        "        request = json.loads(line)\n"
+        "        print(json.dumps({'id': request['id'], 'success': True, 'value': 'pong', 'value_type': 'string'}), flush=True)\n",
+        encoding="utf-8",
+    )
+    client = NativeRuntimeClient(
+        command=[sys.executable, "-u", str(script), str(marker)],
+        response_timeout=0.5,
+    )
+    try:
+        result = client.ping()
+        assert result.success
+        assert client.restart_count == 1
+    finally:
+        client.close()
+
+
 def test_client_rejects_mismatched_response_id(tmp_path):
     script = tmp_path / "bad_runtime.py"
     script.write_text(
