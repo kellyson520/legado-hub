@@ -150,7 +150,7 @@ def test_interactive_browser_state_is_a_string_enum_on_python_310():
 
 - [x] **Step 1: Update the current architecture/audit status with verified behavior and explicit optional-provider limitations; do not edit `/上传/novel-agent-audit-checklist.md`.**
 - [x] **Step 2: Run Python compilation, focused audit tests, the complete backend suite, frontend tests, frontend build, OpenHarness schema validation, and `git diff --check`.**
-- [ ] **Step 3: Review the diff for secrets, untracked files, user logs, generated artifacts, and scope regressions.**
+- [x] **Step 3: Review the diff for secrets, untracked files, user logs, generated artifacts, and scope regressions.**
 - [ ] **Step 4: Commit the repair in focused commits, re-run the final verification after the last commit, and push the resulting commits to `origin/main` only after confirming the remote branch and local HEAD.**
 
 ## Verification Commands
