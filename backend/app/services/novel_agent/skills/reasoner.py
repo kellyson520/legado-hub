@@ -13,6 +13,7 @@ import re
 from typing import List, Dict, Any, Tuple
 from collections import defaultdict
 from ..registry import BaseSkill, ToolDefinition
+from ._provider import complete_text
 
 
 class ReasonerSkill(BaseSkill):
@@ -243,38 +244,62 @@ class ReasonerSkill(BaseSkill):
 
     def _plot_prediction(self, current_chapter: int, steps: int) -> Dict:
         if not self.store:
-            return {'error': 'No data store', 'tool': 'plot_prediction'}
+            return {
+                'tool': 'plot_prediction',
+                'predictions': [],
+                'available': False,
+                'status': 'unavailable',
+                'error_code': 'novel_data_unavailable',
+            }
 
         total = len(self.store.chapters)
         current = min(current_chapter, total) if current_chapter > 0 else total // 2
 
-        predictions = [
-            {
-                'step': 1,
-                'prediction': '主角团队将遭遇更大的危机',
-                'basis': '根据剧情节奏，当前阶段后通常会有升级的冲突',
-                'probability': 0.8,
-            },
-            {
-                'step': 2,
-                'prediction': '某个关键人物的秘密将被揭露',
-                'basis': '前文已有多处伏笔暗示人物背景不简单',
-                'probability': 0.7,
-            },
-            {
-                'step': 3,
-                'prediction': '主角团将迎来战力升级',
-                'basis': '遇到更强敌人之前通常会有实力提升的情节',
-                'probability': 0.75,
-            },
-        ]
+        provider_text = complete_text(
+            self.provider,
+            f"请根据小说当前第{current}章（共{total}章）的上下文预测后续{steps}步发展，给出证据和概率。",
+            system="你是小说推理助手。不要编造未提供的事实，只输出有证据的预测。",
+        )
+        if provider_text:
+            return {
+                'tool': 'plot_prediction',
+                'current_chapter': current,
+                'total_chapters': total,
+                'predictions': [
+                    {
+                        'step': 1,
+                        'prediction': provider_text,
+                        'basis': 'configured_provider',
+                        'probability': None,
+                    }
+                ],
+                'generated': provider_text,
+                'available': True,
+                'status': 'completed',
+                'mode': 'provider',
+            }
+
+        predictions = []
+        for step, chapter in enumerate(self.store.chapters[current:current + max(0, steps)], 1):
+            evidence = (chapter.content or "").strip().replace("\n", " ")[:240]
+            predictions.append(
+                {
+                    'step': step,
+                    'prediction': f"第{chapter.chapter}章将围绕《{chapter.title or '未命名章节'}》展开",
+                    'basis': f"后续章节原文证据：{evidence}" if evidence else '后续章节存在但没有可用正文',
+                    'probability': 0.5 if evidence else 0.0,
+                }
+            )
 
         return {
             'tool': 'plot_prediction',
             'current_chapter': current,
             'total_chapters': total,
             'predictions': predictions[:steps],
-            'note': '基于通用叙事模式的预测，配置 LLM 后可进行更精准的推演',
+            'available': False,
+            'status': 'unavailable',
+            'error_code': 'provider_unavailable',
+            'note': '未配置可用 Provider；这里只返回后续章节的原文证据，不代表模型预测',
         }
 
     def _foreshadow(self, keyword: str, limit: int) -> Dict:
@@ -328,38 +353,72 @@ class ReasonerSkill(BaseSkill):
         }
 
     def _ending_analysis(self, num_endings: int) -> Dict:
-        endings = [
-            {
-                'type': '圆满结局',
-                'probability': 0.4,
-                'description': '主角团队战胜最终BOSS，世界恢复和平，主要角色各得其所',
-                'supporting_evidence': ['主角光环', '正义终将战胜邪恶的叙事传统'],
-            },
-            {
-                'type': '悲壮结局',
-                'probability': 0.3,
-                'description': '虽然取得了胜利，但付出了巨大牺牲，重要角色离去',
-                'supporting_evidence': ['故事氛围偏凝重', '已有角色牺牲的先例'],
-            },
-            {
-                'type': '开放式结局',
-                'probability': 0.2,
-                'description': '故事没有明确的结局，留下悬念和想象空间',
-                'supporting_evidence': ['悬疑元素较多', '适合续作/番外'],
-            },
-            {
-                'type': '反转结局',
-                'probability': 0.1,
-                'description': '最终真相出人意料，之前的认知被彻底颠覆',
-                'supporting_evidence': ['伏笔众多', '真相层层揭开的叙事结构'],
-            },
+        if not self.store:
+            return {
+                'tool': 'ending_analysis',
+                'endings': [],
+                'total_types': 0,
+                'available': False,
+                'status': 'unavailable',
+                'error_code': 'novel_data_unavailable',
+            }
+
+        recent_text = "\n".join(ch.content or "" for ch in self.store.chapters[-5:])
+        provider_text = complete_text(
+            self.provider,
+            f"请根据小说最后几章分析最多{num_endings}种可能结局，并逐条引用证据。\n{recent_text[:6000]}",
+            system="你是小说推理助手。结论必须区分原文证据和推测。",
+        )
+        if provider_text:
+            return {
+                'tool': 'ending_analysis',
+                'endings': [{'type': 'provider_analysis', 'description': provider_text, 'supporting_evidence': []}],
+                'total_types': 1,
+                'generated': provider_text,
+                'available': True,
+                'status': 'completed',
+                'mode': 'provider',
+            }
+
+        signal_groups = [
+            ('圆满结局倾向', ('胜利', '和平', '团聚', '归来', '重建')),
+            ('悲剧结局倾向', ('死亡', '牺牲', '诀别', '毁灭', '永远离开')),
+            ('开放结局倾向', ('谜团', '未知', '等待', '未完', '新的旅程')),
+            ('反转结局倾向', ('真相', '阴谋', '原来', '竟然', '身份')),
         ]
+        endings = []
+        for ending_type, terms in signal_groups:
+            evidence = [
+                sentence.strip()[:180]
+                for sentence in re.split(r'[。！？\n]', recent_text)
+                if sentence.strip() and any(term in sentence for term in terms)
+            ][:3]
+            if evidence:
+                endings.append(
+                    {
+                        'type': ending_type,
+                        'probability': round(min(0.9, 0.3 + len(evidence) * 0.1), 2),
+                        'description': '根据末章文本信号形成的待验证倾向',
+                        'supporting_evidence': evidence,
+                    }
+                )
+        endings = endings[:max(0, int(num_endings))]
+        if not endings:
+            endings = [{
+                'type': 'insufficient_evidence',
+                'probability': 0.0,
+                'description': '末章没有足够的结局信号，无法进行可靠预测',
+                'supporting_evidence': [],
+            }]
 
         return {
             'tool': 'ending_analysis',
             'endings': endings[:num_endings],
             'total_types': len(endings),
-            'note': '基于叙事模式的通用分析，配置 LLM 后可进行更精准的结局推演',
+            'available': False,
+            'status': 'unavailable',
+            'error_code': 'provider_unavailable',
+            'note': '未配置可用 Provider；结局候选仅由末章文本信号生成，不代表模型结论',
         }
 
     def _logic_check(self, char_name: str, detail_level: str) -> Dict:

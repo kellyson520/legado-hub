@@ -6,6 +6,9 @@
 """
 
 import abc
+import asyncio
+import fnmatch
+import time
 from typing import List, Dict, Any, Callable, Optional
 from dataclasses import dataclass, field
 
@@ -28,10 +31,17 @@ class BaseSkill(abc.ABC):
 
     name: str = 'base'
 
-    def __init__(self, store=None, memory=None, config=None):
+    def __init__(self, store=None, memory=None, config=None, provider=None):
         self.store = store
         self.memory = memory
         self.config = config
+        configured_provider = None
+        getter = getattr(config, "get", None)
+        if callable(getter):
+            configured_provider = getter("llm_provider", None) or getter("provider", None)
+        elif isinstance(config, dict):
+            configured_provider = config.get("llm_provider") or config.get("provider")
+        self.provider = provider or configured_provider
 
     @abc.abstractmethod
     def get_tools(self) -> List[ToolDefinition]:
@@ -93,6 +103,56 @@ class ToolRegistry:
             return tools_config.get(tool_name, True)
         return True
 
+    @property
+    def tools(self) -> Dict[str, Dict]:
+        """Read-only-compatible view used by legacy runtimes."""
+        return self._tools
+
+    def permission_decision(self, tool_name: str) -> str:
+        """Return allow/ask/deny from the configured permission policy."""
+        permissions = self.config.get("permissions", {}) if isinstance(self.config, dict) else None
+        if permissions is None and self.config is not None:
+            getter = getattr(self.config, "get", None)
+            permissions = getter("permissions", {}) if callable(getter) else {}
+        permissions = permissions if isinstance(permissions, dict) else {}
+
+        def matches(patterns) -> bool:
+            return any(fnmatch.fnmatch(tool_name, str(pattern)) for pattern in (patterns or []))
+
+        if matches(permissions.get("deny")):
+            return "deny"
+        if matches(permissions.get("allow")):
+            return "allow"
+        if matches(permissions.get("ask")):
+            return "ask"
+        mode = str(permissions.get("mode", "allow")).lower()
+        return mode if mode in {"allow", "ask", "deny"} else "allow"
+
+    def _validate_arguments(self, tool_name: str, params: Dict[str, Any]) -> None:
+        definition = self.get_tool_def(tool_name)
+        if definition is None:
+            return
+        schema = definition.parameters or {}
+        for key, field in schema.items():
+            if not isinstance(field, dict):
+                continue
+            if field.get("required") and key not in params:
+                raise ValueError(f"{key} is required")
+            if key not in params:
+                continue
+            expected = str(field.get("type", "")).lower()
+            value = params[key]
+            if expected in {"int", "integer"} and (not isinstance(value, int) or isinstance(value, bool)):
+                raise TypeError(f"{key} must be an integer")
+            if expected in {"float", "number"} and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+                raise TypeError(f"{key} must be a number")
+            if expected in {"str", "string"} and not isinstance(value, str):
+                raise TypeError(f"{key} must be a string")
+            if field.get("minimum") is not None and value < field["minimum"]:
+                raise ValueError(f"{key} is below the minimum")
+            if field.get("maximum") is not None and value > field["maximum"]:
+                raise ValueError(f"{key} is above the maximum")
+
     def unregister_skill(self, skill_name: str):
         """注销一个技能及其工具"""
         if skill_name in self._skills:
@@ -127,7 +187,6 @@ class ToolRegistry:
         Returns:
             工具执行结果字典
         """
-        import time
         start = time.time()
 
         if tool_name not in self._tools:
@@ -137,12 +196,34 @@ class ToolRegistry:
             return result
 
         registered = self._tools[tool_name]
+        confirmed = bool(params.pop("_confirmed", False))
+        decision = self.permission_decision(tool_name)
+        if decision == "deny":
+            result = {"error": "permission denied", "tool": tool_name, "authorization": "deny"}
+            if self.memory:
+                self.memory.log_tool_call(tool_name, params, result, False, 0)
+            return result
+        if decision == "ask" and not confirmed:
+            result = {"error": "confirmation required", "tool": tool_name, "authorization": "ask"}
+            if self.memory:
+                self.memory.log_tool_call(tool_name, params, result, False, 0)
+            return result
+        try:
+            self._validate_arguments(tool_name, params)
+        except (TypeError, ValueError) as exc:
+            result = {"error": str(exc), "tool": tool_name, "error_code": exc.__class__.__name__}
+            if self.memory:
+                self.memory.log_tool_call(tool_name, params, result, False, 0)
+            return result
         external_handler = registered.get('handler')
         if external_handler is not None:
             try:
                 result = external_handler(**params)
             except TypeError:
                 result = external_handler(params)
+            duration_ms = (time.time() - start) * 1000
+            if self.memory:
+                self.memory.log_tool_call(tool_name, params, result, 'error' not in result, duration_ms)
             return result
 
         skill = registered['skill']
@@ -159,6 +240,23 @@ class ToolRegistry:
             self.memory.log_audit('tool_call', tool_name, params, str(result)[:200])
 
         return result
+
+    async def call_async(self, tool_name: str, *, timeout: float = 30.0, retries: int = 0, **params) -> Dict[str, Any]:
+        """Run synchronous skill handlers off-loop with bounded timeout/retry."""
+        last = None
+        for attempt in range(max(0, int(retries)) + 1):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(self.call, tool_name, **params),
+                    timeout=max(0.1, float(timeout)),
+                )
+            except asyncio.TimeoutError:
+                last = {"error": "tool execution timed out", "tool": tool_name, "error_code": "timeout"}
+            except Exception as exc:
+                last = {"error": str(exc), "tool": tool_name, "error_code": exc.__class__.__name__}
+            if attempt < max(0, int(retries)):
+                await asyncio.sleep(min(2.0, 0.1 * (2 ** attempt)))
+        return last or {"error": "tool execution failed", "tool": tool_name}
 
     @property
     def skills(self) -> List[str]:

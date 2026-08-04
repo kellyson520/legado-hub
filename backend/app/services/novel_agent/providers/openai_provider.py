@@ -12,7 +12,7 @@ import httpx
 
 from . import (
     BaseProvider, register_provider, ProviderConfig,
-    Message, ToolSchema, ToolCall, StreamChunk, Usage,
+    Message, ToolSchema, ToolCall, StreamChunk, Usage, ProviderError, ProviderHTTPError, ProviderStreamError,
 )
 
 
@@ -58,7 +58,11 @@ class OpenAIProvider(BaseProvider):
             ) as response:
                 if response.status_code != 200:
                     error_text = await response.aread()
-                    yield StreamChunk(error=f"HTTP {response.status_code}: {error_text}")
+                    error = ProviderHTTPError(
+                        response.status_code,
+                        f"HTTP {response.status_code}: {error_text.decode('utf-8', errors='replace')}",
+                    )
+                    yield StreamChunk(error=str(error), exception=error)
                     return
 
                 async for line in response.aiter_lines():
@@ -111,7 +115,8 @@ class OpenAIProvider(BaseProvider):
                         yield StreamChunk(usage=self._parse_usage(usage))
 
         except Exception as e:
-            yield StreamChunk(error=str(e))
+            error = e if isinstance(e, ProviderError) else ProviderStreamError(str(e), cause=e)
+            yield StreamChunk(error=str(error), exception=error)
 
     async def complete(self, messages: List[Message], system: str = "",
                        tools: Optional[List[ToolSchema]] = None,
@@ -122,7 +127,9 @@ class OpenAIProvider(BaseProvider):
 
         async for chunk in self.stream(messages, system, tools, temperature, max_tokens):
             if chunk.error:
-                raise Exception(chunk.error)
+                if chunk.exception is not None:
+                    raise chunk.exception
+                raise ProviderStreamError(chunk.error)
             if chunk.text:
                 full_text += chunk.text
             if chunk.tool_calls:

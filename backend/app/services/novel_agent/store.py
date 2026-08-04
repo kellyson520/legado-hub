@@ -17,6 +17,10 @@ from collections import defaultdict, Counter
 from dataclasses import dataclass, field
 
 
+class NovelDataStoreError(ValueError):
+    """Raised when configured novel data cannot be loaded safely."""
+
+
 @dataclass
 class ChapterData:
     chapter: str = ''
@@ -64,25 +68,40 @@ class NovelDataStore:
             try:
                 with open(f, 'r', encoding='utf-8') as fp:
                     data = json.load(fp)
-                if isinstance(data, list):
-                    for i, ch in enumerate(data):
-                        self.chapters.append(ChapterData(
-                            chapter=str(ch.get('chapter', i+1)),
-                            title=ch.get('title', f'第{i+1}章'),
-                            content=ch.get('content', ''),
-                            index=len(self.chapters),
-                        ))
-            except Exception:
-                pass
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise NovelDataStoreError(f'failed to load chapter data {f}: {exc}') from exc
+
+            if not isinstance(data, list):
+                raise NovelDataStoreError(f'chapter data file {f} must contain a JSON array')
+            for i, ch in enumerate(data):
+                if not isinstance(ch, dict):
+                    raise NovelDataStoreError(
+                        f'chapter data file {f} contains a non-object chapter at index {i}'
+                    )
+                self.chapters.append(ChapterData(
+                    chapter=str(ch.get('chapter', i+1)),
+                    title=ch.get('title', f'第{i+1}章'),
+                    content=ch.get('content', ''),
+                    index=len(self.chapters),
+                ))
 
         graph_file = self.config.get('novel.graph_file', 'data/graph.json')
         try:
             with open(graph_file, 'r', encoding='utf-8') as f:
                 self.graph = json.load(f)
-        except Exception:
+        except FileNotFoundError:
             self.graph = {'relations': [], 'communities': []}
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise NovelDataStoreError(f'failed to load graph data {graph_file}: {exc}') from exc
+
+        if not isinstance(self.graph, dict):
+            raise NovelDataStoreError(f'graph data file {graph_file} must contain a JSON object')
 
         for ci in self.graph.get('communities', []):
+            if not isinstance(ci, dict):
+                raise NovelDataStoreError(
+                    f'graph data file {graph_file} contains a non-object community'
+                )
             self.all_chars.update(ci.get('members', []))
 
         self._build_indexes()

@@ -77,9 +77,11 @@ class CollectorSkill(BaseSkill):
         if not self.store or not self.store.chapters:
             return {
                 'tool': 'collect_chapters',
-                'status': 'mock',
+                'status': 'unavailable',
+                'available': False,
+                'error_code': 'collector_unavailable',
                 'book_url': book_url,
-                'message': '采集功能需要配置实际书源，当前使用本地已加载数据',
+                'message': '采集功能需要配置实际书源或 source reader；当前没有可执行的采集能力',
                 'chapters_available': len(self.store.chapters) if self.store else 0,
             }
 

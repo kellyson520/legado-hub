@@ -1,5 +1,9 @@
+import asyncio
+import random
 import re
+from collections import defaultdict
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any, Protocol
 
 from app.application.ports.provider import (
@@ -24,6 +28,80 @@ class ProviderInvocationError(RuntimeError):
         self.failures = failures
 
 
+class ProviderQuotaExceeded(RuntimeError):
+    code = "provider_quota_exceeded"
+
+
+class RepositoryProviderQuotaLimiter:
+    """Enforce repository-backed daily cost policies in the process boundary."""
+
+    def __init__(self, provider_repo, *, clock=None):
+        self._provider_repo = provider_repo
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._usage: dict[tuple[str, str, str], float] = defaultdict(float)
+        self._reservations: dict[tuple[str, str, str], int] = defaultdict(int)
+        self._lock = Lock()
+
+    def assert_allowed(self, quota_scope: tuple[str, str]) -> None:
+        policy = self._policy(quota_scope)
+        if policy is None:
+            return
+        limit = float(getattr(policy, "daily_cost_limit", 0.0) or 0.0)
+        if limit <= 0:
+            return
+        key = (*quota_scope, self._date_key())
+        with self._lock:
+            current = self._usage[key]
+            if current >= limit or self._reservations[key] > 0:
+                raise ProviderQuotaExceeded("provider daily cost quota exceeded")
+            self._reservations[key] += 1
+
+    def record_usage(self, quota_scope: tuple[str, str], cost: float = 0.0) -> None:
+        amount = max(0.0, float(cost or 0.0))
+        if amount <= 0:
+            return
+        policy = self._policy(quota_scope)
+        if policy is None:
+            return
+        key = (*quota_scope, self._date_key())
+        with self._lock:
+            self._usage[key] += amount
+
+    def release_reservation(self, quota_scope: tuple[str, str]) -> None:
+        """Release the in-flight request slot after success or failure."""
+
+        key = (*quota_scope, self._date_key())
+        with self._lock:
+            if self._reservations[key] > 0:
+                self._reservations[key] -= 1
+
+    def _policy(self, quota_scope: tuple[str, str]):
+        try:
+            policies = self._provider_repo.list_quota_policies()
+        except Exception as exc:
+            raise RuntimeError("provider quota policy unavailable") from exc
+        scope_type, scope_id = quota_scope
+        exact = next(
+            (
+                item for item in policies or []
+                if str(getattr(item, "scope_type", "")) == str(scope_type)
+                and str(getattr(item, "scope_id", "")) == str(scope_id)
+            ),
+            None,
+        )
+        return exact or next(
+            (
+                item for item in policies or []
+                if str(getattr(item, "scope_type", "")) in {"global", "*"}
+                and str(getattr(item, "scope_id", "")) in {"", "*"}
+            ),
+            None,
+        )
+
+    def _date_key(self) -> str:
+        return self._clock().date().isoformat()
+
+
 class ProviderPlatformService:
     def __init__(
         self,
@@ -31,11 +109,20 @@ class ProviderPlatformService:
         quota_limiter: ProviderQuotaLimiter,
         provider_repo=None,
         provider_factory=None,
+        *,
+        max_retries: int = 2,
+        retry_base_delay: float = 0.25,
+        retry_max_delay: float = 8.0,
+        retry_jitter: float = 0.1,
     ):
         self._registry = registry
         self._quota_limiter = quota_limiter
         self._provider_repo = provider_repo
         self._provider_factory = provider_factory
+        self._max_retries = max(0, min(int(max_retries), 5))
+        self._retry_base_delay = max(0.0, float(retry_base_delay))
+        self._retry_max_delay = max(self._retry_base_delay, float(retry_max_delay))
+        self._retry_jitter = max(0.0, min(float(retry_jitter), 1.0))
 
     async def invoke_chat(
         self,
@@ -45,32 +132,42 @@ class ProviderPlatformService:
         quota_scope: tuple[str, str],
     ) -> dict[str, Any]:
         self._quota_limiter.assert_allowed(quota_scope)
-        selections = self._registry.resolve_group(provider_group)
-        failures: list[str] = []
-        requested_model = (model or "").strip()
-        use_route_model = not requested_model
+        try:
+            selections = self._registry.resolve_group(provider_group)
+            failures: list[str] = []
+            requested_model = (model or "").strip()
+            use_route_model = not requested_model
 
-        for attempt_count, selection in enumerate(selections, start=1):
-            candidate_model = selection.model if use_route_model else requested_model
-            if not candidate_model:
-                raise LookupError(f"no model configured for provider route group '{provider_group}'")
-            try:
-                result = await selection.provider.invoke_chat(model=candidate_model, payload=payload)
-                return self._normalize_result(
-                    result=result,
-                    provider=selection.provider,
-                    provider_group=provider_group,
-                    model=candidate_model,
-                    attempt_count=attempt_count,
-                )
-            except Exception as exc:
-                if self._is_non_retryable_request_error(exc):
-                    raise
-                failures.append(self._sanitize_provider_failure(selection.provider.name, exc))
-                if requested_model and self._is_model_not_found_error(exc):
-                    use_route_model = True
+            for attempt_count, selection in enumerate(selections, start=1):
+                candidate_model = selection.model if use_route_model else requested_model
+                if not candidate_model:
+                    raise LookupError(f"no model configured for provider route group '{provider_group}'")
+                for retry_index in range(self._max_retries + 1):
+                    try:
+                        result = await selection.provider.invoke_chat(model=candidate_model, payload=payload)
+                        normalized = self._normalize_result(
+                            result=result,
+                            provider=selection.provider,
+                            provider_group=provider_group,
+                            model=candidate_model,
+                            attempt_count=attempt_count,
+                        )
+                        self._record_quota_usage(quota_scope, normalized)
+                        return normalized
+                    except Exception as exc:
+                        if self._is_non_retryable_request_error(exc):
+                            raise
+                        if retry_index < self._max_retries and self._is_retryable_provider_error(exc):
+                            await self._backoff(retry_index)
+                            continue
+                        failures.append(self._sanitize_provider_failure(selection.provider.name, exc))
+                        if requested_model and self._is_model_not_found_error(exc):
+                            use_route_model = True
+                        break
 
-        raise ProviderInvocationError(provider_group, failures)
+            raise ProviderInvocationError(provider_group, failures)
+        finally:
+            self._release_quota_reservation(quota_scope)
 
     async def invoke_novel_chat(
         self,
@@ -122,33 +219,42 @@ class ProviderPlatformService:
         quota_scope: tuple[str, str],
     ) -> dict[str, Any]:
         self._quota_limiter.assert_allowed(quota_scope)
-        selections = self._registry.resolve_group(provider_group)
-        requested_model = (model or "").strip()
-        use_route_model = not requested_model
-        failures: list[str] = []
-        for attempt_count, selection in enumerate(selections, start=1):
-            candidate_model = selection.model if use_route_model else requested_model
-            if not candidate_model:
-                raise LookupError(f"no model configured for provider route group '{provider_group}'")
-            try:
-                method = getattr(selection.provider, method_name)
-                result = await method(model=candidate_model, payload=payload)
-                normalized = self._normalize_result(
-                    result=result,
-                    provider=selection.provider,
-                    provider_group=provider_group,
-                    model=candidate_model,
-                    attempt_count=attempt_count,
-                )
-                normalized["owner_scope"] = owner_scope
-                return normalized
-            except Exception as exc:
-                if self._is_non_retryable_request_error(exc):
-                    raise
-                failures.append(self._sanitize_provider_failure(selection.provider.name, exc))
-                if requested_model and self._is_model_not_found_error(exc):
-                    use_route_model = True
-        raise ProviderInvocationError(provider_group, failures)
+        try:
+            selections = self._registry.resolve_group(provider_group)
+            requested_model = (model or "").strip()
+            use_route_model = not requested_model
+            failures: list[str] = []
+            for attempt_count, selection in enumerate(selections, start=1):
+                candidate_model = selection.model if use_route_model else requested_model
+                if not candidate_model:
+                    raise LookupError(f"no model configured for provider route group '{provider_group}'")
+                for retry_index in range(self._max_retries + 1):
+                    try:
+                        method = getattr(selection.provider, method_name)
+                        result = await method(model=candidate_model, payload=payload)
+                        normalized = self._normalize_result(
+                            result=result,
+                            provider=selection.provider,
+                            provider_group=provider_group,
+                            model=candidate_model,
+                            attempt_count=attempt_count,
+                        )
+                        normalized["owner_scope"] = owner_scope
+                        self._record_quota_usage(quota_scope, normalized)
+                        return normalized
+                    except Exception as exc:
+                        if self._is_non_retryable_request_error(exc):
+                            raise
+                        if retry_index < self._max_retries and self._is_retryable_provider_error(exc):
+                            await self._backoff(retry_index)
+                            continue
+                        failures.append(self._sanitize_provider_failure(selection.provider.name, exc))
+                        if requested_model and self._is_model_not_found_error(exc):
+                            use_route_model = True
+                        break
+            raise ProviderInvocationError(provider_group, failures)
+        finally:
+            self._release_quota_reservation(quota_scope)
 
     def list_provider_accounts(self) -> list[dict]:
         data = [
@@ -436,7 +542,34 @@ class ProviderPlatformService:
 
     @staticmethod
     def _is_non_retryable_request_error(exc: Exception) -> bool:
-        return provider_http_status(exc) in {400, 422}
+        return provider_http_status(exc) in {400, 401, 403, 422}
+
+    @staticmethod
+    def _is_retryable_provider_error(exc: Exception) -> bool:
+        status = provider_http_status(exc)
+        if status is not None:
+            return status in {408, 409, 425, 429, 500, 502, 503, 504}
+        return isinstance(exc, (ConnectionError, TimeoutError, OSError, RuntimeError))
+
+    async def _backoff(self, retry_index: int) -> None:
+        delay = min(self._retry_max_delay, self._retry_base_delay * (2 ** retry_index))
+        if self._retry_jitter:
+            delay += random.uniform(0.0, delay * self._retry_jitter)
+        await asyncio.sleep(delay)
+
+    def _record_quota_usage(self, quota_scope: tuple[str, str], result: dict[str, Any]) -> None:
+        recorder = getattr(self._quota_limiter, "record_usage", None)
+        if not callable(recorder):
+            return
+        cost = result.get("cost", 0.0) if isinstance(result, dict) else 0.0
+        if isinstance(cost, dict):
+            cost = cost.get("total", cost.get("amount", 0.0))
+        recorder(quota_scope, float(cost or 0.0))
+
+    def _release_quota_reservation(self, quota_scope: tuple[str, str]) -> None:
+        releaser = getattr(self._quota_limiter, "release_reservation", None)
+        if callable(releaser):
+            releaser(quota_scope)
 
     @staticmethod
     def _is_model_not_found_error(exc: Exception) -> bool:

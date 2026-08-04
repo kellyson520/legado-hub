@@ -13,6 +13,7 @@ import re
 import random
 from typing import List, Dict, Any
 from ..registry import BaseSkill, ToolDefinition
+from ._provider import complete_text
 
 
 class WriterSkill(BaseSkill):
@@ -104,6 +105,15 @@ class WriterSkill(BaseSkill):
         return {'error': f'Unknown tool: {tool_name}', 'tool': tool_name}
 
     def _continuation(self, prompt: str, chapter_num: int, length: int) -> Dict:
+        provider_result = self._provider_result(
+            "generate_continuation",
+            f"请根据以下提示续写第{chapter_num}章，目标约{length}字。\n提示：{prompt or '继续当前情节'}",
+            "content",
+            {"prompt": prompt, "chapter": chapter_num, "target_length": length},
+        )
+        if provider_result is not None:
+            return provider_result
+
         sample_style = ''
         if self.store and self.store.chapters:
             idx = min(chapter_num - 1, len(self.store.chapters) - 1) if chapter_num > 0 else 0
@@ -138,11 +148,22 @@ class WriterSkill(BaseSkill):
             'target_length': length,
             'content': continuation[:length * 2],
             'style_reference': sample_style[:200] if sample_style else '',
-            'note': '当前为模板模式，配置 LLM API 后可启用智能续写',
+            'available': False,
+            'status': 'unavailable',
+            'error_code': 'provider_unavailable',
+            'note': '未配置可用 Provider；返回的内容仅为兼容性示例，不代表真实续写结果',
         }
 
     def _dialogue(self, char1: str, char2: str, topic: str, turns: int) -> Dict:
         topic = topic or '最近的经历'
+        provider_result = self._provider_result(
+            "generate_dialogue",
+            f"请为{char1}和{char2}围绕“{topic}”生成{turns}轮对话，只返回对话正文。",
+            "dialogue",
+            {"char1": char1, "char2": char2, "topic": topic, "turns": turns},
+        )
+        if provider_result is not None:
+            return provider_result
 
         dialogues = [
             {f'{char1}': f'{char2}，你觉得{topic}这事，靠谱吗？'},
@@ -162,11 +183,22 @@ class WriterSkill(BaseSkill):
             'topic': topic,
             'turns': turns,
             'dialogue': selected,
-            'note': '当前为模板模式，配置 LLM API 后可启用智能对话生成',
+            'available': False,
+            'status': 'unavailable',
+            'error_code': 'provider_unavailable',
+            'note': '未配置可用 Provider；返回的内容仅为兼容性示例，不代表真实对话结果',
         }
 
     def _scene(self, location: str, time: str, mood: str) -> Dict:
         location = location or '荒山古寺'
+        provider_result = self._provider_result(
+            "describe_scene",
+            f"请描写{time}的{location}，整体氛围为{mood}，只返回场景正文。",
+            "description",
+            {"location": location, "time": time, "mood": mood},
+        )
+        if provider_result is not None:
+            return provider_result
 
         descriptions = {
             '神秘': f'''{time}的{location}，笼罩在一层薄薄的雾气之中。
@@ -191,12 +223,24 @@ class WriterSkill(BaseSkill):
             'time': time,
             'mood': mood,
             'description': desc,
-            'note': '当前为模板模式，配置 LLM API 后可启用智能场景描写',
+            'available': False,
+            'status': 'unavailable',
+            'error_code': 'provider_unavailable',
+            'note': '未配置可用 Provider；返回的内容仅为兼容性示例，不代表真实场景生成结果',
         }
 
     def _expand(self, outline: str, detail_level: str) -> Dict:
         if not outline:
             return {'error': 'outline is required', 'tool': 'expand_outline'}
+
+        provider_result = self._provider_result(
+            "expand_outline",
+            f"请将以下大纲按{detail_level}详细程度扩写，只返回扩写正文。\n大纲：{outline}",
+            "expanded",
+            {"original_outline": outline, "detail_level": detail_level},
+        )
+        if provider_result is not None:
+            return provider_result
 
         multipliers = {'low': 2, 'medium': 4, 'high': 8}
         mult = multipliers.get(detail_level, 4)
@@ -228,10 +272,22 @@ class WriterSkill(BaseSkill):
             'original_outline': outline,
             'detail_level': detail_level,
             'expanded': expanded,
-            'note': '当前为模板模式，配置 LLM API 后可启用智能扩写',
+            'available': False,
+            'status': 'unavailable',
+            'error_code': 'provider_unavailable',
+            'note': '未配置可用 Provider；返回的内容仅为兼容性示例，不代表真实扩写结果',
         }
 
     def _poem(self, char_name: str, style: str) -> Dict:
+        provider_result = self._provider_result(
+            "character_poem",
+            f"请为人物“{char_name}”创作一首{style}风格的判词或诗句，只返回诗句正文。",
+            "poem",
+            {"character": char_name, "style": style},
+        )
+        if provider_result is not None:
+            return provider_result
+
         poems = {
             '七言': f'''{char_name}
 半生漂泊任西东，一剑霜寒十四州。
@@ -252,5 +308,28 @@ class WriterSkill(BaseSkill):
             'character': char_name,
             'style': style,
             'poem': poem,
-            'note': '当前为模板模式，配置 LLM API 后可启用智能诗词生成',
+            'available': False,
+            'status': 'unavailable',
+            'error_code': 'provider_unavailable',
+            'note': '未配置可用 Provider；返回的内容仅为兼容性示例，不代表真实创作结果',
+        }
+
+    def _provider_result(
+        self,
+        tool: str,
+        prompt: str,
+        content_key: str,
+        fields: Dict[str, Any],
+    ) -> Dict[str, Any] | None:
+        generated = complete_text(self.provider, prompt, system="你是小说写作助手，只输出用户请求的正文。")
+        if not generated:
+            return None
+        return {
+            "tool": tool,
+            **fields,
+            content_key: generated,
+            "generated": generated,
+            "available": True,
+            "status": "completed",
+            "mode": "provider",
         }

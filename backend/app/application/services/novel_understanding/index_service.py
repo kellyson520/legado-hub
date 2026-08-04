@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -37,6 +38,9 @@ class IndexResult:
     failed_chapters: int = 0
     errors: list[dict[str, Any]] = field(default_factory=list)
     indexed_chapters: list[int] = field(default_factory=list)
+    status: str = "pending"
+    no_chapters: bool = False
+    timings_ms: dict[str, int] = field(default_factory=dict)
 
     @property
     def succeeded(self) -> bool:
@@ -89,14 +93,25 @@ class NovelIndexService:
         book_id: int,
         from_chapter: int | None = None,
     ) -> IndexResult:
+        started_at = time.perf_counter()
         result = IndexResult(owner_scope=owner_scope, book_id=int(book_id))
+        stage_started = time.perf_counter()
         learning_profile = await self._load_learning_profile(owner_scope, book_id)
         learning_profile_version = str(learning_profile.get("profile_version") or "")
+        result.timings_ms["learning_profile"] = _elapsed_ms(stage_started)
+        stage_started = time.perf_counter()
         chapters = await self._chapters(owner_scope, book_id, from_chapter)
+        result.timings_ms["chapters"] = _elapsed_ms(stage_started)
         if not chapters:
+            stage_started = time.perf_counter()
             await self._rebuild_knowledge(owner_scope, book_id)
+            result.timings_ms["rebuild_knowledge"] = _elapsed_ms(stage_started)
+            result.no_chapters = True
+            result.status = "no_chapters"
+            result.timings_ms["total"] = _elapsed_ms(started_at)
             return result
 
+        stage_started = time.perf_counter()
         bm25 = self.bm25_index or self._bm25_indexes.setdefault(
             (owner_scope, int(book_id), self.knowledge_version), BM25Index()
         )
@@ -104,7 +119,9 @@ class NovelIndexService:
         for chapter in chapters:
             bm25.add_document(chapter.id, self._chapter_index_text(chapter))
         bm25.build()
+        result.timings_ms["bm25"] = _elapsed_ms(stage_started)
 
+        pending_vectors: list[tuple[Any, NovelIndexState, dict[str, Any]]] = []
         for chapter in chapters:
             content = chapter.raw_text or ""
             content_hash = chapter.raw_text_hash or self._hash(content)
@@ -185,11 +202,10 @@ class NovelIndexService:
                 state.extraction_payload = snapshot
                 state.extraction_status = "completed"
                 state.bm25_status = "completed"
-                await self._index_vector(owner_scope, chapter, state, snapshot=snapshot)
                 state.last_success_at = datetime.now(timezone.utc)
                 if structured_status != "failed":
                     state.failure_reason = ""
-                await self.repo.save_index_state(state)
+                pending_vectors.append((chapter, state, snapshot))
                 result.processed_chapters += 1
                 result.indexed_chapters.append(int(chapter.id))
             except Exception as exc:
@@ -198,7 +214,17 @@ class NovelIndexService:
                 await self.repo.save_index_state(state)
                 result.failed_chapters += 1
                 result.errors.append({"chapter_id": chapter.id, "error": str(exc)[:500]})
+        stage_started = time.perf_counter()
+        await self._index_vectors(owner_scope, pending_vectors)
+        result.timings_ms["vectors"] = _elapsed_ms(stage_started)
+        stage_started = time.perf_counter()
         await self._rebuild_knowledge(owner_scope, book_id)
+        result.timings_ms["rebuild_knowledge"] = _elapsed_ms(stage_started)
+        if result.failed_chapters:
+            result.status = "partial" if result.processed_chapters or result.skipped_chapters else "failed"
+        else:
+            result.status = "completed"
+        result.timings_ms["total"] = _elapsed_ms(started_at)
         return result
 
     async def _load_learning_profile(self, owner_scope: str, book_id: int) -> dict[str, Any]:
@@ -623,32 +649,127 @@ class NovelIndexService:
         *,
         snapshot: dict[str, Any] | None = None,
     ) -> None:
+        await self._index_vectors(owner_scope, [(chapter, state, snapshot or {})])
+
+    async def _index_vectors(
+        self,
+        owner_scope: str,
+        entries: list[tuple[Any, NovelIndexState, dict[str, Any]]],
+    ) -> None:
+        """Health-check, embed, and upsert all changed chapters as one batch."""
+        if not entries:
+            return
+
+        states = [state for _, state, _ in entries]
+
+        async def save_states() -> None:
+            for state in states:
+                await self.repo.save_index_state(state)
+
         if self.vector_store is None or self.embedding is None:
-            state.vector_status = "disabled"
+            for state in states:
+                state.vector_status = "disabled"
+            await save_states()
             return
         try:
             health = await self.vector_store.health()
-        except Exception:
-            state.vector_status = "failed"
+        except Exception as exc:
+            for state in states:
+                state.vector_status = "failed"
+                state.failure_reason = f"vector health: {str(exc)[:450]}"
+            await save_states()
             return
         if not health.get("enabled"):
-            state.vector_status = "disabled"
+            for state in states:
+                state.vector_status = "disabled"
+            await save_states()
             return
+
+        texts: list[str] = []
+        metadata: list[dict[str, Any]] = []
         delete_chapter = getattr(self.vector_store, "delete_chapter", None)
-        if callable(delete_chapter):
-            try:
-                deleted = delete_chapter(
-                    owner_scope,
-                    int(chapter.book_id),
-                    int(chapter.id),
-                    self.knowledge_version,
-                )
-                if inspect.isawaitable(deleted):
-                    await deleted
-            except Exception:
+        try:
+            for chapter, _, snapshot in entries:
+                if callable(delete_chapter):
+                    deleted = delete_chapter(
+                        owner_scope,
+                        int(chapter.book_id),
+                        int(chapter.id),
+                        self.knowledge_version,
+                    )
+                    if inspect.isawaitable(deleted):
+                        await deleted
+                chapter_texts, chapter_metadata = self._vector_payloads(chapter, snapshot)
+                texts.extend(chapter_texts)
+                metadata.extend(chapter_metadata)
+        except Exception as exc:
+            for state in states:
                 state.vector_status = "failed"
-                return
-        snapshot = snapshot or {}
+                state.failure_reason = f"vector cleanup: {str(exc)[:450]}"
+            await save_states()
+            return
+
+        try:
+            embed_batch = getattr(self.embedding, "embed_batch", None)
+            if callable(embed_batch):
+                embeddings = await embed_batch(texts)
+            else:
+                embeddings = [await self.embedding.embed(text) for text in texts]
+        except Exception as exc:
+            for state in states:
+                state.vector_status = "failed"
+                state.failure_reason = f"embedding: {str(exc)[:450]}"
+            await save_states()
+            return
+        if len(embeddings) != len(metadata) or not all(getattr(item, "semantic", False) for item in embeddings):
+            for state in states:
+                state.vector_status = "disabled"
+            await save_states()
+            return
+        dimension = len(embeddings[0].vector) if embeddings else 0
+        if not dimension or any(len(item.vector) != dimension for item in embeddings):
+            for state in states:
+                state.vector_status = "failed"
+                state.failure_reason = "embedding: inconsistent vector dimensions"
+            await save_states()
+            return
+        model = str(getattr(embeddings[0], "model", "") or "")
+        for state in states:
+            state.embedding_model = model or state.embedding_model
+            state.embedding_dimension = dimension
+        self.embedding_model = model or self.embedding_model
+        self.embedding_dimension = dimension
+
+        chapter_by_id = {
+            int(chapter.id): chapter
+            for chapter, _, _ in entries
+        }
+        try:
+            await self.vector_store.upsert(
+                [
+                    VectorRecord(
+                        owner_scope=owner_scope,
+                        book_id=int(chapter_by_id[int(payload["chapter_id"])].book_id),
+                        chapter_id=int(payload["chapter_id"]),
+                        knowledge_version=self.knowledge_version,
+                        vector=item.vector,
+                        payload=payload,
+                        record_key=payload["record_key"],
+                    )
+                    for item, payload in zip(embeddings, metadata)
+                ]
+            )
+        except Exception as exc:
+            for state in states:
+                state.vector_status = "failed"
+                state.failure_reason = f"vector upsert: {str(exc)[:450]}"
+            await save_states()
+            return
+        for state in states:
+            state.vector_status = "completed"
+        await save_states()
+
+    def _vector_payloads(self, chapter, snapshot: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
         texts = [chapter.raw_text or ""]
         metadata = [
             {
@@ -717,40 +838,7 @@ class NovelIndexService:
                     "card_hash": memory_card_hash(card),
                 }
             )
-        try:
-            embed_batch = getattr(self.embedding, "embed_batch", None)
-            if callable(embed_batch):
-                embeddings = await embed_batch(texts)
-            else:
-                embeddings = [await self.embedding.embed(text) for text in texts]
-        except Exception:
-            state.vector_status = "failed"
-            return
-        if len(embeddings) != len(metadata) or not all(getattr(item, "semantic", False) for item in embeddings):
-            state.vector_status = "disabled"
-            return
-        embedding = embeddings[0]
-        state.embedding_model = embedding.model or state.embedding_model
-        state.embedding_dimension = embedding.dimension
-        self.embedding_model = state.embedding_model
-        self.embedding_dimension = state.embedding_dimension
-        try:
-            await self.vector_store.upsert([
-                VectorRecord(
-                    owner_scope=owner_scope,
-                    book_id=chapter.book_id,
-                    chapter_id=chapter.id,
-                    knowledge_version=self.knowledge_version,
-                    vector=item.vector,
-                    payload=payload,
-                    record_key=payload["record_key"],
-                )
-                for item, payload in zip(embeddings, metadata)
-            ])
-        except Exception:
-            state.vector_status = "failed"
-            return
-        state.vector_status = "completed"
+        return texts, metadata
 
     def _can_skip(self, state: NovelIndexState | None, content_hash: str, learning_profile_version: str = "") -> bool:
         return bool(
@@ -827,3 +915,7 @@ class NovelIndexService:
 
 def _stable_memory_id(value: str) -> int:
     return int(hashlib.sha256(value.encode("utf-8")).hexdigest()[:12], 16)
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, int((time.perf_counter() - started_at) * 1000))

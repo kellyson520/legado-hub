@@ -159,6 +159,7 @@ class GrapherSkill(BaseSkill):
 
         categories = [{'name': ci.get('name', f'社区{i}')} for i, ci in enumerate(data.get('communities', []))]
 
+        safe_json = self._json_for_script
         html = f'''<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -237,11 +238,17 @@ body {{
 </div>
 <script>
 var chart = echarts.init(document.getElementById('chart'));
-var categories = {json.dumps(categories, ensure_ascii=False)};
-var nodes = {json.dumps(nodes, ensure_ascii=False)};
-var links = {json.dumps(links, ensure_ascii=False)};
-var typeColors = {json.dumps(self.TYPE_COLORS, ensure_ascii=False)};
-var commColors = {json.dumps(self.COMMUNITY_COLORS, ensure_ascii=False)};
+var categories = {safe_json(categories)};
+var nodes = {safe_json(nodes)};
+var links = {safe_json(links)};
+var typeColors = {safe_json(self.TYPE_COLORS)};
+var commColors = {safe_json(self.COMMUNITY_COLORS)};
+
+function escapeHtml(value) {{
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {{
+        return {{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}}[ch];
+    }});
+}}
 
 nodes.forEach(function(n) {{
     var ci = 0;
@@ -274,12 +281,12 @@ chart.setOption({{
     tooltip: {{
         formatter: function(p) {{
             if (p.dataType === 'node') {{
-                return '<b>' + p.data.name + '</b><br/>社区: ' + p.data.category + '<br/>关系数: ' + p.data.value;
+                return '<b>' + escapeHtml(p.data.name) + '</b><br/>社区: ' + escapeHtml(p.data.category) + '<br/>关系数: ' + escapeHtml(p.data.value);
             }}
-            return p.data.source + ' ↔ ' + p.data.target +
-                   '<br/>类型: ' + p.data.type +
+            return escapeHtml(p.data.source) + ' ↔ ' + escapeHtml(p.data.target) +
+                   '<br/>类型: ' + escapeHtml(p.data.type) +
                    '<br/>置信度: ' + (p.data.confidence || 0.5).toFixed(2) +
-                   (p.data.description ? '<br/>描述: ' + p.data.description : '');
+                   (p.data.description ? '<br/>描述: ' + escapeHtml(p.data.description) : '');
         }}
     }},
     legend: [{{
@@ -316,11 +323,24 @@ window.addEventListener('resize', function() {{ chart.resize(); }});
 
         return {
             'tool': 'generate_graph_html',
+            'success': True,
             'output_path': output_path,
             'nodes': len(nodes),
             'links': len(links),
             'categories': len(categories),
         }
+
+    @staticmethod
+    def _json_for_script(value: Any) -> str:
+        """Serialize data without allowing a value to close the script tag."""
+        return (
+            json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+            .replace('<', '\\u003c')
+            .replace('>', '\\u003e')
+            .replace('&', '\\u0026')
+            .replace('\u2028', '\\u2028')
+            .replace('\u2029', '\\u2029')
+        )
 
     def _evolution(self, c1: str, c2: str) -> Dict:
         if not self.store:

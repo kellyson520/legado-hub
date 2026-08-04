@@ -281,10 +281,14 @@ async def send_novel_message(conversation_id: str, payload: NovelMessageRequest,
         from fastapi.responses import StreamingResponse
 
         async def events():
-            yield "event: started\ndata: {}\n\n"
-            async for delta in result:
-                yield "event: delta\ndata: " + _json_dumps({"text": delta}) + "\n\n"
-            yield "event: completed\ndata: {}\n\n"
+            async for event in result:
+                if isinstance(event, dict) and event.get("event"):
+                    yield (
+                        f"event: {event['event']}\n"
+                        f"data: {_json_dumps(event.get('data', {}))}\n\n"
+                    )
+                else:
+                    yield "event: delta\ndata: " + _json_dumps({"text": str(event)}) + "\n\n"
 
         return StreamingResponse(events(), media_type="text/event-stream")
     return {"success": True, "code": "OK", "message": "novel message completed", "data": result, "meta": {}, "trace_id": None}

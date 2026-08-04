@@ -30,6 +30,10 @@ def test_root_no_longer_points_to_container_only_index(monkeypatch):
     monkeypatch.setenv("APP_ENV", "test")
     monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
 
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "APP_NAME", "LegadoHub API")
+
     from app.main import app
 
     client = TestClient(app)

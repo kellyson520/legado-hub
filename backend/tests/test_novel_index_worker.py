@@ -80,6 +80,57 @@ async def test_novel_index_worker_consumes_queued_analysis_tasks():
 
 
 @pytest.mark.asyncio
+async def test_novel_index_worker_persists_structured_index_result_status():
+    from app.domain.entities.novel_runtime import NovelAnalysisTask
+    from app.tasks.novel_index_worker import NovelIndexWorker
+
+    task = NovelAnalysisTask(
+        id="task-result-details",
+        novel_id="ingestion-result-details",
+        owner_scope="user:1",
+        book_id=7,
+        status="queued",
+    )
+
+    class RuntimeRepo:
+        def __init__(self):
+            self.tasks = [task]
+
+        def list_tasks(self, owner_scope=None):
+            return self.tasks
+
+        def save_task(self, value):
+            self.tasks[0] = value
+            return value
+
+    class IndexService:
+        async def index_book(self, owner_scope, book_id, from_chapter=None):
+            return type(
+                "IndexResult",
+                (),
+                {
+                    "processed_chapters": 0,
+                    "skipped_chapters": 0,
+                    "failed_chapters": 0,
+                    "errors": [],
+                    "status": "no_chapters",
+                    "no_chapters": True,
+                    "indexed_chapters": [0],
+                    "timings_ms": {"chapters": 2, "total": 3},
+                },
+            )()
+
+    runtime = RuntimeRepo()
+    await NovelIndexWorker(index_service=IndexService(), runtime_repo=runtime).run(limit=1)
+
+    result = runtime.tasks[0].result
+    assert result["status"] == "no_chapters"
+    assert result["no_chapters"] is True
+    assert result["indexed_chapters"] == [0]
+    assert result["timings_ms"] == {"chapters": 2, "total": 3}
+
+
+@pytest.mark.asyncio
 async def test_novel_index_worker_marks_book_ready_after_successful_analysis():
     from app.domain.entities.novel import NovelStatus
     from app.domain.entities.novel_runtime import NovelAnalysisTask

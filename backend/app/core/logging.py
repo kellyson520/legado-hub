@@ -14,6 +14,7 @@ import json
 import sys
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -114,7 +115,16 @@ class _LogContextProxy:
 # Kept as a module attribute so existing integrations can read context fields.
 _context = _LogContextProxy()
 
-LOG_DIR = os.environ.get("LOG_DIR", "/app/logs")
+def resolve_log_dir(base_dir: str | os.PathLike[str] | None = None) -> Path:
+    """Return a writable-by-default log directory for local and container runs."""
+    configured = os.environ.get("LOG_DIR", "").strip()
+    if configured:
+        return Path(configured)
+    root = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parents[2]
+    return root / "logs"
+
+
+LOG_DIR = resolve_log_dir()
 os.makedirs(LOG_DIR, exist_ok=True)
 
 

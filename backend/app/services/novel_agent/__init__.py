@@ -41,7 +41,7 @@ from .agent import NovelAgent
 from .reasonix_agent import ReasonixAgent
 from .memory import AgentMemory
 from .registry import ToolRegistry
-from .store import NovelDataStore
+from .store import NovelDataStore, NovelDataStoreError
 from .mcp import MCPInterface
 from .providers import (
     ProviderConfig, ProviderRegistry, BaseProvider,
@@ -61,6 +61,7 @@ __all__ = [
     'AgentMemory',
     'ToolRegistry',
     'NovelDataStore',
+    'NovelDataStoreError',
     'MCPInterface',
     # Providers
     'ProviderConfig',

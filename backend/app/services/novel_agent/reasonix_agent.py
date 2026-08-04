@@ -15,6 +15,8 @@ import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 
+from app.core.logging import get_logger
+
 from .config import AgentConfig
 from .store import NovelDataStore
 from .memory import AgentMemory
@@ -56,6 +58,9 @@ SYSTEM_PROMPT = """你是一个专业的小说领域智能体（NovelAgent）—
 记住：你是小说领域的专家大脑，工具是你的手。"""
 
 
+logger = get_logger(__name__)
+
+
 @dataclass
 class AgentStep:
     step: int
@@ -77,6 +82,7 @@ class AgentResponse:
     confidence: float = 0.0
     usage: Usage = field(default_factory=Usage)
     cache_hit_rate: float = 0.0
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class ReasonixAgent:
@@ -94,21 +100,27 @@ class ReasonixAgent:
         config: Optional[AgentConfig] = None,
         store: Optional[NovelDataStore] = None,
         memory: Optional[AgentMemory] = None,
+        session_id: Optional[str] = None,
     ):
         self.config = config or AgentConfig()
         self.store = store or NovelDataStore(self.config)
-        self.memory = memory or AgentMemory(self.config)
+        self.memory = memory or AgentMemory(self.config, session_id=session_id)
 
         self.registry = ToolRegistry(self.store, self.memory, self.config)
-        self._register_skills()
-
+        self._provider_errors: list[str] = []
         self._init_providers()
+        self._register_skills()
 
         self.messages: List[Message] = []
         self.iteration = 0
         self.total_usage = Usage()
 
     def _register_skills(self):
+        try:
+            skill_provider = self.primary_provider
+        except Exception as exc:
+            skill_provider = None
+            self._provider_errors.append(f"skill provider unavailable: {exc.__class__.__name__}")
         skill_classes = [
             SourceSkill,
             CollectorSkill, ExtractorSkill, AuditorSkill, GrapherSkill,
@@ -116,7 +128,7 @@ class ReasonixAgent:
         ]
         for skill_cls in skill_classes:
             if self.config.skill_enabled(skill_cls.name):
-                skill = skill_cls(self.store, self.memory, self.config)
+                skill = skill_cls(self.store, self.memory, self.config, provider=skill_provider)
                 self.registry.register_skill(skill)
 
     def _init_providers(self):
@@ -124,8 +136,10 @@ class ReasonixAgent:
         for p_cfg in self.config.get_provider_configs():
             try:
                 ProviderRegistry.create(p_cfg)
-            except Exception:
-                pass
+            except Exception as exc:
+                message = f"{p_cfg.name}: {exc.__class__.__name__}: {exc}"
+                self._provider_errors.append(message)
+                logger.error("failed to initialize Agent provider %s", message)
 
     @property
     def primary_provider(self) -> BaseProvider:
@@ -141,10 +155,7 @@ class ReasonixAgent:
         if not planner_model:
             return None
         p_cfg = self.config.resolve_model(planner_model)
-        try:
-            return ProviderRegistry.get(p_cfg.name) or ProviderRegistry.create(p_cfg)
-        except Exception:
-            return None
+        return ProviderRegistry.get(p_cfg.name) or ProviderRegistry.create(p_cfg)
 
     async def run(self, goal: str, max_iterations: Optional[int] = None) -> AgentResponse:
         """执行 Agent 主循环（异步）
@@ -164,6 +175,21 @@ class ReasonixAgent:
         steps: List[AgentStep] = []
         tools_used: List[str] = []
         step_count = 0
+        metadata: Dict[str, Any] = {
+            "planner_used": False,
+            "reflection": [],
+            "provider_errors": list(self._provider_errors),
+        }
+
+        planner = self.planner_provider
+        if planner is not None:
+            try:
+                plan_text = await self._run_planner(planner, goal)
+                if plan_text:
+                    metadata["planner_used"] = True
+                    self.messages.append(Message(role="assistant", content=f"执行计划：\n{plan_text[:4000]}"))
+            except Exception as exc:
+                metadata["planner_error"] = exc.__class__.__name__
 
         for i in range(max_iter):
             await self._compact_if_needed()
@@ -185,7 +211,9 @@ class ReasonixAgent:
                     max_tokens=self.config.get("llm.max_tokens", 4096),
                 ):
                     if chunk.error:
-                        raise Exception(chunk.error)
+                        if getattr(chunk, "exception", None) is not None:
+                            raise chunk.exception
+                        raise RuntimeError(chunk.error)
                     if chunk.text:
                         full_text += chunk.text
                     if chunk.tool_calls:
@@ -208,40 +236,32 @@ class ReasonixAgent:
                     confidence=0.0,
                     usage=self.total_usage,
                     cache_hit_rate=self.total_usage.cache_hit_rate,
+                    metadata={**metadata, "fallback": "provider_error", "error_type": e.__class__.__name__},
                 )
 
             if tool_calls:
                 assistant_msg = Message(role="assistant", content=full_text, tool_calls=tool_calls)
                 self.messages.append(assistant_msg)
 
-                for tc in tool_calls:
+                results = await asyncio.gather(
+                    *(self._execute_tool_call(tc, thought or full_text[:200]) for tc in tool_calls),
+                )
+                for tc, step in zip(tool_calls, results):
                     step_count += 1
-                    step = AgentStep(
-                        step=step_count,
-                        thought=thought or full_text[:200],
-                        tool=tc.name,
-                        tool_args=json.loads(tc.arguments) if tc.arguments else {},
-                    )
-
-                    try:
-                        args_dict = json.loads(tc.arguments) if tc.arguments else {}
-                        result = self.registry.call(tc.name, **args_dict)
-                        step.tool_result = json.dumps(result, ensure_ascii=False, indent=2)[:2000]
-                    except Exception as e:
-                        step.error = str(e)
-                        step.tool_result = f"ERROR: {e}"
-
+                    step.step = step_count
                     steps.append(step)
                     if tc.name not in tools_used:
                         tools_used.append(tc.name)
-
-                    tool_msg = Message(
+                    self.messages.append(Message(
                         role="tool",
                         content=step.tool_result,
                         tool_call_id=tc.id,
                         name=tc.name,
-                    )
-                    self.messages.append(tool_msg)
+                    ))
+
+                reflection = self._reflect(steps)
+                metadata["reflection"].append(reflection)
+                self.messages.append(Message(role="system", content=f"工具观察反思：{reflection}"))
 
                 await asyncio.sleep(0)
             else:
@@ -264,7 +284,60 @@ class ReasonixAgent:
             confidence=confidence,
             usage=self.total_usage,
             cache_hit_rate=self.total_usage.cache_hit_rate,
+            metadata=metadata,
         )
+
+    async def _run_planner(self, planner: BaseProvider, goal: str) -> str:
+        """Run the optional planner and feed its bounded plan to the executor."""
+        chunks = []
+        async for chunk in planner.stream(
+            [Message(role="user", content=goal)],
+            system=SYSTEM_PROMPT + "\n只输出执行计划，不调用工具。",
+            tools=None,
+            temperature=0,
+            max_tokens=min(int(self.config.get("llm.max_tokens", 4096)), 2000),
+        ):
+            if chunk.error:
+                if getattr(chunk, "exception", None) is not None:
+                    raise chunk.exception
+                raise RuntimeError(chunk.error)
+            if chunk.text:
+                chunks.append(chunk.text)
+        return "".join(chunks).strip()
+
+    async def _execute_tool_call(self, tool_call: ToolCall, thought: str) -> AgentStep:
+        try:
+            args_dict = json.loads(tool_call.arguments) if tool_call.arguments else {}
+            if not isinstance(args_dict, dict):
+                raise ValueError("tool arguments must be an object")
+            call_async = getattr(self.registry, "call_async", None)
+            if callable(call_async):
+                result = await call_async(
+                    tool_call.name,
+                    timeout=float(self.config.get("mcp.timeout", 30) or 30),
+                    retries=min(int(self.config.get("agent.tool_retries", 1) or 0), 3),
+                    **args_dict,
+                )
+            else:
+                result = await asyncio.to_thread(self.registry.call, tool_call.name, **args_dict)
+            serialized = json.dumps(result, ensure_ascii=False, indent=2)[:2000]
+            return AgentStep(step=0, thought=thought, tool=tool_call.name, tool_args=args_dict, tool_result=serialized)
+        except Exception as exc:
+            return AgentStep(
+                step=0,
+                thought=thought,
+                tool=tool_call.name,
+                tool_args={},
+                tool_result=f"ERROR: {exc}",
+                error=str(exc),
+            )
+
+    @staticmethod
+    def _reflect(steps: List[AgentStep]) -> str:
+        failures = sum(1 for step in steps if step.error)
+        if failures:
+            return f"已观察 {len(steps)} 个工具结果，其中 {failures} 个失败；后续回答必须说明证据不足。"
+        return f"已观察 {len(steps)} 个工具结果；后续回答应优先引用工具证据并检查是否仍需补充。"
 
     def run_sync(self, goal: str, max_iterations: Optional[int] = None) -> AgentResponse:
         """同步版本的 run"""

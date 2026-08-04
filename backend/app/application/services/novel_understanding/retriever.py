@@ -69,6 +69,11 @@ class RAGRetriever:
             index = self._indexes.get(key, self._bm25)
 
         results: Dict[str, RetrievalResult] = {}
+        tracks: dict[str, list[RetrievalResult]] = {
+            "bm25": [],
+            "kg": [],
+            "vector": [],
+        }
         chapter_cache = self._chapter_cache.get(key, {})
         matched_chapters = index.search(query, top_k=max(1, top_k * 2)) if query else []
         if not query:
@@ -77,23 +82,21 @@ class RAGRetriever:
                 for chapter_id in list(chapter_cache)[: max(1, top_k * 2)]
             ]
         for doc_id, score in matched_chapters:
-            self._merge_result(
-                results,
+            tracks["bm25"].append(
                 RetrievalResult(
                     source="bm25",
                     item_type="chapter",
                     item_id=int(doc_id),
-                    score=score * self.WEIGHT_BM25,
+                    score=float(score),
                     content="",
                     owner_scope=owner_scope,
                     book_id=int(book_id),
                     confidence=min(1.0, float(score)),
-                ),
+                )
             )
 
         if query:
-            for item in await self._retrieve_kg(owner_scope, int(book_id), query, top_k=top_k):
-                self._merge_result(results, item, weight=self.WEIGHT_KG)
+            tracks["kg"].extend(await self._retrieve_kg(owner_scope, int(book_id), query, top_k=top_k))
 
         if self._vector_store is not None and query:
             try:
@@ -120,13 +123,12 @@ class RAGRetriever:
                             payload.get("text") or payload.get("card") or payload.get("content") or ""
                         )[:2000]
                         evidence = _evidence_text(payload.get("evidence"), content)
-                        self._merge_result(
-                            results,
+                        tracks["vector"].append(
                             RetrievalResult(
                                 source="vector",
                                 item_type=memory_type,
                                 item_id=item_id,
-                                score=float(item.score) * self.WEIGHT_VECTOR,
+                                score=float(item.score),
                                 content=content,
                                 owner_scope=owner_scope,
                                 book_id=int(book_id),
@@ -139,12 +141,21 @@ class RAGRetriever:
                                     or {"chapter_id": chapter_id, "chapter_num": int(payload.get("chapter_num", 0) or 0)}
                                 ),
                                 knowledge_version=knowledge_version,
-                            ),
+                            )
                         )
             except (EmbeddingUnavailable, RuntimeError, ValueError):
                 # BM25 and structured knowledge remain useful when semantic
                 # embeddings or the external vector backend are unavailable.
                 pass
+
+        track_weights = {
+            "bm25": self.WEIGHT_BM25,
+            "vector": self.WEIGHT_VECTOR,
+            "kg": self.WEIGHT_KG,
+        }
+        for source, items in tracks.items():
+            for item in self._normalize_scores(items):
+                self._merge_result(results, item, weight=track_weights[source])
 
         sorted_results = sorted(results.values(), key=lambda item: item.score, reverse=True)
         book = await self._repo_call("get_book_by_id", owner_scope, int(book_id), legacy=(int(book_id),))
@@ -187,8 +198,29 @@ class RAGRetriever:
             limit=top_k,
             legacy=(book_id, query),
         )
+        entity_method = getattr(self._repo, "list_entities", None)
+        if not entities and callable(entity_method):
+            entities = await self._repo_call(
+                "list_entities",
+                owner_scope,
+                book_id,
+                limit=max(top_k * 4, 20),
+                legacy=(book_id,),
+            )
+        query_tokens = self._query_terms(query)
         for entity in entities or []:
-            score = 1.0 if query in entity.name else 0.7
+            score = self._match_score(
+                query_tokens,
+                " ".join(
+                    [
+                        str(getattr(entity, "name", "")),
+                        " ".join(getattr(entity, "aliases", []) or []),
+                        str(getattr(entity, "description", "")),
+                    ]
+                ),
+            )
+            if score <= 0:
+                continue
             content = f"{entity.name}({getattr(entity.entity_type, 'value', entity.entity_type)}): {entity.description}"
             kg_results.append(
                 RetrievalResult(
@@ -213,8 +245,17 @@ class RAGRetriever:
             legacy=(book_id,),
         )
         for event in events or []:
-            if query in event.description or any(query in participant for participant in event.participants):
-                score = 0.8 if query in event.description else 0.5
+            score = self._match_score(
+                query_tokens,
+                " ".join(
+                    [
+                        str(getattr(event, "description", "")),
+                        " ".join(getattr(event, "participants", []) or []),
+                        str(getattr(event, "event_type", "")),
+                    ]
+                ),
+            )
+            if score > 0:
                 content = f"第{event.chapter_num}章事件: {event.description}"
                 kg_results.append(
                     RetrievalResult(
@@ -239,11 +280,21 @@ class RAGRetriever:
             legacy=(book_id,),
         )
         for relationship in relationships or []:
-            if (
-                query in relationship.source_entity
-                or query in relationship.target_entity
-                or query in relationship.description
-            ):
+            relation_type = getattr(relationship.relation_type, "value", relationship.relation_type)
+            relation_terms = self._RELATION_TERMS.get(str(relation_type).lower(), ())
+            relationship_tokens = self._query_terms(
+                " ".join(
+                    [
+                        relationship.source_entity,
+                        relationship.target_entity,
+                        relationship.description,
+                        str(relation_type),
+                        " ".join(relation_terms),
+                    ]
+                )
+            )
+            score = self._overlap_score(query_tokens, relationship_tokens)
+            if score > 0:
                 content = (
                     f"{relationship.source_entity} -"
                     f"{getattr(relationship.relation_type, 'value', relationship.relation_type)}-> "
@@ -254,7 +305,7 @@ class RAGRetriever:
                         source="kg",
                         item_type="relationship",
                         item_id=relationship.id,
-                        score=0.6,
+                        score=score,
                         content=content,
                         owner_scope=owner_scope,
                         book_id=book_id,
@@ -414,6 +465,52 @@ class RAGRetriever:
             )
             if part
         )
+
+    _RELATION_TERMS = {
+        "master": ("师父", "师傅", "授业", "弟子", "拜师", "master"),
+        "subordinate": ("徒弟", "弟子", "下属", "subordinate"),
+        "ally": ("同伴", "盟友", "朋友", "ally"),
+        "enemy": ("敌人", "仇敌", "enemy"),
+        "lover": ("恋人", "情侣", "夫妻", "lover"),
+        "family": ("家人", "亲属", "父母", "family"),
+        "rival": ("对手", "宿敌", "rival"),
+    }
+
+    @staticmethod
+    def _query_terms(value: str) -> set[str]:
+        tokens = set(BM25Index._tokenize(str(value or "")))
+        normalized = str(value or "").strip().casefold()
+        if normalized:
+            tokens.add(normalized)
+        return {token.casefold() for token in tokens if token}
+
+    @classmethod
+    def _match_score(cls, query_tokens: set[str], value: str) -> float:
+        return cls._overlap_score(query_tokens, cls._query_terms(value))
+
+    @staticmethod
+    def _overlap_score(query_tokens: set[str], value_tokens: set[str]) -> float:
+        if not query_tokens or not value_tokens:
+            return 0.0
+        overlap = sum(1 for token in query_tokens if any(token in candidate or candidate in token for candidate in value_tokens))
+        return min(1.0, overlap / max(1, len(query_tokens)))
+
+    @staticmethod
+    def _normalize_scores(items: list[RetrievalResult]) -> list[RetrievalResult]:
+        """Normalize one retrieval track before applying its configured weight."""
+        if not items:
+            return items
+        values = [float(item.score) for item in items]
+        low, high = min(values), max(values)
+        if high == low:
+            normalized = 1.0 if high > 0 else 0.0
+            for item in items:
+                item.score = normalized
+            return items
+        scale = high - low
+        for item in items:
+            item.score = max(0.0, min(1.0, (float(item.score) - low) / scale))
+        return items
 
     @staticmethod
     def _merge_result(results: dict[str, RetrievalResult], result: RetrievalResult, weight: float = 1.0) -> None:

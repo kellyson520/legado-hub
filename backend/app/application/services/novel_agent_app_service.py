@@ -73,6 +73,7 @@ class NovelAgentAppService:
         prompt_version: str = "novel-agent-v1",
         toolset_version: str = "novel-tools-v1",
         enabled_tool_categories: set[str] | None = None,
+        max_tool_iterations: int = 3,
     ):
         self._platform = platform
         self._conversations = conversations
@@ -85,6 +86,7 @@ class NovelAgentAppService:
         self.knowledge_version = knowledge_version
         self.prompt_version = prompt_version
         self.toolset_version = toolset_version
+        self.max_tool_iterations = max(1, min(int(max_tool_iterations), 20))
         self._enabled_tool_categories = (
             set(self._TOOL_CATEGORIES.values())
             if enabled_tool_categories is None
@@ -204,16 +206,52 @@ class NovelAgentAppService:
         )
         await self._conversation_call("append_message", user_message)
 
-        payload, resolution = await self._build_payload(
-            owner_scope,
-            conversation,
-            normalized_content,
-            entrypoint=entrypoint,
-            book_id=effective_book_id,
-            chapter_id=effective_chapter_id,
-            mode=mode,
-            request_model=request_model,
-        )
+        try:
+            payload, resolution = await self._build_payload(
+                owner_scope,
+                conversation,
+                normalized_content,
+                entrypoint=entrypoint,
+                book_id=effective_book_id,
+                chapter_id=effective_chapter_id,
+                mode=mode,
+                request_model=request_model,
+            )
+        except Exception as exc:
+            if not self._is_provider_failure(exc):
+                raise
+            if stream:
+                return self._stream_local_fallback(
+                    owner_scope,
+                    conversation,
+                    user_message,
+                    normalized_content,
+                    effective_book_id,
+                    effective_chapter_id,
+                    mode,
+                    entrypoint,
+                    reason=exc,
+                )
+            assistant_content, tool_calls, invocation = await self._local_fallback_result(
+                owner_scope,
+                effective_book_id,
+                normalized_content,
+                reason=exc,
+            )
+            return await self._persist_answer(
+                owner_scope,
+                conversation,
+                user_message,
+                assistant_content,
+                tool_calls,
+                invocation,
+                effective_book_id,
+                effective_chapter_id,
+                mode,
+                entrypoint,
+                request_model,
+                cache_hit=False,
+            )
         if stream:
             return self._stream_answer(
                 owner_scope,
@@ -235,7 +273,6 @@ class NovelAgentAppService:
             normalized_content,
             chapter_id=effective_chapter_id,
             entrypoint=entrypoint,
-            conversation_id=conversation.id,
         )
         cached = await self._cache_get(cache_key)
         cache_hit = cached is not None
@@ -244,13 +281,23 @@ class NovelAgentAppService:
             tool_calls = list(cached.get("tool_calls") or [])
             invocation = dict(cached.get("invocation") or {})
         else:
-            assistant_content, tool_calls, invocation = await self._run_model_loop(
-                owner_scope,
-                payload,
-                model=resolved_model,
-                book_id=effective_book_id,
-                chapter_id=effective_chapter_id,
-            )
+            try:
+                assistant_content, tool_calls, invocation = await self._run_model_loop(
+                    owner_scope,
+                    payload,
+                    model=resolved_model,
+                    book_id=effective_book_id,
+                    chapter_id=effective_chapter_id,
+                )
+            except Exception as exc:
+                if not self._is_provider_failure(exc):
+                    raise
+                assistant_content, tool_calls, invocation = await self._local_fallback_result(
+                    owner_scope,
+                    effective_book_id,
+                    normalized_content,
+                    reason=exc,
+                )
             await self._cache_set(
                 cache_key,
                 {"content": assistant_content, "tool_calls": tool_calls, "invocation": invocation},
@@ -286,11 +333,11 @@ class NovelAgentAppService:
             "provider": (invocation or {}).get("provider_name", ""),
             "usage": (invocation or {}).get("usage", {}),
             "cache_hit": cache_hit,
+            "fallback": bool((invocation or {}).get("fallback")),
             "citations": [call.get("evidence", []) for call in tool_calls if call.get("evidence")],
         }
 
     async def list_tools(self, owner_scope: str, book_id: int | None = None) -> list[dict]:
-        del owner_scope, book_id
         builtins = [
             {
                 "name": name,
@@ -299,7 +346,9 @@ class NovelAgentAppService:
                 "parameters": self._tool_parameters(name),
             }
             for name, category in self._TOOL_CATEGORIES.items()
-            if category in self._enabled_tool_categories and category != "operate"
+            if category in self._enabled_tool_categories
+            and category != "operate"
+            and (book_id is not None or not name.startswith("novel."))
         ]
         if self._tool_registry is not None:
             existing = self._tool_registry.list_tools()
@@ -307,7 +356,12 @@ class NovelAgentAppService:
             for item in existing:
                 name = item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
                 category = item.get("category") if isinstance(item, dict) else getattr(item, "category", None)
-                if name in self._TOOL_CATEGORIES and category in self._enabled_tool_categories and name not in names:
+                if (
+                    name in self._TOOL_CATEGORIES
+                    and category in self._enabled_tool_categories
+                    and name not in names
+                    and (book_id is not None or not str(name).startswith("novel."))
+                ):
                     builtins.append(item)
         return builtins
 
@@ -330,6 +384,7 @@ class NovelAgentAppService:
         run, invocation = self._runtime_start(owner_scope, tool_name, category, arguments)
         try:
             self._assert_scope(arguments, owner_scope)
+            self._validate_tool_arguments(tool_name, arguments)
             if category not in self._enabled_tool_categories:
                 raise AuthorizationException("tool category is disabled")
             if category != "read" and not confirmed:
@@ -441,7 +496,7 @@ class NovelAgentAppService:
         messages = list(payload["messages"])
         calls: list[dict] = []
         invocation: dict = {}
-        for _ in range(3):
+        for _ in range(self.max_tool_iterations):
             invocation = await self._invoke_provider(owner_scope, model, {**payload, "messages": messages})
             output = invocation.get("output") if isinstance(invocation, dict) else invocation
             message = self._assistant_message(output)
@@ -489,24 +544,95 @@ class NovelAgentAppService:
                     calls.append(executed)
         return "已达到工具调用上限，请基于已获取的证据继续提问。", calls, invocation
 
-    async def _stream_answer(
+    async def _local_fallback_result(
+        self,
+        owner_scope: str,
+        book_id: int | None,
+        query: str,
+        *,
+        reason: Exception | None = None,
+    ) -> tuple[str, list[dict], dict]:
+        evidence = []
+        if book_id is not None:
+            try:
+                evidence = await self._retrieve(owner_scope, book_id, query, top_k=5)
+            except Exception:
+                evidence = []
+        public_evidence = [self._safe_public(item, text_limit=MAX_EVIDENCE_CHARS) for item in evidence]
+        lines = ["当前模型服务不可用，以下内容仅来自本地索引证据："]
+        for item in public_evidence:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("evidence") or item.get("content") or item.get("text") or "").strip()
+            if not text:
+                continue
+            chapter = item.get("chapter_num")
+            prefix = f"第{chapter}章：" if chapter is not None else ""
+            lines.append(f"- {prefix}{text[:MAX_EVIDENCE_CHARS]}")
+        if len(lines) == 1:
+            lines.append("本地索引没有找到可引用的相关证据，请稍后重试或先完成书籍索引。")
+        invocation = {
+            "provider_name": "local-evidence",
+            "model": "",
+            "fallback": True,
+            "fallback_reason": reason.__class__.__name__ if reason is not None else "provider_unavailable",
+            "usage": {},
+        }
+        tool_calls = [{
+            "name": "local.evidence",
+            "category": "read",
+            "result": {"status": "fallback", "evidence": public_evidence},
+            "evidence": public_evidence,
+        }]
+        return "\n".join(lines), tool_calls, invocation
+
+    async def _persist_answer(
         self,
         owner_scope,
         conversation,
         user_message,
-        payload,
-        resolution,
-        book_id,
-        chapter_id,
-        mode,
-        entrypoint,
-    ) -> AsyncIterator[str]:
-        content, tool_calls, invocation = await self._run_model_loop(
+        content: str,
+        tool_calls: list[dict],
+        invocation: dict,
+        book_id: int | None,
+        chapter_id: int | None,
+        mode: str,
+        entrypoint: str,
+        request_model: str | None,
+        *,
+        cache_hit: bool,
+    ) -> dict:
+        resolved_model = str(invocation.get("model") or request_model or "local-evidence")
+        cache_key = self._answer_cache_key(
             owner_scope,
-            payload,
-            model=resolution.model if resolution else None,
+            book_id,
+            resolved_model,
+            user_message.content,
+            chapter_id=chapter_id,
+            entrypoint=entrypoint,
+        )
+        cached = await self._cache_get(cache_key)
+        if cached is not None:
+            content = str(cached.get("content") or "")
+            tool_calls = list(cached.get("tool_calls") or [])
+            invocation = dict(cached.get("invocation") or {})
+            cache_hit = True
+        elif not cache_hit:
+            await self._cache_set(
+                cache_key,
+                {"content": content, "tool_calls": tool_calls, "invocation": invocation},
+            )
+            await self._record_usage(invocation)
+        await self._record_request(
+            owner_scope=owner_scope,
             book_id=book_id,
             chapter_id=chapter_id,
+            entrypoint=entrypoint,
+            conversation_id=conversation.id,
+            invocation=invocation,
+            tool_calls=tool_calls,
+            cache_hit=cache_hit,
+            resolved_model=resolved_model,
         )
         assistant = AIConversationMessage(
             id=uuid4().hex,
@@ -520,8 +646,77 @@ class NovelAgentAppService:
             book_id=book_id,
             chapter_id=chapter_id,
         )
+        saved = await self._conversation_call("append_message", assistant)
+        return {
+            **self._serialize_message(saved or assistant),
+            "model": resolved_model,
+            "provider": invocation.get("provider_name", ""),
+            "usage": invocation.get("usage", {}),
+            "cache_hit": cache_hit,
+            "fallback": bool(invocation.get("fallback")),
+            "citations": [call.get("evidence", []) for call in tool_calls if call.get("evidence")],
+        }
+
+    @staticmethod
+    def _is_provider_failure(exc: Exception) -> bool:
+        name = exc.__class__.__name__
+        if name in {"ProviderInvocationError", "NovelModelUnavailable"}:
+            return True
+        if getattr(exc, "code", "") == "model_unavailable":
+            return True
+        if isinstance(exc, (ConnectionError, TimeoutError, LookupError)):
+            return True
+        message = str(exc).lower()
+        return "provider" in message and any(
+            marker in message for marker in ("unavailable", "failed", "down", "configured", "timeout")
+        )
+
+    async def _stream_local_fallback(
+        self,
+        owner_scope,
+        conversation,
+        user_message,
+        query,
+        book_id,
+        chapter_id,
+        mode,
+        entrypoint,
+        *,
+        reason,
+    ) -> AsyncIterator[dict]:
+        content, tool_calls, invocation = await self._local_fallback_result(
+            owner_scope, book_id, query, reason=reason,
+        )
+        cache_key = self._answer_cache_key(
+            owner_scope,
+            book_id,
+            "local-evidence",
+            query,
+            chapter_id=chapter_id,
+            entrypoint=entrypoint,
+        )
+        cached = await self._cache_get(cache_key)
+        cache_hit = cached is not None
+        if cache_hit:
+            content = str(cached.get("content") or "")
+            tool_calls = list(cached.get("tool_calls") or [])
+            invocation = dict(cached.get("invocation") or {})
+        else:
+            await self._cache_set(cache_key, {"content": content, "tool_calls": tool_calls, "invocation": invocation})
+            await self._record_usage(invocation)
+        assistant = AIConversationMessage(
+            id=uuid4().hex,
+            conversation_id=conversation.id,
+            role="assistant",
+            mode=mode,
+            content=content,
+            tool_calls=tool_calls,
+            owner_scope=owner_scope,
+            entrypoint=user_message.entrypoint,
+            book_id=book_id,
+            chapter_id=chapter_id,
+        )
         await self._conversation_call("append_message", assistant)
-        await self._record_usage(invocation)
         await self._record_request(
             owner_scope=owner_scope,
             book_id=book_id,
@@ -530,10 +725,122 @@ class NovelAgentAppService:
             conversation_id=conversation.id,
             invocation=invocation,
             tool_calls=tool_calls,
-            cache_hit=False,
-            resolved_model=resolution.model if resolution else None,
+            cache_hit=cache_hit,
+            resolved_model="local-evidence",
         )
-        yield content
+        yield {"event": "started", "data": {"cache_hit": cache_hit, "model": "local-evidence", "fallback": True}}
+        for index in range(0, len(content), 160):
+            yield {"event": "delta", "data": {"text": content[index:index + 160]}}
+        yield {"event": "citation", "data": {"items": [call.get("evidence", []) for call in tool_calls]}}
+        yield {"event": "usage", "data": {}}
+        yield {"event": "completed", "data": {"content": content, "cache_hit": cache_hit, "fallback": True}}
+
+    async def _stream_answer(
+        self,
+        owner_scope,
+        conversation,
+        user_message,
+        payload,
+        resolution,
+        book_id,
+        chapter_id,
+        mode,
+        entrypoint,
+    ) -> AsyncIterator[dict]:
+        resolved_model = resolution.model if resolution else None
+        cache_key = self._answer_cache_key(
+            owner_scope,
+            book_id,
+            resolved_model,
+            str(payload.get("messages", [{}])[-1].get("content", "")).rsplit("\n\n问题：", 1)[-1],
+            chapter_id=chapter_id,
+            entrypoint=entrypoint,
+        )
+        cached = await self._cache_get(cache_key)
+        cache_hit = cached is not None
+        if cache_hit:
+            content = str(cached.get("content") or "")
+            tool_calls = list(cached.get("tool_calls") or [])
+            invocation = dict(cached.get("invocation") or {})
+        else:
+            try:
+                content, tool_calls, invocation = await self._run_model_loop(
+                    owner_scope,
+                    payload,
+                    model=resolved_model,
+                    book_id=book_id,
+                    chapter_id=chapter_id,
+                )
+            except Exception as exc:
+                if self._is_provider_failure(exc):
+                    query = str(payload.get("messages", [{}])[-1].get("content", "")).rsplit(
+                        "\n\n问题：", 1,
+                    )[-1]
+                    async for event in self._stream_local_fallback(
+                        owner_scope,
+                        conversation,
+                        user_message,
+                        query,
+                        book_id,
+                        chapter_id,
+                        mode,
+                        entrypoint,
+                        reason=exc,
+                    ):
+                        yield event
+                    return
+                yield {
+                    "event": "error",
+                    "data": {
+                        "code": exc.__class__.__name__,
+                        "message": str(exc)[:300],
+                    },
+                }
+                return
+            await self._cache_set(
+                cache_key,
+                {"content": content, "tool_calls": tool_calls, "invocation": invocation},
+            )
+            await self._record_usage(invocation)
+        assistant = AIConversationMessage(
+            id=uuid4().hex,
+            conversation_id=conversation.id,
+            role="assistant",
+            mode=mode,
+            content=content,
+            tool_calls=tool_calls,
+            owner_scope=owner_scope,
+            entrypoint=user_message.entrypoint,
+            book_id=book_id,
+            chapter_id=chapter_id,
+        )
+        await self._conversation_call("append_message", assistant)
+        await self._record_request(
+            owner_scope=owner_scope,
+            book_id=book_id,
+            chapter_id=chapter_id,
+            entrypoint=entrypoint,
+            conversation_id=conversation.id,
+            invocation=invocation,
+            tool_calls=tool_calls,
+            cache_hit=cache_hit,
+            resolved_model=resolved_model,
+        )
+        yield {"event": "started", "data": {"cache_hit": cache_hit, "model": resolved_model or ""}}
+        for index in range(0, len(content), 160):
+            yield {"event": "delta", "data": {"text": content[index:index + 160]}}
+        citations = [call.get("evidence", []) for call in tool_calls if call.get("evidence")]
+        yield {"event": "citation", "data": {"items": citations}}
+        yield {"event": "usage", "data": invocation.get("usage", {})}
+        yield {
+            "event": "completed",
+            "data": {
+                "content": content,
+                "cache_hit": cache_hit,
+                "tool_calls": tool_calls,
+                "model": resolved_model or (invocation or {}).get("model", ""),
+            },
+        }
 
     async def _invoke_provider(self, owner_scope: str, model: str | None, payload: dict) -> dict:
         quota_scope = ("user", self._actor_id(owner_scope))
@@ -675,17 +982,15 @@ class NovelAgentAppService:
                     query=query,
                     prompt_version=self.prompt_version,
                     toolset_version=self.toolset_version,
-                    chapter_id=chapter_id,
-                    entrypoint=entrypoint,
-                    conversation_id=conversation_id,
-                )
+                chapter_id=chapter_id,
+                entrypoint=entrypoint,
+            )
         raw = "\0".join(
             str(item) for item in (
                 owner_scope, book_id, self.knowledge_version, model or "route-default",
                 query,
                 chapter_id,
                 entrypoint,
-                conversation_id,
                 self.prompt_version,
                 self.toolset_version,
             )
@@ -1479,6 +1784,63 @@ class NovelAgentAppService:
         for key in ("owner_scope", "ownerScope", "tenant_id", "tenantId"):
             if key in arguments and arguments[key] != owner_scope:
                 raise AuthorizationException("cross-owner tool arguments are not allowed")
+
+    @classmethod
+    def _validate_tool_arguments(cls, tool_name: str, arguments: dict) -> None:
+        """Validate model/MCP arguments against the same schemas we advertise."""
+        schema = cls._tool_parameters(tool_name)
+        if not isinstance(schema, dict):
+            return
+        # These fields are request context, not model-controlled tool inputs,
+        # but callers may include them when forwarding a scoped invocation.
+        properties = dict(schema.get("properties") or {})
+        properties.update(
+            {
+                "book_id": {"type": "integer"},
+                "chapter_id": {"type": "integer"},
+                "owner_scope": {"type": "string"},
+                "ownerScope": {"type": "string"},
+                "tenant_id": {"type": "string"},
+                "tenantId": {"type": "string"},
+            }
+        )
+        schema = {**schema, "properties": properties}
+        cls._validate_schema_value(arguments, schema, "arguments")
+
+    @classmethod
+    def _validate_schema_value(cls, value: Any, schema: dict, path: str) -> None:
+        expected = schema.get("type")
+        if expected == "object":
+            if not isinstance(value, dict):
+                raise ValidationException(f"{path} must be an object")
+            properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+            for required in schema.get("required", []) or []:
+                if required not in value:
+                    raise ValidationException(f"{path}.{required} is required")
+            if schema.get("additionalProperties") is False:
+                unknown = sorted(set(value) - set(properties))
+                if unknown:
+                    raise ValidationException(f"{path}.{unknown[0]} is not allowed")
+            for key, item in value.items():
+                property_schema = properties.get(key)
+                if isinstance(property_schema, dict):
+                    cls._validate_schema_value(item, property_schema, f"{path}.{key}")
+            return
+        if expected == "string" and not isinstance(value, str):
+            raise ValidationException(f"{path} must be a string")
+        if expected == "integer" and (not isinstance(value, int) or isinstance(value, bool)):
+            raise ValidationException(f"{path} must be an integer")
+        if expected == "number" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+            raise ValidationException(f"{path} must be a number")
+        if expected == "boolean" and not isinstance(value, bool):
+            raise ValidationException(f"{path} must be a boolean")
+        if expected == "array" and not isinstance(value, list):
+            raise ValidationException(f"{path} must be an array")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if schema.get("minimum") is not None and value < schema["minimum"]:
+                raise ValidationException(f"{path} is below the minimum")
+            if schema.get("maximum") is not None and value > schema["maximum"]:
+                raise ValidationException(f"{path} is above the maximum")
 
     def _resolve_model(self, owner_scope, book_id, conversation_id, task_type, request_model):
         if self._model_selection is None:

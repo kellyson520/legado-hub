@@ -10,6 +10,7 @@ MCP 协议参考：
 """
 
 import json
+import sys
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
@@ -34,10 +35,7 @@ class MCPInterface:
             mcp_tools.append({
                 'name': t['name'],
                 'description': t['description'],
-                'inputSchema': {
-                    'type': 'object',
-                    'properties': t.get('parameters', {}),
-                },
+                'inputSchema': self._input_schema(t.get('parameters', {})),
             })
         return {
             'tools': mcp_tools,
@@ -45,7 +43,10 @@ class MCPInterface:
 
     def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """MCP tools/call 方法：调用工具"""
-        result = self.agent.registry.call(tool_name, **arguments)
+        if not isinstance(arguments, dict):
+            result = {'error': 'arguments must be an object', 'tool': tool_name, 'error_code': 'validation'}
+        else:
+            result = self.agent.registry.call(tool_name, **arguments)
 
         if 'error' in result:
             return {
@@ -65,6 +66,16 @@ class MCPInterface:
                     'text': json.dumps(result, ensure_ascii=False, indent=2),
                 }
             ],
+        }
+
+    @staticmethod
+    def _input_schema(parameters: Dict[str, Any]) -> Dict[str, Any]:
+        if isinstance(parameters, dict) and parameters.get('type') == 'object':
+            return parameters
+        return {
+            'type': 'object',
+            'properties': parameters if isinstance(parameters, dict) else {},
+            'additionalProperties': False,
         }
 
     def handle_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,6 +108,30 @@ class MCPInterface:
                 }
             }
 
+    def serve_stdio(self, input_stream=None, output_stream=None) -> None:
+        """Serve newline-delimited JSON-RPC requests for MCP desktop clients."""
+        input_stream = input_stream or sys.stdin
+        output_stream = output_stream or sys.stdout
+        for line in input_stream:
+            if not line.strip():
+                continue
+            try:
+                request = json.loads(line)
+                result = self.handle_request(request)
+                response = {
+                    'jsonrpc': '2.0',
+                    'id': request.get('id'),
+                    'result': result,
+                }
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                response = {
+                    'jsonrpc': '2.0',
+                    'id': None,
+                    'error': {'code': -32700, 'message': str(exc)},
+                }
+            output_stream.write(json.dumps(response, ensure_ascii=False) + '\n')
+            output_stream.flush()
+
     def get_tool_definitions_json(self) -> str:
         """获取 JSON 格式的工具定义（供 LLM function calling 使用）"""
         tools = self.agent.list_available_tools()
@@ -108,8 +143,7 @@ class MCPInterface:
                     'name': t['name'],
                     'description': t['description'],
                     'parameters': {
-                        'type': 'object',
-                        'properties': t.get('parameters', {}),
+                        **self._input_schema(t.get('parameters', {})),
                     },
                 },
             })

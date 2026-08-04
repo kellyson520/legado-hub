@@ -10,7 +10,16 @@ import json
 from typing import Any, Dict, Optional, List
 from pathlib import Path
 
+from app.core.logging import get_logger
+
 from .providers import ProviderConfig
+
+
+class AgentConfigError(ValueError):
+    """Raised when an explicit Agent configuration cannot be loaded."""
+
+
+logger = get_logger(__name__)
 
 
 class AgentConfig:
@@ -59,6 +68,7 @@ class AgentConfig:
             'provider': 'mock',
             'model': 'deepseek-v3',
             'base_url': '',
+            'api_key': '',
             'api_key_env': 'LLM_API_KEY',
             'temperature': 0.7,
             'max_tokens': 4096,
@@ -145,7 +155,7 @@ class AgentConfig:
     def _load_file(self, path: str):
         p = Path(path)
         if not p.exists():
-            return
+            raise AgentConfigError(f"configuration file not found: {p}")
         suffix = p.suffix.lower()
         try:
             if suffix in ('.json',):
@@ -155,21 +165,29 @@ class AgentConfig:
             elif suffix in ('.toml',):
                 try:
                     import tomllib
-                    with open(p, 'rb') as f:
-                        data = tomllib.load(f)
-                    self._deep_update(self._config, data)
-                except ImportError:
-                    pass
-        except Exception:
-            pass
+                except ImportError as exc:
+                    try:
+                        import tomli as tomllib
+                    except ImportError:
+                        raise AgentConfigError("TOML support is unavailable on this Python runtime") from exc
+                with open(p, 'rb') as f:
+                    data = tomllib.load(f)
+                self._deep_update(self._config, data)
+            else:
+                raise AgentConfigError(f"unsupported configuration format: {p.suffix or '<none>'}")
+        except AgentConfigError:
+            raise
+        except (OSError, ValueError, TypeError) as exc:
+            logger.error("failed to load Agent configuration %s: %s", p, exc)
+            raise AgentConfigError(f"failed to load configuration {p}: {exc}") from exc
 
     def _load_env_overrides(self):
         env_map = {
             'LLM_PROVIDER': 'llm.provider',
             'LLM_MODEL': 'llm.model',
             'LLM_BASE_URL': 'llm.base_url',
-            'LLM_API_KEY': 'llm.api_key_env',
-            'DEEPSEEK_API_KEY': 'llm.api_key_env',
+            'LLM_API_KEY': 'llm.api_key',
+            'DEEPSEEK_API_KEY': 'llm.api_key',
             'NOVEL_NAME': 'novel.name',
             'NOVEL_DATA_DIR': 'novel.data_dir',
             'DEFAULT_MODEL': 'agent.default_model',
@@ -218,6 +236,7 @@ class AgentConfig:
                 base_url=p.get('base_url', ''),
                 model=p.get('model', ''),
                 api_key_env=p.get('api_key_env', ''),
+                api_key=p.get('api_key', ''),
                 context_window=p.get('context_window', 128000),
                 extra=p.get('extra', {}),
             ))

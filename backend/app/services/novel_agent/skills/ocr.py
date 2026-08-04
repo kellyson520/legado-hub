@@ -10,6 +10,7 @@ OCR 技能 - OCR Skill
 - 多个 Skill 可共享同一基础设施
 """
 
+import json
 from typing import List, Dict, Any
 from ..registry import BaseSkill, ToolDefinition
 from ..infrastructure import ocr_engine
@@ -169,7 +170,13 @@ class OCRSkill(BaseSkill):
 
         image_dir = params.get("image_dir", "")
         pattern = params.get("image_pattern", "*.jpg")
-        output_format = params.get("output_format", "text")
+        output_format = str(params.get("output_format", "text") or "text").lower()
+        if output_format not in {"text", "json", "srt"}:
+            return {
+                "error": "output_format must be text, json or srt",
+                "error_code": "invalid_output_format",
+                "success": False,
+            }
 
         if not os.path.isdir(image_dir):
             return {"error": f"目录不存在: {image_dir}", "success": False}
@@ -190,6 +197,7 @@ class OCRSkill(BaseSkill):
             })
 
         all_text = "\n\n".join(f"[{r['file']}]\n{r['text']}" for r in results)
+        formatted_output = self._format_batch_output(results, output_format)
 
         return {
             "success": True,
@@ -197,4 +205,24 @@ class OCRSkill(BaseSkill):
             "results": results,
             "output_format": output_format,
             "full_text": all_text,
+            "formatted_output": formatted_output,
         }
+
+    @staticmethod
+    def _format_batch_output(results: List[Dict[str, Any]], output_format: str) -> str:
+        if output_format == "json":
+            return json.dumps(results, ensure_ascii=False)
+        if output_format == "srt":
+            blocks = []
+            for index, item in enumerate(results, 1):
+                start = _srt_timestamp((index - 1) * 5)
+                end = _srt_timestamp(index * 5)
+                blocks.append(f"{index}\n{start} --> {end}\n{item['text']}")
+            return "\n\n".join(blocks)
+        return "\n\n".join(f"[{item['file']}]\n{item['text']}" for item in results)
+
+
+def _srt_timestamp(seconds: int) -> str:
+    hours, remainder = divmod(max(0, int(seconds)), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},000"

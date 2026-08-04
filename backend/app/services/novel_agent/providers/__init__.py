@@ -13,6 +13,23 @@ from typing import AsyncIterator, Dict, List, Optional, Any
 from dataclasses import dataclass, field
 
 
+class ProviderError(RuntimeError):
+    """Base error for the legacy provider surface."""
+
+
+class ProviderHTTPError(ProviderError):
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = int(status_code)
+        self.retryable = self.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+
+
+class ProviderStreamError(ProviderError):
+    def __init__(self, message: str, *, cause: BaseException | None = None):
+        super().__init__(message)
+        self.cause = cause
+
+
 @dataclass
 class ToolSchema:
     name: str
@@ -58,6 +75,7 @@ class StreamChunk:
     tool_calls: List[ToolCall] = field(default_factory=list)
     usage: Optional[Usage] = None
     error: Optional[str] = None
+    exception: Optional[BaseException] = None
     done: bool = False
 
 
@@ -151,3 +169,7 @@ def register_provider(kind: str):
         ProviderRegistry.register(kind, cls)
         return cls
     return decorator
+
+
+# Import built-in adapters so their decorators register them for the legacy runtime.
+from . import openai_provider as _openai_provider  # noqa: E402,F401

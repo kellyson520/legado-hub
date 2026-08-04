@@ -312,6 +312,32 @@ async def test_cross_owner_operate_tool_is_rejected_and_audited(service):
 
 
 @pytest.mark.asyncio
+async def test_tool_schema_rejects_missing_required_arguments(service):
+    from app.core.exceptions import ValidationException
+
+    with pytest.raises(ValidationException, match="query"):
+        await service.call_tool(
+            "user:1",
+            "novel.search_memory",
+            {"book_id": 7},
+            book_id=7,
+        )
+
+
+@pytest.mark.asyncio
+async def test_tool_schema_rejects_unknown_arguments(service):
+    from app.core.exceptions import ValidationException
+
+    with pytest.raises(ValidationException, match="unexpected"):
+        await service.call_tool(
+            "user:1",
+            "reading.progress",
+            {"book_id": 7, "unexpected": True},
+            book_id=7,
+        )
+
+
+@pytest.mark.asyncio
 async def test_reader_context_contains_scoped_evidence_and_untrusted_boundary(service):
     conversation = await service.create_conversation("user:1", book_id=7, entrypoint="reader")
     answer = await service.send_message(
@@ -868,6 +894,66 @@ async def test_final_answer_cache_is_scoped_and_records_usage(service):
     assert first["cache_hit"] is False
     assert second["cache_hit"] is True
     assert len(service._platform.calls) == calls_after_first
+
+
+@pytest.mark.asyncio
+async def test_stream_persists_final_answer_and_reuses_the_answer_cache(service):
+    class Cache:
+        def __init__(self):
+            self.values = {}
+
+        def key(self, **kwargs):
+            return "|".join(str(kwargs[item]) for item in ("owner_scope", "book_id", "model", "query"))
+
+        async def get(self, key):
+            return self.values.get(key)
+
+        async def set(self, key, value, expire=None):
+            self.values[key] = value
+            return True
+
+    service._cache = Cache()
+    conversation = await service.create_conversation("user:1")
+
+    first_stream = await service.send_message(
+        "user:1", conversation["id"], "流式问题", entrypoint="workspace", stream=True,
+    )
+    first_events = [event async for event in first_stream]
+    calls_after_first = len(service._platform.calls)
+
+    second_stream = await service.send_message(
+        "user:1", conversation["id"], "流式问题", entrypoint="workspace", stream=True,
+    )
+    second_events = [event async for event in second_stream]
+
+    assert [event["event"] for event in first_events] == [
+        "started", "delta", "citation", "usage", "completed",
+    ]
+    assert first_events[-1]["data"]["cache_hit"] is False
+    assert second_events[0]["data"]["cache_hit"] is True
+    assert len(service._platform.calls) == calls_after_first
+    assert [message.role for message in service._conversations.messages[conversation["id"]]] == [
+        "user", "assistant", "user", "assistant",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_returns_local_evidence_fallback(service):
+    class DownProvider:
+        async def invoke_chat(self, **_kwargs):
+            raise RuntimeError("provider down")
+
+    service._platform = DownProvider()
+    conversation = await service.create_conversation("user:1", book_id=7, entrypoint="book")
+
+    result = await service.send_message(
+        "user:1", conversation["id"], "林远在哪里", entrypoint="book", book_id=7,
+    )
+
+    assert result["fallback"] is True
+    assert result["provider"] == "local-evidence"
+    assert "本地索引证据" in result["content"]
+    assert result["citations"]
 
 
 @pytest.mark.asyncio

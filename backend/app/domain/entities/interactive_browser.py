@@ -1,7 +1,14 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum
 from uuid import uuid4
+
+try:
+    from enum import StrEnum
+except ImportError:  # Python 3.10 compatibility.
+    class StrEnum(str, Enum):
+        def __str__(self) -> str:
+            return self.value
 
 
 class InteractiveBrowserState(StrEnum):

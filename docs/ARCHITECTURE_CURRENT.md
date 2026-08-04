@@ -1,12 +1,25 @@
 # 当前架构基线
 
-更新时间：2026-07-19
+更新时间：2026-08-04
 
 这份文档描述仓库当前实际运行的架构。早期设计文档中的旧路由树和兼容代码只作为历史记录，不是可继续扩展的运行入口。
 
 ## 运行边界
 
 FastAPI 只从 `app.main` 挂载 `app.interfaces.http.router.api_router`。后台资源统一使用 `/api/*`，响应、异常、认证、权限和审计由同一套核心组件处理。`app/api/routers`、`app/routers` 和 `app/interfaces/api` 已从源码树退役。
+
+小说 Agent 的正式应用边界是 `NovelAgentAppService`：它负责 owner-scoped
+对话、工具权限、章节/RAG 证据、缓存和 AgentRuntime 记录，并通过
+`ProviderPlatformService` 访问模型。Provider 路由使用统一的
+`ProviderAdapter` 契约，当前基础设施适配器覆盖 OpenAI-compatible、Anthropic
+和 Gemini；上层业务不直接拼接厂商消息格式。
+
+`POST /api/harness/v1/execute` 是独立的 OpenHarness v1 协议入口。它只做
+协议校验、能力声明和 action directive 映射，实际模型调用仍复用
+`ProviderPlatformService`，因此不会形成第二套 Agent 或 Provider 客户端。
+OpenHarness 的模型无关性来自适配器边界，不代表任何厂商 API 可以直接接收
+另一厂商的原生消息；没有可用 Provider 时，小说应用返回可审计的本地证据
+降级，OpenHarness 返回结构化的 `engine_failure`。
 
 ## 依赖方向
 
@@ -50,6 +63,8 @@ core (logging, response, exceptions, security, URL safety, redaction)
 - `tasks` 只负责调度和日志上下文；失效源清理、API Key 配额重置/同步由 `MaintenanceService` 编排，不能直接操作 SQLite ORM。
 - 前端流式事件也通过 `frontend/src/api/client.ts` 的统一 `stream` 端口发送，页面模块不再自行拼接认证头或 `/api` 前缀。
 - 浏览器/Playwright 适配器只依赖 `application.ports.browser`；探针实现由组合根注入，不在基础设施适配器中实例化应用服务。
+- ProviderPlatform 按路由组执行有限指数退避，聚合 Provider 错误前脱敏，并在配置了成本策略时保护同一配额范围的在途请求；策略不可用会显式失败，不回退到无条件放行。
+- NovelIndexService 对空书返回 `no_chapters`，保留 `canonical_num=0`，并返回阶段耗时；NovelIndexWorker 会把这些结构化结果原样保存到任务记录。
 
 ## 源阅读与联合测试
 
@@ -57,7 +72,7 @@ core (logging, response, exceptions, security, URL safety, redaction)
 
 源导入解析通过 `application.ports.SourceImportParser` 注入。当前实现位于 `app.infrastructure.crawler.source_fetcher`，旧的 `app.services.fetcher` 仅保留兼容导出。联合测试的临时源由启动清理、异常路径清理和 `cleanup_ephemeral_sources` 调度任务共同回收。
 
-`app.services` 中的旧搜索器、生成器、翻译器和实验性小说 Agent/理解模块不在 FastAPI 运行入口中，也没有任何 `app` 生产模块反向引用它们；它们只为外部脚本和历史测试保留。新功能禁止继续依赖这个命名空间，迁移后的运行能力必须落在当前应用/领域/基础设施边界内。
+`app.services` 中的旧搜索器、生成器、翻译器和实验性小说 Agent/理解模块不在 FastAPI 运行入口中，也没有任何 `app` 生产模块反向引用它们；它们只为外部脚本和历史测试保留。旧版 `ReasonixAgent` 仍维护为兼容运行时：其 planner、会话记忆、工具权限、Provider 注入和技能降级行为可独立使用，但新功能禁止继续依赖这个命名空间，迁移后的运行能力必须落在当前应用/领域/基础设施边界内。
 
 ## 组合与扩展
 

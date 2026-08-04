@@ -61,6 +61,123 @@ class TestAgentConfig:
         else:
             pytest.skip("toml 配置文件不存在")
 
+    def test_invalid_config_is_reported_instead_of_ignored(self, tmp_path):
+        from app.services.novel_agent.config import AgentConfig, AgentConfigError
+
+        path = tmp_path / "invalid.json"
+        path.write_text("{not-json", encoding="utf-8")
+
+        with pytest.raises(AgentConfigError, match="invalid.json"):
+            AgentConfig(config_path=str(path))
+
+    def test_invalid_toml_config_is_reported_instead_of_ignored(self, tmp_path):
+        from app.services.novel_agent.config import AgentConfig, AgentConfigError
+
+        path = tmp_path / "invalid.toml"
+        path.write_text("[agent\nname = 'broken'", encoding="utf-8")
+
+        with pytest.raises(AgentConfigError, match="invalid.toml"):
+            AgentConfig(config_path=str(path))
+
+    def test_api_key_environment_values_are_secrets_not_variable_names(self, monkeypatch):
+        from app.services.novel_agent.config import AgentConfig
+
+        monkeypatch.setenv("LLM_API_KEY", "secret-value")
+        config = AgentConfig()
+
+        assert config.get("llm.api_key") == "secret-value"
+        assert config.get("llm.api_key_env") != "secret-value"
+
+    def test_memory_history_is_persisted_and_isolated_by_session(self, tmp_path):
+        from app.services.novel_agent.memory import AgentMemory
+
+        config = {
+            "memory": {
+                "sqlite_path": str(tmp_path / "memory.sqlite3"),
+                "project_memory_file": str(tmp_path / "AGENTS.md"),
+            },
+        }
+        first = AgentMemory(config, session_id="session-a")
+        first.add_to_conversation("user", "只属于 A")
+        first.add_qa("林远在哪里", "在城门", tools_used=["chapter.search"])
+
+        restored = AgentMemory(config, session_id="session-a")
+        other = AgentMemory(config, session_id="session-b")
+
+        assert restored.conversation_history[0]["content"] == "只属于 A"
+        assert restored.get_recent_qa(query="林远")
+        assert other.conversation_history == []
+        assert other.get_recent_qa() == []
+
+    def test_malformed_configured_novel_file_is_reported_instead_of_ignored(self, tmp_path):
+        from app.services.novel_agent.config import AgentConfig
+        from app.services.novel_agent.store import NovelDataStore, NovelDataStoreError
+
+        data_dir = tmp_path / "novels"
+        data_dir.mkdir()
+        (data_dir / "broken.json").write_text("{not-json", encoding="utf-8")
+        config = AgentConfig(
+            config_dict={
+                "novel": {
+                    "data_dir": str(data_dir),
+                    "graph_file": str(tmp_path / "missing-graph.json"),
+                }
+            }
+        )
+
+        with pytest.raises(NovelDataStoreError, match="broken.json"):
+            NovelDataStore(config)
+
+    def test_malformed_configured_graph_file_is_reported_instead_of_ignored(self, tmp_path):
+        from app.services.novel_agent.config import AgentConfig
+        from app.services.novel_agent.store import NovelDataStore, NovelDataStoreError
+
+        data_dir = tmp_path / "novels"
+        data_dir.mkdir()
+        graph_file = tmp_path / "broken-graph.json"
+        graph_file.write_text("{not-json", encoding="utf-8")
+        config = AgentConfig(
+            config_dict={
+                "novel": {
+                    "data_dir": str(data_dir),
+                    "graph_file": str(graph_file),
+                }
+            }
+        )
+
+        with pytest.raises(NovelDataStoreError, match="broken-graph.json"):
+            NovelDataStore(config)
+
+    def test_missing_configured_graph_file_defaults_to_empty_graph(self, tmp_path):
+        from app.services.novel_agent.config import AgentConfig
+        from app.services.novel_agent.store import NovelDataStore
+
+        data_dir = tmp_path / "novels"
+        data_dir.mkdir()
+        config = AgentConfig(
+            config_dict={
+                "novel": {
+                    "data_dir": str(data_dir),
+                    "graph_file": str(tmp_path / "missing-graph.json"),
+                }
+            }
+        )
+
+        store = NovelDataStore(config)
+
+        assert store.graph == {"relations": [], "communities": []}
+
+    def test_reasonix_injects_the_initialized_provider_into_provider_backed_skills(self):
+        from app.services.novel_agent.config import AgentConfig
+        from app.services.novel_agent.providers import ProviderRegistry
+        from app.services.novel_agent.reasonix_agent import ReasonixAgent
+
+        ProviderRegistry.clear()
+        agent = ReasonixAgent(AgentConfig())
+
+        assert agent.registry._skills["writer"].provider is agent.primary_provider
+        assert agent.registry._skills["reasoner"].provider is agent.primary_provider
+
 
 # ==================== NovelDataStore 测试 ====================
 

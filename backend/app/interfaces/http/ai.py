@@ -1,4 +1,5 @@
 import inspect
+import json
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -183,6 +184,20 @@ async def send_conversation_message(
         request_model=payload.model,
         stream=payload.stream,
     )
+    if payload.stream and hasattr(data, "__aiter__"):
+        from fastapi.responses import StreamingResponse
+
+        async def events():
+            async for event in data:
+                if isinstance(event, dict) and event.get("event"):
+                    yield (
+                        f"event: {event['event']}\n"
+                        f"data: {json.dumps(event.get('data', {}), ensure_ascii=False)}\n\n"
+                    )
+                else:
+                    yield "event: delta\ndata: " + json.dumps({"text": str(event)}, ensure_ascii=False) + "\n\n"
+
+        return StreamingResponse(events(), media_type="text/event-stream")
     return ok(data=data, message="ai conversation message completed", meta={})
 
 

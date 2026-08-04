@@ -56,6 +56,10 @@ class NovelIndexWorker:
                     "skipped_chapters": indexed.skipped_chapters,
                     "failed_chapters": indexed.failed_chapters,
                     "errors": indexed.errors,
+                    "indexed_chapters": list(getattr(indexed, "indexed_chapters", []) or []),
+                    "status": getattr(indexed, "status", "completed" if indexed.failed_chapters == 0 else "partial"),
+                    "no_chapters": bool(getattr(indexed, "no_chapters", False)),
+                    "timings_ms": dict(getattr(indexed, "timings_ms", {}) or {}),
                 }
                 await self._save_task(task)
                 if self._novel_repo is not None:

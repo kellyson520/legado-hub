@@ -28,7 +28,10 @@ from app.application.services.novel_analysis_audit_service import NovelAnalysisA
 from app.application.services.novel_analysis_task_service import NovelAnalysisTaskService
 from app.application.services.narrative_knowledge_service import NarrativeKnowledgeService
 from app.application.services.novel_app_service import NovelAppService
-from app.application.services.provider_platform_service import ProviderPlatformService
+from app.application.services.provider_platform_service import (
+    ProviderPlatformService,
+    RepositoryProviderQuotaLimiter,
+)
 from app.application.ports.provider import PROVIDER_ROUTE_GROUPS
 from app.application.services.source_complement_app_service import SourceComplementAppService
 from app.application.services.source_build_agent import SourceBuildAgent
@@ -105,7 +108,12 @@ _interactive_browser_service_lock = Lock()
 _novel_cache_provider = MemoryCacheProvider()
 _novel_cache_service: NovelCacheService | None = None
 _novel_database = None
+_novel_repository: SqliteNovelRepository | None = None
 _novel_database_lock = asyncio.Lock()
+_scoped_novel_repository: SqliteNovelRepository | None = None
+_scoped_novel_retriever: RAGRetriever | None = None
+_scoped_novel_agent_app_service: NovelAgentAppService | None = None
+_scoped_novel_builder_lock = asyncio.Lock()
 
 
 def build_auth_repository() -> SQLiteAuthRepository:
@@ -423,11 +431,6 @@ def build_engine_service() -> EngineService:
     )
 
 
-class _AllowAllProviderQuotaLimiter:
-    def assert_allowed(self, quota_scope: tuple[str, str]) -> None:
-        return None
-
-
 def build_provider_registry() -> ProviderRegistry:
     provider_groups = PROVIDER_ROUTE_GROUPS
     groups: dict[str, list[ProviderSelection]] = {}
@@ -485,10 +488,11 @@ def build_provider_registry() -> ProviderRegistry:
 
 
 def build_provider_platform_service() -> ProviderPlatformService:
+    provider_repo = build_provider_repository()
     return ProviderPlatformService(
         registry=build_provider_registry(),
-        quota_limiter=_AllowAllProviderQuotaLimiter(),
-        provider_repo=build_provider_repository(),
+        quota_limiter=RepositoryProviderQuotaLimiter(provider_repo),
+        provider_repo=provider_repo,
         provider_factory=lambda name, endpoint_url, api_key, provider_type="openai_compatible": create_provider_adapter(
             name=name,
             endpoint_url=endpoint_url,
@@ -610,7 +614,7 @@ def build_novel_model_preference_repository() -> SQLiteNovelModelPreferenceRepos
 
 async def build_novel_repository() -> SqliteNovelRepository:
     """Return the shared async repository for the standalone novel database."""
-    global _novel_database
+    global _novel_database, _novel_repository
     async with _novel_database_lock:
         if _novel_database is None:
             import aiosqlite
@@ -626,7 +630,9 @@ async def build_novel_repository() -> SqliteNovelRepository:
             else:
                 await _novel_database.executescript(schema_path.read_text(encoding="utf-8"))
                 await migrate_novel_database(_novel_database)
-    return SqliteNovelRepository(_novel_database)
+        if _novel_repository is None:
+            _novel_repository = SqliteNovelRepository(_novel_database)
+    return _novel_repository
 
 
 def build_novel_adaptive_learning_service(repo):
@@ -637,11 +643,13 @@ def build_novel_adaptive_learning_service(repo):
 
 
 async def close_novel_repository() -> None:
-    global _novel_database
+    global _novel_database, _novel_repository
+    await close_scoped_novel_agent_app_service()
     async with _novel_database_lock:
         if _novel_database is not None:
             await _novel_database.close()
             _novel_database = None
+        _novel_repository = None
 
 
 def build_ai_service() -> AIService:
@@ -752,8 +760,9 @@ def build_novel_agent_app_service(
 ) -> NovelAgentAppService:
     """Assemble the shared novel assistant around existing boundaries."""
     ensure_sqlite_bootstrap()
+    novel_settings = build_system_settings_service().get_novel_settings()
     if enabled_tool_categories is None:
-        configured = build_system_settings_service().get_novel_settings().get("agent_permissions", {})
+        configured = novel_settings.get("agent_permissions", {})
         enabled_tool_categories = {
             category for category, enabled in configured.items() if enabled
         }
@@ -770,16 +779,38 @@ def build_novel_agent_app_service(
         agent_runtime=agent_runtime or build_agent_runtime_service(),
         tool_registry=tool_registry,
         enabled_tool_categories=enabled_tool_categories,
+        max_tool_iterations=novel_settings.get(
+            "max_tool_iterations",
+            novel_settings.get("max_tool_calls", 3),
+        ),
     )
 
 
 async def build_scoped_novel_agent_app_service() -> NovelAgentAppService:
     """Build the novel assistant with the shared owner-scoped novel context."""
-    repo = await build_novel_repository()
-    novel_settings = build_system_settings_service().get_novel_settings()
-    retriever = RAGRetriever(
-        repo,
-        vector_store=build_vector_store(),
-        similarity_threshold=float(novel_settings.get("threshold", 0.0) or 0.0),
-    )
-    return build_novel_agent_app_service(novel_repo=repo, retriever=retriever)
+    global _scoped_novel_repository, _scoped_novel_retriever, _scoped_novel_agent_app_service
+    async with _scoped_novel_builder_lock:
+        if _scoped_novel_agent_app_service is not None:
+            return _scoped_novel_agent_app_service
+        _scoped_novel_repository = await build_novel_repository()
+        novel_settings = build_system_settings_service().get_novel_settings()
+        if _scoped_novel_retriever is None:
+            _scoped_novel_retriever = RAGRetriever(
+                _scoped_novel_repository,
+                vector_store=build_vector_store(),
+                similarity_threshold=float(novel_settings.get("threshold", 0.0) or 0.0),
+            )
+        _scoped_novel_agent_app_service = build_novel_agent_app_service(
+            novel_repo=_scoped_novel_repository,
+            retriever=_scoped_novel_retriever,
+        )
+        return _scoped_novel_agent_app_service
+
+
+async def close_scoped_novel_agent_app_service() -> None:
+    """Drop scoped novel services before the shared async database is closed."""
+    global _scoped_novel_repository, _scoped_novel_retriever, _scoped_novel_agent_app_service
+    async with _scoped_novel_builder_lock:
+        _scoped_novel_agent_app_service = None
+        _scoped_novel_retriever = None
+        _scoped_novel_repository = None
