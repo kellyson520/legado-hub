@@ -104,3 +104,26 @@ def test_provider_activation_at_excludes_future_accounts_from_runtime_routes(tmp
 
     assert [item.id for item in configured] == [active.id]
     assert future.activation_at is not None
+
+
+def test_provider_repository_persists_non_openai_provider_type_and_lists_it(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "provider-types.sqlite3"))
+    monkeypatch.setenv("SECRET_KEY", "test-secret-key-32-bytes-minimum")
+
+    from app.infrastructure.persistence.sqlite.bootstrap import bootstrap_sqlite
+    from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
+
+    bootstrap_sqlite()
+    repo = SQLiteProviderRepository()
+    account = repo.save_provider(
+        name="claude",
+        provider_type="anthropic",
+        base_url="https://api.anthropic.com",
+        api_key="anthropic-key",
+        default_model="claude-3-5-sonnet",
+        enabled=True,
+    )
+
+    assert account.provider_type == "anthropic"
+    assert [item.name for item in repo.list_configured_providers()] == ["claude"]

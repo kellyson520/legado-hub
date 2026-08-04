@@ -73,6 +73,7 @@ class SQLiteProviderRepository(ProviderRepository):
         api_key: str,
         default_model: str,
         enabled: bool,
+        provider_type: str | None = None,
         activation_at: datetime | None = None,
         id: str | None = None,
     ) -> ProviderAccount:
@@ -88,7 +89,7 @@ class SQLiteProviderRepository(ProviderRepository):
                 model = ProviderAccountModel(
                     id=uuid4().hex,
                     name=name,
-                    provider_type="openai_compatible",
+                    provider_type=provider_type or "openai_compatible",
                     base_url=base_url,
                     api_key=api_key,
                     default_model=default_model,
@@ -98,7 +99,8 @@ class SQLiteProviderRepository(ProviderRepository):
                 db.add(model)
             else:
                 model.name = name
-                model.provider_type = "openai_compatible"
+                if provider_type:
+                    model.provider_type = provider_type
                 model.base_url = base_url
                 model.default_model = default_model
                 model.enabled = enabled
@@ -128,12 +130,18 @@ class SQLiteProviderRepository(ProviderRepository):
             self._close(db)
 
     def list_configured_openai_providers(self) -> list[ProviderAccount]:
+        return [
+            account
+            for account in self.list_configured_providers()
+            if account.provider_type == "openai_compatible"
+        ]
+
+    def list_configured_providers(self) -> list[ProviderAccount]:
         db = self._db()
         try:
             rows = (
                 db.query(ProviderAccountModel)
                 .filter(
-                    ProviderAccountModel.provider_type == "openai_compatible",
                     ProviderAccountModel.enabled.is_(True),
                     ProviderAccountModel.base_url != "",
                     ProviderAccountModel.api_key != "",

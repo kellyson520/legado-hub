@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openharness.dev/schema/openharness-v1.draft.json",
+  "title": "OpenHarness wire message (v1 draft)",
+  "description": "Request or response envelope. Unknown fields are allowed and MUST be ignored by implementations per PROTOCOL.md.",
+  "oneOf": [
+    { "$ref": "#/$defs/requestMessage" },
+    { "$ref": "#/$defs/responseMessage" }
+  ],
+  "$defs": {
+    "semverString": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
+      "description": "Semantic version string for protocol_version."
+    },
+    "requestMessage": {
+      "type": "object",
+      "required": ["protocol_version", "request"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/semverString" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "correlation_id": { "type": "string", "minLength": 1 },
+        "capabilities": { "$ref": "#/$defs/capabilities" },
+        "request": { "$ref": "#/$defs/requestPayload" }
+      },
+      "additionalProperties": true
+    },
+    "responseMessage": {
+      "type": "object",
+      "required": ["protocol_version", "response"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/semverString" },
+        "request_id": { "type": "string", "minLength": 1 },
+        "correlation_id": { "type": "string", "minLength": 1 },
+        "supported_protocol_versions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/semverString" }
+        },
+        "supported_capabilities": { "$ref": "#/$defs/capabilities" },
+        "capability_denials": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capabilityDenial" }
+        },
+        "response": { "$ref": "#/$defs/responsePayload" }
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "capabilityDenial": {
+      "type": "object",
+      "required": ["capability"],
+      "properties": {
+        "capability": { "type": "string", "minLength": 1 },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "requestPayload": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "auth": { "$ref": "#/$defs/auth" },
+        "context": { "$ref": "#/$defs/context" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": true
+    },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "tenant_id": { "type": "string" },
+        "credential_ref": {
+          "type": "string",
+          "description": "Opaque reference; prefer over raw tokens in body."
+        },
+        "session_id": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "session_id": { "type": "string" },
+        "conversation_id": { "type": "string" },
+        "user_intent": { "type": "string" },
+        "task_hint": { "$ref": "#/$defs/taskHint" },
+        "continuation": { "$ref": "#/$defs/continuation" },
+        "environment_state": { "$ref": "#/$defs/environmentState" },
+        "attachments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attachmentRef" }
+        },
+        "shell": { "$ref": "#/$defs/shellIdentity" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": true
+    },
+    "taskHint": {
+      "type": "object",
+      "properties": {
+        "sop_id": { "type": "string" },
+        "plugin_id": { "type": "string" },
+        "business_key": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "continuation": {
+      "type": "object",
+      "properties": {
+        "run_id": { "type": "string" },
+        "sop_id": { "type": "string" },
+        "continuation_token": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "attachmentRef": {
+      "type": "object",
+      "description": "Reference to content; do not embed large base64 in wire messages.",
+      "properties": {
+        "ref_id": { "type": "string" },
+        "uri": { "type": "string" },
+        "asset_id": { "type": "string" },
+        "mime_type": { "type": "string" },
+        "filename": { "type": "string" },
+        "size_bytes": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "shellIdentity": {
+      "type": "object",
+      "properties": {
+        "shell_kind": { "type": "string", "minLength": 1 },
+        "shell_version": { "type": "string" },
+        "locale": { "type": "string" },
+        "timezone": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "environmentState": {
+      "type": "object",
+      "properties": {
+        "privacy_tier": {
+          "type": "string",
+          "enum": ["public", "restricted", "secret"]
+        },
+        "os": { "type": "string" },
+        "active_window": { "type": "string" },
+        "screen_hash": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "responsePayload": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["success", "error"]
+        },
+        "engine_latency_ms": { "type": "number", "minimum": 0 },
+        "action_directives": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/actionDirective" }
+        },
+        "error": { "$ref": "#/$defs/errorObject" }
+      },
+      "additionalProperties": true
+    },
+    "actionDirective": {
+      "type": "object",
+      "required": ["action_type"],
+      "properties": {
+        "action_type": { "type": "string", "minLength": 1 },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "critical"]
+        },
+        "execution": {
+          "type": "string",
+          "enum": ["sequential", "parallel"]
+        },
+        "risk_tier": {
+          "type": "string",
+          "enum": ["safe", "caution", "dangerous"]
+        },
+        "requires_user_approval": { "type": "boolean" },
+        "deadline_ms": { "type": "integer", "minimum": 0 },
+        "payload": { "type": "object", "additionalProperties": true },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      },
+      "additionalProperties": true
+    },
+    "errorObject": {
+      "type": "object",
+      "required": ["code"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": true
+    }
+  }
+}

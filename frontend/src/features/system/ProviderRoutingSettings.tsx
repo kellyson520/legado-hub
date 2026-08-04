@@ -12,6 +12,7 @@ import {
   updateNovelSettings,
   updateProviderRoute,
   type ProviderConfigurationInput,
+  type ProviderType,
   type NovelSettings,
   type NovelUsageMetrics,
   type ProviderRouteEntry,
@@ -40,7 +41,7 @@ const ROUTE_GROUPS = [
   { id: 'novel_audit', label: 'Novel auditor' },
 ] as const
 
-type ProviderForm = ProviderConfigurationInput & { id: string | null; apiKeyMasked: string }
+type ProviderForm = Omit<ProviderConfigurationInput, 'providerType'> & { providerType: ProviderType; id: string | null; apiKeyMasked: string }
 type RouteDraft = { providerAccountId: string; model: string }
 type NovelControls = {
   enabledTools: string[]
@@ -81,6 +82,7 @@ const emptyNovelMetrics: NovelUsageMetrics = {
 const emptyProviderForm = (): ProviderForm => ({
   id: null,
   name: '',
+  providerType: 'openai_compatible',
   baseUrl: '',
   apiKey: '',
   defaultModel: '',
@@ -90,6 +92,11 @@ const emptyProviderForm = (): ProviderForm => ({
 
 function getProviderBaseUrl(provider: ProviderRow) {
   return provider.baseUrl ?? provider.base_url ?? ''
+}
+
+function getProviderType(provider: ProviderRow): ProviderType {
+  const value = provider.providerType ?? provider.provider_type
+  return value === 'anthropic' || value === 'gemini' ? value : 'openai_compatible'
 }
 
 function getProviderDefaultModel(provider: ProviderRow) {
@@ -116,6 +123,7 @@ function toForm(provider: ProviderRow): ProviderForm {
   return {
     id: provider.id,
     name: provider.name,
+    providerType: getProviderType(provider),
     baseUrl: getProviderBaseUrl(provider),
     apiKey: '',
     defaultModel: getProviderDefaultModel(provider),
@@ -244,6 +252,7 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
     setError(null)
     const payload: ProviderConfigurationInput = {
       name: form.name.trim(),
+      ...(form.providerType !== 'openai_compatible' ? { providerType: form.providerType } : {}),
       baseUrl: form.baseUrl.trim(),
       apiKey: form.apiKey,
       defaultModel: form.defaultModel.trim(),
@@ -398,6 +407,13 @@ export function ProviderRoutingSettings({ onProviderSaved }: { onProviderSaved: 
               <Input id="provider-channel-model" list="provider-model-options" placeholder="Save, then use Models to discover" value={form.defaultModel} onChange={(event) => setForm((current) => ({ ...current, defaultModel: event.target.value }))} />
             </FormField>
           </div>
+          <FormField label={t('Provider protocol')} htmlFor="provider-channel-type">
+            <select id="provider-channel-type" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.providerType} onChange={(event) => setForm((current) => ({ ...current, providerType: event.target.value as ProviderType }))}>
+              <option value="openai_compatible">OpenAI-compatible</option>
+              <option value="anthropic">Anthropic Messages</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+          </FormField>
           <FormField label={t('Channel Base URL')} htmlFor="provider-channel-base-url">
             <Input id="provider-channel-base-url" value={form.baseUrl} onChange={(event) => setForm((current) => ({ ...current, baseUrl: event.target.value }))} required />
           </FormField>

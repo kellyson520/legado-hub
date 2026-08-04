@@ -19,6 +19,12 @@ PROVIDER_ROUTE_GROUPS = (
     "novel_audit",
 )
 
+SUPPORTED_PROVIDER_TYPES = (
+    "openai_compatible",
+    "anthropic",
+    "gemini",
+)
+
 
 class ProviderAdapter(Protocol):
     name: str

@@ -6,6 +6,7 @@ from app.application.ports.provider import (
     PROVIDER_ROUTE_GROUPS,
     ProviderAdapter,
     ProviderRegistry,
+    SUPPORTED_PROVIDER_TYPES,
     provider_http_status,
 )
 from app.core.redaction import sanitize_error
@@ -182,13 +183,22 @@ class ProviderPlatformService:
         api_key: str,
         default_model: str,
         enabled: bool,
+        provider_type: str | None = None,
         activation_at: datetime | None = None,
         provider_id: str | None = None,
     ) -> dict:
         if self._provider_repo is None:
             raise RuntimeError("provider repository is not configured")
-        if provider_id is not None and self._provider_repo.get_provider(provider_id) is None:
-            raise LookupError("provider not found")
+        existing_account = None
+        if provider_id is not None:
+            existing_account = self._provider_repo.get_provider(provider_id)
+            if existing_account is None:
+                raise LookupError("provider not found")
+        provider_type = str(
+            provider_type or getattr(existing_account, "provider_type", "") or "openai_compatible"
+        ).strip()
+        if provider_type not in SUPPORTED_PROVIDER_TYPES:
+            raise ValueError(f"unsupported provider type: {provider_type}")
         account = self._provider_repo.save_provider(
             id=provider_id,
             name=name,
@@ -196,6 +206,7 @@ class ProviderPlatformService:
             api_key=api_key,
             default_model=default_model,
             enabled=enabled,
+            provider_type=provider_type,
             activation_at=activation_at,
         )
         self._ensure_initial_routes()
@@ -211,7 +222,12 @@ class ProviderPlatformService:
             raise ValueError("provider must be enabled and configured before models can be fetched")
         if self._provider_factory is None:
             raise RuntimeError("provider factory is not configured")
-        provider = self._provider_factory(account.name, account.base_url, account.api_key)
+        provider = self._provider_factory(
+            account.name,
+            account.base_url,
+            account.api_key,
+            provider_type=account.provider_type,
+        )
         try:
             return sorted(set(await provider.list_models()))
         finally:
@@ -369,7 +385,7 @@ class ProviderPlatformService:
             return
         entries = [
             {"provider_account_id": account.id, "model": account.default_model}
-            for account in self._provider_repo.list_configured_openai_providers()
+            for account in self._provider_repo.list_configured_providers()
             if account.default_model
         ]
         if not entries:

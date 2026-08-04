@@ -188,6 +188,39 @@ test('a new channel can be saved before a model is selected for discovery', asyn
   })
 })
 
+test('a channel can select the Anthropic Messages adapter', async () => {
+  mocks.createProvider.mockResolvedValueOnce(envelope({
+    id: 'claude-provider',
+    name: 'Claude',
+    providerType: 'anthropic',
+    baseUrl: 'https://api.anthropic.com',
+    defaultModel: 'claude-3-7-sonnet',
+    enabled: true,
+    apiKeyConfigured: true,
+    apiKeyMasked: '••••9999',
+    status: 'enabled',
+  }))
+  render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)
+
+  fireEvent.click(await screen.findByRole('button', { name: '添加渠道' }))
+  fireEvent.change(screen.getByLabelText('渠道名称'), { target: { value: 'Claude' } })
+  fireEvent.change(screen.getByLabelText('Provider protocol'), { target: { value: 'anthropic' } })
+  fireEvent.change(screen.getByLabelText('渠道基础 URL'), { target: { value: 'https://api.anthropic.com' } })
+  fireEvent.change(screen.getByLabelText('渠道 API Key'), { target: { value: 'anthropic-key' } })
+  fireEvent.click(screen.getByRole('button', { name: '保存渠道' }))
+
+  await waitFor(() => {
+    expect(mocks.createProvider).toHaveBeenCalledWith({
+      name: 'Claude',
+      providerType: 'anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      apiKey: 'anthropic-key',
+      defaultModel: '',
+      enabled: true,
+    })
+  })
+})
+
 test('keeps saved provider controls available when route loading fails', async () => {
   mocks.getProviderRoute.mockRejectedValue(new Error('route API unavailable'))
   render(<ProviderRoutingSettings onProviderSaved={vi.fn()} />)

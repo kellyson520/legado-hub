@@ -30,6 +30,7 @@ class ProviderRepository(ABC):
         api_key: str,
         default_model: str,
         enabled: bool,
+        provider_type: str | None = None,
         activation_at: datetime | None = None,
         id: str | None = None,
     ) -> ProviderAccount:
@@ -57,6 +58,10 @@ class ProviderRepository(ABC):
 
     @abstractmethod
     def list_provider_accounts(self) -> list[ProviderAccount]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def list_configured_providers(self) -> list[ProviderAccount]:
         raise NotImplementedError
 
     @abstractmethod

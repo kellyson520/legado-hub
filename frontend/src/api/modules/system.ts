@@ -18,6 +18,8 @@ export interface ProviderRow {
   api_key_masked?: string
 }
 
+export type ProviderType = 'openai_compatible' | 'anthropic' | 'gemini'
+
 export interface QuotaPolicyRow {
   id: string
   scope: string
@@ -63,6 +65,7 @@ interface InteractiveBrowserSettingsResponse {
 
 export interface ProviderConfigurationInput {
   name: string
+  providerType?: ProviderType
   baseUrl: string
   apiKey: string
   defaultModel: string
@@ -136,6 +139,7 @@ export function listProviders(): Promise<ApiEnvelope<ProviderRow[]>> {
 export function createProvider(payload: ProviderConfigurationInput): Promise<ApiEnvelope<ProviderRow>> {
   return apiClient.post<ProviderRow>('/system/providers', {
     name: payload.name,
+    ...(payload.providerType ? { provider_type: payload.providerType } : {}),
     base_url: payload.baseUrl,
     api_key: payload.apiKey,
     default_model: payload.defaultModel,
@@ -146,6 +150,7 @@ export function createProvider(payload: ProviderConfigurationInput): Promise<Api
 export function updateProvider(providerId: string, payload: ProviderConfigurationInput): Promise<ApiEnvelope<ProviderRow>> {
   return apiClient.put<ProviderRow>(`/system/providers/${providerId}`, {
     name: payload.name,
+    ...(payload.providerType ? { provider_type: payload.providerType } : {}),
     base_url: payload.baseUrl,
     api_key: payload.apiKey,
     default_model: payload.defaultModel,

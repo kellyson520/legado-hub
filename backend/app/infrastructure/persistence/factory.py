@@ -80,6 +80,7 @@ from app.infrastructure.persistence.sqlite.evidence_repo_impl import SQLiteEvide
 from app.infrastructure.persistence.sqlite.job_repo_impl import SQLiteJobRepository
 from app.infrastructure.persistence.sqlite.provider_repo_impl import SQLiteProviderRepository
 from app.infrastructure.providers.openai_compatible import OpenAICompatibleProvider
+from app.infrastructure.providers.factory import create_provider_adapter
 from app.infrastructure.providers.registry import ProviderRegistry, ProviderSelection
 from app.infrastructure.persistence.sqlite.auth_repo_impl import SQLiteAuthRepository
 from app.infrastructure.persistence.sqlite.bootstrap import ensure_sqlite_bootstrap
@@ -443,7 +444,7 @@ def build_provider_registry() -> ProviderRegistry:
 
     try:
         repo = build_provider_repository()
-        accounts = {account.id: account for account in repo.list_configured_openai_providers()}
+        accounts = {account.id: account for account in repo.list_configured_providers()}
         if repo.has_routes():
             for group in provider_groups:
                 routes = repo.list_routes(group)
@@ -454,23 +455,23 @@ def build_provider_registry() -> ProviderRegistry:
                     account = accounts.get(route.provider_account_id)
                     if account is None or not route.enabled or not route.model:
                         continue
-                    selections.append(
-                        ProviderSelection(
-                            provider=OpenAICompatibleProvider(
-                                name=account.name,
-                                endpoint_url=account.base_url,
-                                api_key=account.api_key,
-                            ),
-                            model=route.model,
-                        )
-                    )
+                    selections.append(ProviderSelection(
+                        provider=create_provider_adapter(
+                            name=account.name,
+                            endpoint_url=account.base_url,
+                            api_key=account.api_key,
+                            provider_type=account.provider_type,
+                        ),
+                        model=route.model,
+                    ))
                 groups[group] = selections
         else:
             for account in accounts.values():
-                provider = OpenAICompatibleProvider(
+                provider = create_provider_adapter(
                     name=account.name,
                     endpoint_url=account.base_url,
                     api_key=account.api_key,
+                    provider_type=account.provider_type,
                 )
                 for group in provider_groups:
                     groups.setdefault(group, []).append(
@@ -488,11 +489,21 @@ def build_provider_platform_service() -> ProviderPlatformService:
         registry=build_provider_registry(),
         quota_limiter=_AllowAllProviderQuotaLimiter(),
         provider_repo=build_provider_repository(),
-        provider_factory=lambda name, endpoint_url, api_key: OpenAICompatibleProvider(
+        provider_factory=lambda name, endpoint_url, api_key, provider_type="openai_compatible": create_provider_adapter(
             name=name,
             endpoint_url=endpoint_url,
             api_key=api_key,
+            provider_type=provider_type,
         ),
+    )
+
+
+def build_openharness_service():
+    from app.infrastructure.harness.openharness.engine import OpenHarnessEngineService
+
+    return OpenHarnessEngineService(
+        provider_platform=build_provider_platform_service(),
+        agent_runtime=build_agent_runtime_service(),
     )
 
 

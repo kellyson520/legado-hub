@@ -361,7 +361,7 @@ def _ensure_default_provider_routes() -> None:
     repo = SQLiteProviderRepository()
     entries = [
         {"provider_account_id": account.id, "model": account.default_model}
-        for account in repo.list_configured_openai_providers()
+        for account in repo.list_configured_providers()
         if account.default_model
     ]
     if not entries:

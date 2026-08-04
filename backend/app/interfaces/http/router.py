@@ -12,6 +12,7 @@ from app.interfaces.http import (
     events,
     export,
     health,
+    harness,
     interactive_browser,
     jobs,
     novel,
@@ -38,6 +39,7 @@ api_router.include_router(sources.router, prefix="/sources", tags=["sources"])
 api_router.include_router(engine.router, prefix="/engine", tags=["engine"])
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboard"])
 api_router.include_router(health.router, prefix="/health", tags=["health"])
+api_router.include_router(harness.router, prefix="/harness", tags=["harness"])
 api_router.include_router(export.router, prefix="/export", tags=["export"])
 api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
 api_router.include_router(translation.router, prefix="/translation", tags=["translation"])
