@@ -67,7 +67,7 @@ def test_openharness_response_contains_ordered_action_directives():
     assert response.response.action_directives[1].requires_user_approval is True
 
 
-@pytest.mark.parametrize("version", ["2.0.0", "invalid"])
+@pytest.mark.parametrize("version", ["2.0.0", "invalid", 1, [], None])
 def test_parse_request_rejects_unsupported_protocol_versions(version):
     from app.infrastructure.harness.openharness.protocol import (
         OpenHarnessProtocolError,

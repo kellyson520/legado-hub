@@ -65,7 +65,7 @@ def parse_request(payload: object) -> OpenHarnessRequest:
         )
 
     version = payload.get("protocol_version")
-    if not _SEMVER_RE.fullmatch(version or "") or _major_version(version) != "1":
+    if not isinstance(version, str) or not _SEMVER_RE.fullmatch(version) or _major_version(version) != "1":
         raise OpenHarnessProtocolError(
             "protocol_version_unsupported",
             "The requested OpenHarness protocol version is not supported.",
