@@ -53,6 +53,27 @@ class NovelIngestionService:
         self._url_policy = url_policy
         self._runtime_repo = runtime_repo
 
+    async def prepare_upload(
+        self,
+        filename: str,
+        media_type: str,
+        data: bytes,
+        *,
+        title: str = "",
+        author: str = "",
+    ) -> tuple[ParsedNovelDocument, NovelImportPreview]:
+        document = NovelDocumentParser().parse(filename, media_type, data)
+        if title or author:
+            document = ParsedNovelDocument(
+                title=title or document.title,
+                author=author or document.author,
+                normalized_text=document.normalized_text,
+                chapters=document.chapters,
+                content_hash=document.content_hash,
+                media_type=document.media_type,
+            )
+        return document, build_import_preview(document)
+
     async def preview_upload(
         self,
         owner_scope: str,
@@ -64,17 +85,31 @@ class NovelIngestionService:
         author: str = "",
     ) -> NovelImportPreview:
         del owner_scope
-        document = NovelDocumentParser().parse(filename, media_type, data)
-        if title or author:
-            document = ParsedNovelDocument(
-                title=title or document.title,
-                author=author or document.author,
-                normalized_text=document.normalized_text,
-                chapters=document.chapters,
-                content_hash=document.content_hash,
-                media_type=document.media_type,
-            )
-        return build_import_preview(document)
+        _, preview = await self.prepare_upload(filename, media_type, data, title=title, author=author)
+        return preview
+
+    async def import_document(
+        self,
+        owner_scope: str,
+        document: ParsedNovelDocument,
+        *,
+        filename: str,
+        media_type: str,
+        data: bytes,
+        title: str = "",
+        author: str = "",
+    ) -> ImportResult:
+        content_hash = document.content_hash
+        return await self._save_document(
+            owner_scope,
+            f"upload:{content_hash}",
+            document,
+            title=title or document.title,
+            author=author or document.author,
+            source_name="用户上传",
+            source_type=IngestSource.UPLOAD,
+            original=(filename, media_type, data),
+        )
 
     async def ingest_catalog(
         self,
@@ -153,21 +188,16 @@ class NovelIngestionService:
         title: str = "",
         author: str = "",
     ) -> ImportResult:
-        parser = NovelDocumentParser()
-        document = parser.parse(filename, media_type, data)
-        content_hash = document.content_hash
-        book_url = f"upload:{content_hash}"
-        result = await self._save_document(
+        document, _ = await self.prepare_upload(filename, media_type, data, title=title, author=author)
+        return await self.import_document(
             owner_scope,
-            book_url,
             document,
-            title=title or document.title,
-            author=author or document.author,
-            source_name="用户上传",
-            source_type=IngestSource.UPLOAD,
-            original=(filename, media_type, data),
+            filename=filename,
+            media_type=media_type,
+            data=data,
+            title=title,
+            author=author,
         )
-        return result
 
     async def import_source(
         self,

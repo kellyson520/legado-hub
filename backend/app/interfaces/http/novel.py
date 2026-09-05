@@ -124,8 +124,6 @@ async def preview_upload(
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
     data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="uploaded file is empty")
     service = await get_novel_ingestion_service()
     try:
         preview = await service.preview_upload(
@@ -145,25 +143,24 @@ async def import_upload(
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
     data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="uploaded file is empty")
     service = await get_novel_ingestion_service()
     try:
-        preview = await service.preview_upload(
-            owner_scope_for(identity),
+        document, preview = await service.prepare_upload(
             file.filename or "novel.txt",
             file.content_type or "application/octet-stream",
             data,
         )
-        result = await service.import_upload(
+        result = await service.import_document(
             owner_scope_for(identity),
-            file.filename or "novel.txt",
-            file.content_type or "application/octet-stream",
-            data,
+            document,
+            filename=file.filename or "novel.txt",
+            media_type=file.content_type or "application/octet-stream",
+            data=data,
         )
     except NovelImportError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
-    return {"success": True, "code": "OK", "message": "novel upload queued", "data": {**_import_data(result), "preview": _preview_data(preview)}, "meta": {}, "trace_id": None}
+    preview_data = _preview_data(preview)
+    return {"success": True, "code": "OK", "message": "novel upload queued", "data": {**_import_data(result), "preview": preview_data, "warnings": preview_data.get("warnings", [])}, "meta": {}, "trace_id": None}
 
 
 @router.post("/books/import/source")
