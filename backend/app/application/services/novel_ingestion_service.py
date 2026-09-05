@@ -26,6 +26,7 @@ from app.application.services.novel_ingestion.parsers import (
     ParsedChapter,
     ParsedNovelDocument,
 )
+from app.application.services.novel_ingestion.quality import NovelImportPreview, build_import_preview
 @dataclass(frozen=True)
 class ImportResult:
     book_id: int
@@ -51,6 +52,29 @@ class NovelIngestionService:
         self._storage_dir = Path(storage_dir or os.getenv("NOVEL_STORAGE_DIR", "data/novels"))
         self._url_policy = url_policy
         self._runtime_repo = runtime_repo
+
+    async def preview_upload(
+        self,
+        owner_scope: str,
+        filename: str,
+        media_type: str,
+        data: bytes,
+        *,
+        title: str = "",
+        author: str = "",
+    ) -> NovelImportPreview:
+        del owner_scope
+        document = NovelDocumentParser().parse(filename, media_type, data)
+        if title or author:
+            document = ParsedNovelDocument(
+                title=title or document.title,
+                author=author or document.author,
+                normalized_text=document.normalized_text,
+                chapters=document.chapters,
+                content_hash=document.content_hash,
+                media_type=document.media_type,
+            )
+        return build_import_preview(document)
 
     async def ingest_catalog(
         self,

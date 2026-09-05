@@ -108,6 +108,10 @@ class AgentToolRegistry:
             tools[name] = AgentTool(name, 'read', frozenset({'novel', 'knowledge'}))
 
         tools.update({
+            'novel.import_preview': AgentTool('novel.import_preview', 'read', frozenset({'novel', 'knowledge'})),
+            'novel.chapter_quality': AgentTool('novel.chapter_quality', 'read', frozenset({'novel', 'knowledge'})),
+            'source.build_status': AgentTool('source.build_status', 'read', frozenset({'source_build'})),
+            'source.validation_report': AgentTool('source.validation_report', 'read', frozenset({'source_build'})),
             'source.search': AgentTool('source.search', 'read', frozenset({'knowledge'})),
             'book.resolve': AgentTool('book.resolve', 'read', frozenset({'knowledge'})),
             'toc.get': AgentTool('toc.get', 'read', frozenset({'knowledge'})),
