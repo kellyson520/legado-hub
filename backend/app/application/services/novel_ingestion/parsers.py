@@ -26,6 +26,10 @@ class UnsupportedNovelFormat(NovelImportError):
     code = "unsupported_format"
 
 
+class InvalidNovelSplitMode(NovelImportError):
+    code = "invalid_split_mode"
+
+
 class UnsafeNovelArchive(NovelImportError):
     code = "unsafe_archive"
 
@@ -74,7 +78,15 @@ class NovelDocumentParser:
         ".epub": "application/epub+zip",
     }
 
-    def parse(self, filename: str, media_type: str | None, data: bytes) -> ParsedNovelDocument:
+    def parse(
+        self,
+        filename: str,
+        media_type: str | None,
+        data: bytes,
+        *,
+        split_mode: str = "heading",
+        fixed_size: int = 2000,
+    ) -> ParsedNovelDocument:
         if not data:
             raise EmptyNovelDocument("novel document is empty")
         extension = self._extension(filename)
@@ -93,7 +105,7 @@ class NovelDocumentParser:
         normalized = self._normalize_text(text)
         if not normalized:
             raise EmptyNovelDocument("novel document has no readable text")
-        chapters = self._split_chapters(normalized, title=title, filename=filename)
+        chapters = self._split_chapters(normalized, title=title, filename=filename, split_mode=split_mode, fixed_size=fixed_size)
         return self._document(filename, normalized, chapters, normalized_media or self._MEDIA_EXTENSIONS[extension], title)
 
     @classmethod
@@ -207,7 +219,25 @@ class NovelDocumentParser:
         if mode == 0o120000:
             raise UnsafeNovelArchive(f"symlink entries are not allowed: {info.filename}")
 
-    def _split_chapters(self, normalized: str, *, title: str, filename: str) -> list[ParsedChapter]:
+    def _split_chapters(
+        self,
+        normalized: str,
+        *,
+        title: str,
+        filename: str,
+        split_mode: str = "heading",
+        fixed_size: int = 2000,
+    ) -> list[ParsedChapter]:
+        if split_mode == "blank-line":
+            chunks = [chunk.strip() for chunk in re.split(r"\n\s*\n", normalized) if chunk.strip()]
+            return [ParsedChapter(index, f"{title or PurePosixPath(filename or '正文').stem} {index}", chunk, _hash(chunk)) for index, chunk in enumerate(chunks, start=1)]
+        if split_mode == "fixed-size":
+            if fixed_size < 1:
+                raise NovelImportError("fixed_size must be positive", code="invalid_fixed_size")
+            chunks = [normalized[index:index + fixed_size] for index in range(0, len(normalized), fixed_size)]
+            return [ParsedChapter(index, f"{title or PurePosixPath(filename or '正文').stem} {index}", chunk, _hash(chunk)) for index, chunk in enumerate(chunks, start=1)]
+        if split_mode != "heading":
+            raise InvalidNovelSplitMode(f"unsupported split mode: {split_mode}")
         lines = normalized.split("\n")
         markers: list[tuple[int, str]] = []
         for index, line in enumerate(lines):

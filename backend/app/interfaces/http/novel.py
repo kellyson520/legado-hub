@@ -3,13 +3,14 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
 from app.core.response import from_paginated_result, ok
 from app.application.services.novel_ingestion_service import NovelIngestionService
 from app.application.services.novel_ingestion.parsers import NovelImportError
+from app.application.services.novel_ingestion.upload_limits import UploadTooLarge, _read_upload_bytes
 from app.infrastructure.persistence.factory import (
     build_novel_agent_service,
     build_novel_repository,
@@ -121,9 +122,16 @@ def _json_dumps(value) -> str:
 @router.post("/books/import/preview")
 async def preview_upload(
     file: UploadFile = File(...),
+    title: str = Form(default=""),
+    author: str = Form(default=""),
+    split_mode: str = Form(default="heading"),
+    min_chapter_chars: int = Form(default=20, ge=0, le=100_000),
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
-    data = await file.read()
+    try:
+        data = await _read_upload_bytes(file)
+    except UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail={"code": exc.code, "message": str(exc)}) from exc
     service = await get_novel_ingestion_service()
     try:
         preview = await service.preview_upload(
@@ -131,6 +139,10 @@ async def preview_upload(
             file.filename or "novel.txt",
             file.content_type or "application/octet-stream",
             data,
+            title=title,
+            author=author,
+            split_mode=split_mode,
+            min_chapter_chars=min_chapter_chars,
         )
     except NovelImportError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
@@ -140,15 +152,26 @@ async def preview_upload(
 @router.post("/books/import/upload")
 async def import_upload(
     file: UploadFile = File(...),
+    title: str = Form(default=""),
+    author: str = Form(default=""),
+    split_mode: str = Form(default="heading"),
+    min_chapter_chars: int = Form(default=20, ge=0, le=100_000),
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
-    data = await file.read()
+    try:
+        data = await _read_upload_bytes(file)
+    except UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail={"code": exc.code, "message": str(exc)}) from exc
     service = await get_novel_ingestion_service()
     try:
         document, preview = await service.prepare_upload(
             file.filename or "novel.txt",
             file.content_type or "application/octet-stream",
             data,
+            title=title,
+            author=author,
+            split_mode=split_mode,
+            min_chapter_chars=min_chapter_chars,
         )
         result = await service.import_document(
             owner_scope_for(identity),
@@ -156,6 +179,8 @@ async def import_upload(
             filename=file.filename or "novel.txt",
             media_type=file.content_type or "application/octet-stream",
             data=data,
+            title=title,
+            author=author,
         )
     except NovelImportError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc

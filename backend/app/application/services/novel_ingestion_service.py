@@ -61,8 +61,11 @@ class NovelIngestionService:
         *,
         title: str = "",
         author: str = "",
+        split_mode: str = "heading",
+        fixed_size: int = 2000,
+        min_chapter_chars: int = 20,
     ) -> tuple[ParsedNovelDocument, NovelImportPreview]:
-        document = NovelDocumentParser().parse(filename, media_type, data)
+        document = NovelDocumentParser().parse(filename, media_type, data, split_mode=split_mode, fixed_size=fixed_size)
         if title or author:
             document = ParsedNovelDocument(
                 title=title or document.title,
@@ -72,7 +75,7 @@ class NovelIngestionService:
                 content_hash=document.content_hash,
                 media_type=document.media_type,
             )
-        return document, build_import_preview(document)
+        return document, build_import_preview(document, min_chapter_chars=min_chapter_chars)
 
     async def preview_upload(
         self,

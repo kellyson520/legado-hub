@@ -63,6 +63,44 @@ def test_preview_reports_short_chapters_without_rejecting_document():
     assert any(item.code == "short_chapter" and item.chapter_index == 1 for item in preview.warnings)
 
 
+def test_parser_supports_blank_line_split_mode():
+    from app.application.services.novel_ingestion.parsers import NovelDocumentParser
+
+    document = NovelDocumentParser().parse(
+        "book.txt",
+        "text/plain",
+        "第一段内容\n\n第二段内容".encode(),
+        split_mode="blank-line",
+    )
+
+    assert [chapter.text for chapter in document.chapters] == ["第一段内容", "第二段内容"]
+
+
+def test_parser_supports_fixed_size_split_mode():
+    from app.application.services.novel_ingestion.parsers import NovelDocumentParser
+
+    document = NovelDocumentParser().parse(
+        "book.txt",
+        "text/plain",
+        "abcdefghij".encode(),
+        split_mode="fixed-size",
+        fixed_size=4,
+    )
+
+    assert [chapter.text for chapter in document.chapters] == ["abcd", "efgh", "ij"]
+
+
+def test_parser_rejects_unknown_split_mode():
+    from app.application.services.novel_ingestion.parsers import NovelDocumentParser, NovelImportError
+
+    try:
+        NovelDocumentParser().parse("book.txt", "text/plain", b"content", split_mode="unknown")
+    except NovelImportError as error:
+        assert error.code == "invalid_split_mode"
+    else:
+        raise AssertionError("unknown split mode must be rejected")
+
+
 def test_preview_reports_too_many_chapters_with_bounded_summary():
     document = _document(
         *[

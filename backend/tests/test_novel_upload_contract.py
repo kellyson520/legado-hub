@@ -5,6 +5,7 @@ import pytest
 from app.application.services.novel_ingestion.parsers import EmptyNovelDocument, NovelDocumentParser, ParsedNovelDocument
 from app.application.services.novel_ingestion.quality import build_import_preview
 from app.application.services.novel_ingestion_service import NovelIngestionService
+from app.application.services.novel_ingestion.upload_limits import MAX_UPLOAD_BYTES, _read_upload_bytes
 
 
 @dataclass
@@ -33,6 +34,18 @@ async def test_import_upload_prepares_document_once_and_reuses_it(monkeypatch):
 
     assert result == "saved"
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_upload_reader_rejects_payload_over_limit():
+    class OversizedUpload:
+        async def read(self, size=-1):
+            return b"x" * (MAX_UPLOAD_BYTES + 1)
+
+    with pytest.raises(Exception) as error:
+        await _read_upload_bytes(OversizedUpload())
+
+    assert error.value.code == "upload_too_large"
 
 
 def test_empty_upload_error_contract_is_explicit():

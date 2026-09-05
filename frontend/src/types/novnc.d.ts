@@ -1,0 +1,6 @@
+declare module '@novnc/novnc' {
+  export default class RFB {
+    constructor(target: HTMLElement, url: string)
+    disconnect(): void
+  }
+}

@@ -9,6 +9,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    // @novnc/novnc 1.7 exposes core/rfb.js with top-level await.
+    target: 'esnext',
+  },
   server: {
     port: 3000,
     proxy: {
