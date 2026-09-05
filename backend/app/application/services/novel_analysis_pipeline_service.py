@@ -4,6 +4,39 @@ from app.application.services.novel_analysis_prompts import ROLE_PROMPTS
 from app.domain.entities.novel_analysis_task import AdjudicationOutcome, TaskProcessingResult
 
 
+def select_analysis_evidence(report, *, max_chapters: int, max_spans: int) -> list[dict]:
+    max_chapters = max(0, int(max_chapters))
+    max_spans = max(0, int(max_spans))
+    if max_chapters == 0 or max_spans == 0:
+        return []
+    candidates: list[tuple[int, dict]] = []
+    for kind, items in (("character", report.characters), ("time", report.time_mentions), ("event", report.events)):
+        for item in items:
+            for evidence in item.evidence:
+                evidence_id = f"{evidence.chapter_id}:{evidence.start_offset}:{evidence.end_offset}:{kind}"
+                candidates.append((evidence.start_offset, {
+                    "evidence_id": evidence_id,
+                    "chapter_id": evidence.chapter_id,
+                    "start_offset": evidence.start_offset,
+                    "end_offset": evidence.end_offset,
+                    "excerpt": evidence.text,
+                    "kind": kind,
+                }))
+    selected: list[dict] = []
+    seen: set[tuple[str, int, int]] = set()
+    chapters: set[str] = set()
+    for _, item in sorted(candidates, key=lambda value: value[0]):
+        key = (item["chapter_id"], item["start_offset"], item["end_offset"])
+        if key in seen or (item["chapter_id"] not in chapters and len(chapters) >= max_chapters):
+            continue
+        seen.add(key)
+        chapters.add(item["chapter_id"])
+        selected.append(item)
+        if len(selected) >= max_spans:
+            break
+    return selected
+
+
 ROLE_GROUPS = {
     "extractor": "novel_extract",
     "verifier": "novel_verify",

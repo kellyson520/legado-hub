@@ -26,6 +26,7 @@ from app.application.services.novel_model_selection_service import NovelModelSel
 from app.application.services.novel_analysis_pipeline_service import NovelAnalysisPipelineService
 from app.application.services.novel_analysis_audit_service import NovelAnalysisAuditService
 from app.application.services.novel_analysis_task_service import NovelAnalysisTaskService
+from app.application.services.novel_code_report_service import NovelCodeReportService
 from app.application.services.narrative_knowledge_service import NarrativeKnowledgeService
 from app.application.services.novel_app_service import NovelAppService
 from app.application.services.provider_platform_service import (
@@ -239,6 +240,10 @@ def build_narrative_knowledge_service() -> NarrativeKnowledgeService:
 
 def build_novel_analysis_task_service() -> NovelAnalysisTaskService:
     return NovelAnalysisTaskService(build_novel_analysis_task_repository())
+
+
+def build_novel_code_report_service() -> NovelCodeReportService:
+    return NovelCodeReportService(build_canonical_content_repository())
 
 
 def build_novel_analysis_pipeline_service() -> NovelAnalysisPipelineService:

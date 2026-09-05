@@ -4,6 +4,14 @@ from app.domain.entities.novel_analysis_task import NovelAnalysisTask, TaskProce
 
 
 class NovelAnalysisTaskService:
+    @staticmethod
+    def normalize_policy(policy: dict | None = None) -> dict:
+        normalized_policy = dict(policy or {})
+        normalized_policy["max_tool_calls_per_task"] = min(max(int(normalized_policy.get("max_tool_calls_per_task", 24)), 1), 100)
+        normalized_policy["max_tokens_per_task"] = min(max(int(normalized_policy.get("max_tokens_per_task", 24000)), 1000), 200000)
+        normalized_policy["max_chapters_per_task"] = min(max(int(normalized_policy.get("max_chapters_per_task", 12)), 1), 50)
+        return normalized_policy
+
     def __init__(self, repo):
         self._repo = repo
 
@@ -16,10 +24,7 @@ class NovelAnalysisTaskService:
         *,
         selected_evidence_ids: list[str] | None = None,
     ) -> NovelAnalysisTask:
-        normalized_policy = dict(policy or {})
-        normalized_policy["max_tool_calls_per_task"] = min(max(int(normalized_policy.get("max_tool_calls_per_task", 24)), 1), 100)
-        normalized_policy["max_tokens_per_task"] = min(max(int(normalized_policy.get("max_tokens_per_task", 24000)), 1000), 200000)
-        normalized_policy["max_chapters_per_task"] = min(max(int(normalized_policy.get("max_chapters_per_task", 12)), 1), 50)
+        normalized_policy = self.normalize_policy(policy)
         selected = list(dict.fromkeys(
             str(evidence_id).strip()
             for evidence_id in (selected_evidence_ids or [])

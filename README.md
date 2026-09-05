@@ -138,6 +138,19 @@ npm run dev
 
 认证使用 `Authorization: Bearer <JWT>`；面向阅读客户端的 API Key 使用 `Authorization: Bearer lh_<key>`。生产环境不要把密钥放进前端源码或日志。
 
+### TXT 到深度分析报告
+
+小说分析默认先走确定性代码路径，不需要 LLM：上传 TXT 后按章节解析，再调用 `GET /api/novel-analysis/works/{work_id}/code-report?chapter_limit=8`。报告包含人物候选、窗口共现、时间表达、事件触发词和每项的章节 offset 证据；相同工作内容重复请求会命中 SHA-256 缓存。
+
+建议流程：
+
+1. 使用 `/api/novel` 的上传预览/导入接口导入 TXT，确认章节标题和切分结果。
+2. 调用 `code-report`，先检查 `characters`、`time_mentions`、`events`、`cooccurrences` 的 evidence；相对时间（如“三天后”）会标记为 `unresolved`，不会自动当作绝对日期。
+3. 只有需要别名归并、关系语义或未锚定时间归一化时，才创建 `/api/novel-analysis/works/{work_id}/tasks` 深析任务，并传入筛选后的 evidence ID。
+4. 任务继承 `max_tokens_per_task`、`max_tool_calls_per_task`、`max_chapters_per_task` 上限；系统不会把整本小说直接发送给 LLM。
+
+无 LLM provider 时，第 2 步仍可完成并返回可复核的代码分析报告。
+
 ## 验证
 
 ```bash

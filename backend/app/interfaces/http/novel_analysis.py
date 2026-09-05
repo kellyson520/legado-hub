@@ -11,6 +11,7 @@ from app.infrastructure.persistence.factory import (
     build_narrative_knowledge_service,
     build_novel_analysis_pipeline_service,
     build_novel_analysis_task_service,
+    build_novel_code_report_service,
     build_source_repository,
     build_system_settings_service,
 )
@@ -27,6 +28,19 @@ class CreateAnalysisTaskRequest(BaseModel):
 
 def _envelope(message: str, data: dict):
     return ok(data=data, message=message, meta={})
+
+
+@router.get("/works/{work_id}/code-report")
+async def get_code_report(
+    work_id: str,
+    chapter_limit: int = Query(default=8, ge=1, le=24),
+    _=Depends(require_permission(Permission.NOVEL_MANAGE)),
+):
+    try:
+        data = build_novel_code_report_service().build(work_id, chapter_limit=chapter_limit)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _envelope("code analysis report loaded", data)
 
 
 @router.get("/works/{work_id}/snapshot")
