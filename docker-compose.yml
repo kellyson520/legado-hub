@@ -1,0 +1,84 @@
+services:
+  permissions:
+    image: alpine:3.20
+    user: root
+    command: ["sh", "-c", "chown -R 10001:10001 /data /logs /backups"]
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+      - ./backups:/backups
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_PATH: /data/legado_hub.db
+      NOVEL_DB_PATH: /data/novel.db
+      LEGADO_RUNTIME_HEALTHCHECK_ENABLED: "false"
+      PYTHONUNBUFFERED: "1"
+      APP_ENV: prod
+      EVENT_DELIVERY_WORKER_ENABLED: "false"
+      SOURCE_BUILD_WORKER_ENABLED: "false"
+      NOVEL_INDEX_WORKER_ENABLED: "false"
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+      - ./backups:/backups
+    expose:
+      - "8000"
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - internal
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    mem_limit: 64m
+    cpus: 0.5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - ./data/redis:/data
+    mem_limit: 96m
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge

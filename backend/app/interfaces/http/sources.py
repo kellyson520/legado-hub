@@ -1,0 +1,187 @@
+import asyncio
+import json
+
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from typing import Any
+
+from pydantic import BaseModel
+
+from app.core.permissions import Permission
+from app.core.response import from_paginated_result, ok
+from app.infrastructure.persistence.factory import build_source_runtime_service, build_source_service
+from app.interfaces.http.deps import RequestIdentity, get_current_identity, require_permission
+
+
+router = APIRouter()
+MAX_LEGADO_IMPORT_FILE_BYTES = 32 * 1024 * 1024
+
+
+class BookSourcePayload(BaseModel):
+    bookSourceName: str
+    bookSourceUrl: str
+    bookSourceGroup: str = "default"
+    enabled: bool = True
+
+
+class LocalBookSourceImportRequest(BaseModel):
+    file_path: str
+    replace_existing: bool = True
+
+
+@router.post("/import")
+async def import_legado_json_sources(
+    payload: Any = Body(...),
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    data = await build_source_runtime_service().import_legado_sources(payload, str(identity.user_id))
+    return ok(data=data, message="Legado 书源导入完成", meta={})
+
+
+@router.post("/import/file")
+async def import_legado_json_file(
+    file: UploadFile = File(...),
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    try:
+        await file.seek(0)
+        size = await asyncio.to_thread(_file_size, file.file)
+        if size > MAX_LEGADO_IMPORT_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="Legado JSON file exceeds the 32 MiB upload limit")
+        await file.seek(0)
+        payload = await asyncio.to_thread(json.load, file.file)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Legado JSON file is malformed") from exc
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Legado JSON file must be UTF-8") from exc
+    finally:
+        await file.close()
+    data = await build_source_runtime_service().import_legado_sources(payload, str(identity.user_id))
+    return ok(data=data, message="Legado 书源文件导入完成", meta={})
+
+
+def _file_size(file_object) -> int:
+    file_object.seek(0, 2)
+    size = file_object.tell()
+    file_object.seek(0)
+    return size
+
+
+@router.get("/export")
+async def export_legado_json_sources(
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
+):
+    data = await build_source_runtime_service().export_legado_sources(str(identity.user_id))
+    return ok(data=data, message="Legado 书源导出完成", meta={"total": len(data)})
+
+
+@router.get("/book_sources")
+async def list_book_sources(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    enabled_only: bool = False,
+    _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
+):
+    service = build_source_service()
+    result = await service.list_book_sources(page=page, page_size=page_size, enabled_only=enabled_only)
+    return from_paginated_result(result, message="book sources listed")
+
+
+@router.get("/visible")
+async def list_visible_source_versions(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=200),
+    search: str = Query(default="", max_length=200),
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
+):
+    result = await build_source_runtime_service().list_visible_sources(
+        str(identity.user_id),
+        page=page,
+        page_size=page_size,
+        search=search,
+    )
+    return from_paginated_result(result, message="visible source inventory listed")
+
+
+@router.post("/book_sources")
+async def create_book_source(
+    payload: BookSourcePayload,
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    service = build_source_service()
+    item = await service.create_book_source(payload.model_dump(), identity.user_id)
+    return ok(data=item, message="book source created", meta={})
+
+
+@router.post("/book_sources/import")
+async def import_book_sources(
+    payload: LocalBookSourceImportRequest,
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    service = build_source_service()
+    data = await service.import_book_sources_from_file(
+        payload.file_path,
+        identity.user_id,
+        replace_existing=payload.replace_existing,
+    )
+    return ok(data=data, message="book sources imported", meta={})
+
+
+@router.get("/versions/{source_version_id}")
+async def get_source_rule_version(
+    source_version_id: str,
+    _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
+):
+    data = await build_source_runtime_service().get_version_detail(source_version_id)
+    return ok(data=data, message="书源规则版本已加载", meta={})
+
+
+@router.post("/versions/{source_version_id}/drafts")
+async def create_source_rule_draft(
+    source_version_id: str,
+    payload: dict = Body(...),
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    data = await build_source_runtime_service().create_rule_draft(source_version_id, payload, str(identity.user_id))
+    return ok(data=data, message="书源规则候选版本已保存", meta={})
+
+
+@router.post("/versions/{source_version_id}/validate")
+async def validate_source_rule_version(
+    source_version_id: str,
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    service = build_source_runtime_service()
+    try:
+        data = await service.validate_rule_version(source_version_id, str(identity.user_id))
+    finally:
+        await service.aclose()
+    return ok(data=data, message="书源规则验证完成", meta={})
+
+
+@router.post("/versions/{source_version_id}/publish")
+async def publish_source_rule_version(
+    source_version_id: str,
+    identity: RequestIdentity = Depends(get_current_identity),
+    _=Depends(require_permission(Permission.BOOK_SOURCES_WRITE)),
+):
+    data = await build_source_runtime_service().publish_rule_version(source_version_id, str(identity.user_id))
+    return ok(data=data, message="书源规则版本已发布", meta={})
+
+
+@router.get("/{source_type}/{source_id}/versions")
+async def list_source_versions(
+    source_type: str,
+    source_id: str,
+    _=Depends(require_permission(Permission.BOOK_SOURCES_READ)),
+):
+    service = build_source_runtime_service()
+    data = await service.list_versions(source_type, source_id)
+    return ok(data=data, message="source versions listed", meta={"total": len(data)})

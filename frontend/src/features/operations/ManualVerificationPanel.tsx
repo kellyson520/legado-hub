@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import RFB from '@novnc/novnc'
+import RFB from '@novnc/novnc/lib/rfb'
 
 import { useLanguage } from '@/app/providers/LanguageProvider'
 import {

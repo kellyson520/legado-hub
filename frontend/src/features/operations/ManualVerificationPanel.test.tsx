@@ -28,7 +28,7 @@ const browserMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/modules/interactiveBrowser', () => browserMocks)
-vi.mock('@novnc/novnc', () => ({ default: vi.fn(() => ({ disconnect: vi.fn() })) }))
+vi.mock('@novnc/novnc/lib/rfb', () => ({ default: vi.fn(() => ({ disconnect: vi.fn() })) }))
 
 import { ManualVerificationPanel } from './ManualVerificationPanel'
 

@@ -30,15 +30,61 @@ core: 日志、异常、响应、分页、认证、安全、脱敏和策略
 
 ## 启动
 
-### Docker Compose
+### Docker Compose（低内存部署）
+
+默认部署只启动 FastAPI 与 Nginx，API 使用单 worker，数据和日志全部挂载到宿主机；为保持镜像精简，默认不携带 Java/Kotlin native runtime，`LEGADO_RUNTIME_HEALTHCHECK_ENABLED=false`；Redis 是可选 profile；MinIO 和 Cloudflare Tunnel 使用独立 Compose override，启用时必须显式提供密码/token。
 
 ```bash
 cp .env.example .env
-# 设置 SECRET_KEY；需要模型时再设置 LLM_API_URL / LLM_API_KEY / LLM_MODEL
-docker compose up -d
+# 生产环境必须修改 SECRET_KEY
+mkdir -p data logs backups
+docker compose up -d --build
+docker compose ps
 ```
 
-控制台默认地址：`http://localhost`。首次使用在登录页初始化管理员。
+控制台默认地址：`http://127.0.0.1:8080`（可用 `.env` 中的 `WEB_PORT` 更换）。首次使用在登录页初始化管理员。
+
+开发时可挂载源码（源码只读挂载，数据仍保存在宿主机）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.override.yml.example up -d --build
+```
+
+可选 Redis/MinIO：
+
+```bash
+docker compose --profile redis -f docker-compose.yml -f docker-compose.minio.yml up -d --build
+```
+
+### 公网访问（Cloudflare Tunnel）
+
+公网模式不开放数据库、Redis 或 MinIO 端口，而是由 `cloudflared` 主动连接 Cloudflare。先在 Cloudflare Dashboard 创建 Tunnel，并把 Public Hostname 指向 `http://web:80`，再把 token 只写入本机 `.env`：
+
+```bash
+# .env（不要提交）
+CLOUDFLARE_TUNNEL_TOKEN=真实的 tunnel token
+docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
+```
+
+公网配置渲染检查：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.public.yml config
+```
+
+如果没有 Cloudflare token，不要启用 `public` profile。生产默认仍只绑定 `127.0.0.1:8080`。
+
+### 后续源码更新
+
+生产镜像默认固定构建时源码；更新代码后执行：
+
+```bash
+git pull
+docker compose build --pull api web
+docker compose up -d api web
+```
+
+开发模式使用 `docker-compose.override.yml.example` 的 bind mount，可直接替换 `backend/app` 或 `frontend/src` 后重建对应服务。SQLite 数据位于 `./data`，日志位于 `./logs`，备份位于 `./backups`；首次启动的 permissions 服务会为这些目录设置非 root API 所需权限。
 
 ### 本地开发
 

@@ -1,0 +1,15 @@
+services:
+  tunnel:
+    image: cloudflare/cloudflared:2025.2.0
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN:?CLOUDFLARE_TUNNEL_TOKEN must be set for public access}"]
+    depends_on:
+      web:
+        condition: service_started
+    mem_limit: 64m
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
