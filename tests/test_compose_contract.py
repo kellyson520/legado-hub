@@ -17,6 +17,9 @@ def test_compose_uses_local_web_binding_and_persistent_mounts():
     assert "mem_limit: 64m" in compose
     assert "user: root" in compose
     assert "required: false" in compose
+    assert "LLM_API_URL: ${LLM_API_URL:-}" in compose
+    assert "LLM_API_KEY: ${LLM_API_KEY:-}" in compose
+    assert "LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}" in compose
     assert "change-this-minio-password" not in compose
 
     public = (ROOT / "docker-compose.public.yml").read_text()

@@ -30,6 +30,9 @@ services:
       EVENT_DELIVERY_WORKER_ENABLED: "false"
       SOURCE_BUILD_WORKER_ENABLED: "false"
       NOVEL_INDEX_WORKER_ENABLED: "false"
+      LLM_API_URL: ${LLM_API_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
     depends_on:
       permissions:
         condition: service_completed_successfully

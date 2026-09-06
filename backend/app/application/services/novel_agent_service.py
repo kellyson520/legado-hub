@@ -39,10 +39,21 @@ class NovelAgentService:
         if self._repo is None:
             raise NotFoundException("novel ingestion not found")
         ingestion = self._repo.get_ingestion(novel_id, owner_scope=owner_scope)
+        if ingestion is None and str(novel_id).isdigit():
+            book_id = int(novel_id)
+            ingestion = next(
+                (
+                    item
+                    for item in self._repo.list_ingestions(owner_scope=owner_scope)
+                    if item.book_id == book_id
+                ),
+                None,
+            )
         if ingestion is None:
             raise NotFoundException("novel ingestion not found")
+        novel_id = ingestion.id
         invocation = await self._platform.invoke_chat(
-            provider_group="novel",
+            provider_group="novel_chat",
             model=None,
             payload=self._build_payload(ingestion),
             quota_scope=("user", actor_id),

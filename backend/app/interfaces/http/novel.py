@@ -16,6 +16,7 @@ from app.infrastructure.persistence.factory import (
     build_novel_repository,
     build_novel_runtime_repository,
     build_source_read_service,
+    build_canonical_content_repository,
     build_scoped_novel_agent_app_service,
 )
 from app.infrastructure.novel_ingestion.url_security import NovelUrlPolicy
@@ -77,6 +78,7 @@ async def get_novel_ingestion_service():
         repo=repo,
         source_reader=build_source_read_service(),
         runtime_repo=build_novel_runtime_repository(),
+        canonical_repo=build_canonical_content_repository(),
         url_policy=NovelUrlPolicy(),
     )
 

@@ -28,6 +28,21 @@ async def test_preview_upload_does_not_persist_and_returns_quality_summary():
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_preview_upload_forwards_split_options():
+    service = NovelIngestionService(FakeRepo())
+    preview = await service.preview_upload(
+        "user:preview",
+        "book.txt",
+        "text/plain",
+        "第一章 标题\n这是足够长的正文内容。".encode(),
+        split_mode="heading",
+        min_chapter_chars=0,
+    )
+    assert preview.chapters
+
+
+@pytest.mark.asyncio
 async def test_preview_upload_rejects_empty_document():
     service = NovelIngestionService(FakeRepo())
 
