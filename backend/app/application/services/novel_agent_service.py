@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from app.core.exceptions import NotFoundException
+from app.core.exceptions import NotFoundException, ServiceUnavailableException
 from app.domain.entities.novel_runtime import NovelAnalysisTask, NovelIngestion
 
 
@@ -52,12 +52,15 @@ class NovelAgentService:
         if ingestion is None:
             raise NotFoundException("novel ingestion not found")
         novel_id = ingestion.id
-        invocation = await self._platform.invoke_chat(
-            provider_group="novel_chat",
-            model=None,
-            payload=self._build_payload(ingestion),
-            quota_scope=("user", actor_id),
-        )
+        try:
+            invocation = await self._platform.invoke_chat(
+                provider_group="novel_chat",
+                model=None,
+                payload=self._build_payload(ingestion),
+                quota_scope=("user", actor_id),
+            )
+        except LookupError as exc:
+            raise ServiceUnavailableException(str(exc)) from exc
         task = NovelAnalysisTask(
             id=uuid4().hex,
             novel_id=novel_id,

@@ -32,6 +32,11 @@ class ConflictException(AppException):
         super().__init__("CONFLICT", message, 409, details)
 
 
+class ServiceUnavailableException(AppException):
+    def __init__(self, message: str = "service unavailable", details: dict | None = None):
+        super().__init__("SERVICE_UNAVAILABLE", message, 503, details)
+
+
 class ExternalServiceException(AppException):
     def __init__(self, message: str = "external service failed", details: dict | None = None):
         super().__init__("EXTERNAL_SERVICE_ERROR", message, 502, details)
