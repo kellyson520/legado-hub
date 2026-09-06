@@ -12,7 +12,7 @@ import json
 import inspect
 import re
 from typing import Any, Dict, List
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote
 
 from .engine import (
     HttpResponse,
@@ -59,6 +59,32 @@ class LegadoBookSourceFetcher:
         if callable(setter):
             setter(deadline)
 
+    @staticmethod
+    def _search_variables(keyword: str, page: int) -> Dict[str, Any]:
+        encoded_keyword = quote(keyword)
+        return {
+            "keyword": keyword,
+            "key": encoded_keyword,
+            "searchKey": encoded_keyword,
+            "searchkey": encoded_keyword,
+            "page": page,
+            "start": (page - 1) * 20,
+            "limit": 20,
+            "size": 20,
+            "pageSize": 20,
+        }
+
+    @staticmethod
+    def _body_variables(variables: Dict[str, Any]) -> Dict[str, Any]:
+        result = dict(variables)
+        raw_keyword = result.get("keyword", "")
+        result.update({"key": raw_keyword, "searchKey": raw_keyword, "searchkey": raw_keyword})
+        return result
+
+    @staticmethod
+    def _form_body(body: str) -> Dict[str, str]:
+        return {key: value for key, value in parse_qsl(body, keep_blank_values=True)}
+
     def _selector_context(self, **kwargs) -> Dict[str, Any]:
         self._native_context.update({key: value for key, value in kwargs.items() if value is not None})
         self._native_context.update({
@@ -96,26 +122,14 @@ class LegadoBookSourceFetcher:
         url_config = UrlUtils.parse_url_config(search_url_tmpl)
         charset = url_config.get("charset", "")
 
-        encoded_keyword = keyword
+        variables = self._search_variables(keyword, page)
+        encoded_keyword = variables["key"]
         if charset and charset.lower() in ("gbk", "gb2312", "gb18030"):
             try:
                 encoded_keyword = keyword.encode(charset).decode("latin-1")
             except (UnicodeEncodeError, LookupError):
                 encoded_keyword = quote(keyword.encode("utf-8"))
-        else:
-            encoded_keyword = quote(keyword)
-
-        variables = {
-            "keyword": keyword,
-            "key": encoded_keyword,
-            "searchKey": encoded_keyword,
-            "searchkey": encoded_keyword,
-            "page": page,
-            "start": (page - 1) * 20,
-            "limit": 20,
-            "size": 20,
-            "pageSize": 20,
-        }
+            variables.update({"key": encoded_keyword, "searchKey": encoded_keyword, "searchkey": encoded_keyword})
         headers = UrlUtils.parse_headers(source.get("header", ""))
         is_js_search = search_url_tmpl.strip().startswith("@js:")
         js_search_code = search_url_tmpl.strip()[4:].strip() if is_js_search else ""
@@ -184,7 +198,7 @@ class LegadoBookSourceFetcher:
 
             body_data = None
             if method == "POST" and body_tmpl:
-                body_str = UrlUtils.fill_template(body_tmpl, variables, encode=False)
+                body_str = UrlUtils.fill_template(body_tmpl, self._body_variables(variables), encode=False)
                 if body_str.startswith("{") or body_str.startswith("["):
                     try:
                         body_data = json.loads(body_str)
@@ -198,7 +212,8 @@ class LegadoBookSourceFetcher:
                     if isinstance(body_data, dict):
                         resp = await self._http.post(search_url, json_data=body_data, headers=headers)
                     else:
-                        resp = await self._http.post(search_url, data=body_data, headers=headers)
+                        form_data = self._form_body(body_data) if isinstance(body_data, str) else body_data
+                        resp = await self._http.post(search_url, data=form_data, headers=headers)
                 else:
                     resp = await self._http.get(search_url, headers=headers)
             except Exception as e:
