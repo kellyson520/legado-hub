@@ -45,8 +45,23 @@ class SourceBuildToolExecutor:
             'source.probe': self._probe,
             'rule.propose': self._propose,
             'rule.validate': self._validate,
+            'rule.infer': self._infer,
             'review.request': self._review,
         }
+
+    def _infer(self, arguments: dict) -> ToolResult:
+        html = arguments.get('html') or self._context.inspect_data.get('html_sample') or ''
+        if not html:
+            return ToolResult(status='rejected', error_code='missing_html_sample')
+        from app.application.services.source_induction_service import SourceInductionService
+        induction = SourceInductionService()
+        inferred = induction.infer_source_from_html(
+            base_url=self._context.source_url,
+            toc_html=html,
+            content_html=arguments.get('content_html'),
+            search_html=arguments.get('search_html'),
+        )
+        return ToolResult(status='accepted', data={'inferred_source': inferred})
 
     def _inspect(self, _arguments: dict) -> ToolResult:
         return ToolResult(status='accepted', data={

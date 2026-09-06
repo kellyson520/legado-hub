@@ -332,5 +332,14 @@ class SourceGenerator:
             except Exception:
                 continue
 
+        try:
+            from app.application.services.source_induction_service import SourceInductionService
+            inferred = SourceInductionService().infer_toc_rule(soup)
+            if inferred.get("chapterList"):
+                self._log(f"启发式归纳检测到目录: {inferred['chapterList']}")
+                return inferred
+        except Exception:
+            pass
+
         self._log("未检测到目录结构", "warning")
         return result
