@@ -22,6 +22,11 @@ class FixtureFetcher:
         }
 
 
+class EmptyRepo:
+    async def list_book_sources_full(self, *, enabled_only=False, ids=None, urls=None):
+        return []
+
+
 class FixtureRepo:
     async def list_book_sources_full(self, *, enabled_only=False, ids=None, urls=None):
         return [{
@@ -30,6 +35,14 @@ class FixtureRepo:
             "bookSourceUrl": "https://fixture.invalid",
             "enabled": True,
         }]
+
+
+@pytest.mark.asyncio
+async def test_source_search_rejects_empty_runtime_source_inventory():
+    service = SourceReadService(EmptyRepo(), FixtureFetcher())
+    with pytest.raises(Exception) as error:
+        await service.search_books("星河")
+    assert getattr(error.value, "code", None) == "SERVICE_UNAVAILABLE"
 
 
 @pytest.mark.asyncio
