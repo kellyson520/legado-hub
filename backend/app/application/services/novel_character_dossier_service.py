@@ -97,14 +97,20 @@ class NovelCharacterDossierService:
         ] or ["- 暂无高光场景记录"]
 
         aliases_str = "、".join(matched_candidate.aliases) if matched_candidate.aliases else "无"
+        cap_lines = []
+        for dim, info in scoring.get("capability_matrix", {}).items():
+            cap_lines.append(f"- 【{dim}】({info.get('title', '')})：{info.get('score', 0)}/100 · 阶位: {info.get('level', '')}")
+
+        affect_str = " | ".join(f"{k}: {v}" for k, v in arc.get("affective_tensor", {}).items())
+
         summary_card = (
             f"# 人物深度档案卡：{matched_candidate.name}\n\n"
             f"**常用别名/称谓**：{aliases_str}\n"
-            f"**定位层级**：{matched_candidate.importance_tier} | **综合评级**：【{scoring['overall_tier']} 级】(综合评分: {scoring['composite_score']})\n"
-            f"**多维能力雷达**：\n"
-            f"- 叙事与剧情掌控度：{scoring['plot_impact']}/100\n"
-            f"- 战力与危险度：{scoring['power_score']}/100\n"
-            f"- 谋略与心智深沉度：{scoring['mental_score']}/100\n\n"
+            f"**定位层级**：{matched_candidate.importance_tier} | **综合评级**：【{scoring['overall_tier']} 级】(综合评分: {scoring['composite_score']})\n\n"
+            f"### 六维全景能力矩阵：\n"
+            f"{chr(10).join(cap_lines)}\n\n"
+            f"### 八维情志张力张量：\n"
+            f"{affect_str or '暂无显著情感张量'}\n\n"
             f"### 一、核心装备道具与持有物品 ({len(all_items)} 件记录)\n"
             f"{chr(10).join(items_summary_lines)}\n\n"
             f"### 二、心理与情感弧光演化 (主导心态: {arc['overall_sentiment']})\n"
