@@ -132,26 +132,68 @@ class WorkIngestionService:
             changed_prior_variant_ids=changed_prior_variant_ids,
         )
 
+    async def resolve_source_id(self, value: int | str) -> int | None:
+        all_sources = await self._source_repo.list_book_sources_full(enabled_only=True)
+        val_str = str(value).strip()
+        try:
+            val_int = int(val_str)
+            for s in all_sources:
+                if s.get("id") == val_int:
+                    return val_int
+        except ValueError:
+            val_int = None
+
+        # Check by direct URL or partial match
+        for s in all_sources:
+            if s.get("bookSourceUrl") == val_str:
+                return int(s["id"])
+
+        # Check against published versions in runtime repo
+        try:
+            published = self._source_runtime_repo.list_published_versions()
+            for v in published:
+                if v.id == val_str or v.id.startswith(val_str) or (val_int is not None and v.id.startswith(str(val_int))):
+                    v_url = v.payload.get("bookSourceUrl") if isinstance(v.payload, dict) else ""
+                    for s in all_sources:
+                        if s.get("bookSourceUrl") == v_url:
+                            return int(s["id"])
+        except Exception:
+            pass
+        return val_int
+
     async def search_sources(
         self,
         *,
         keyword: str,
-        source_ids: list[int] | None = None,
+        source_ids: list[int | str] | None = None,
         author_hint: str | None = None,
     ) -> dict:
-        sources = await self._source_repo.list_book_sources_full(enabled_only=True, ids=source_ids)
-        eligible_ids = []
-        for source in sources:
+        all_sources = await self._source_repo.list_book_sources_full(enabled_only=True)
+        if not all_sources:
+            return {"items": []}
+
+        eligible_map: dict[int, dict] = {}
+        for source in all_sources:
             try:
                 await self._require_healthy_published_source(int(source["id"]))
+                eligible_map[int(source["id"])] = source
             except (LookupError, PermissionError, ValueError):
                 continue
-            eligible_ids.append(int(source["id"]))
-        if not eligible_ids:
-            raise PermissionError("no healthy published sources are available")
+
+        if not eligible_map:
+            return {"items": []}
+
+        targeted_ids: list[int] = []
+        if source_ids:
+            for sid in source_ids:
+                resolved_id = await self.resolve_source_id(sid)
+                if resolved_id is not None and resolved_id in eligible_map and resolved_id not in targeted_ids:
+                    targeted_ids.append(resolved_id)
+
+        final_ids = targeted_ids[:10] if targeted_ids else list(eligible_map.keys())[:10]
         return await self._reader.search_books(
             keyword,
-            source_ids=eligible_ids,
+            source_ids=final_ids,
             limit_per_source=3,
             author_hint=author_hint,
         )

@@ -74,22 +74,25 @@ class NovelAnalysisToolExecutor:
                     ]
                 }
             elif tool_name == "book.resolve":
+                source_id = await self._resolve_source_id(arguments["source_id"])
                 data = await self._ingestion_service.resolve_book(
-                    source_id=int(arguments["source_id"]),
+                    source_id=source_id,
                     book_url=str(arguments["book_url"]),
                     book_name=str(arguments["book_name"]),
                     author_hint=self._optional_text(arguments.get("author_hint")),
                 )
             elif tool_name == "toc.get":
+                source_id = await self._resolve_source_id(arguments["source_id"])
                 data = await self._ingestion_service.get_table_of_contents(
-                    source_id=int(arguments["source_id"]),
+                    source_id=source_id,
                     book_url=str(arguments["book_url"]),
                     book_name=str(arguments["book_name"]),
                     author_hint=self._optional_text(arguments.get("author_hint")),
                 )
             elif tool_name == "chapter.fetch":
+                source_id = await self._resolve_source_id(arguments["source_id"])
                 ingested = await self._ingestion_service.fetch_and_ingest_chapter(
-                    source_id=int(arguments["source_id"]),
+                    source_id=source_id,
                     book_url=str(arguments["book_url"]),
                     chapter_index=int(arguments["chapter_index"]),
                     book_name=str(arguments["book_name"]),
@@ -205,10 +208,36 @@ class NovelAnalysisToolExecutor:
     def _optional_text(value) -> str | None:
         return str(value).strip() if value is not None and str(value).strip() else None
 
+    async def _resolve_source_id(self, value) -> int:
+        if isinstance(value, int):
+            return value
+        val_str = str(value).strip()
+        try:
+            return int(val_str)
+        except ValueError:
+            pass
+        if hasattr(self._ingestion_service, "resolve_source_id"):
+            resolved = await self._ingestion_service.resolve_source_id(val_str)
+            if resolved is not None:
+                return resolved
+        return int(val_str)
+
     @staticmethod
-    def _optional_source_ids(value) -> list[int] | None:
+    def _optional_source_ids(value) -> list[int | str] | None:
         if value is None:
             return None
         if not isinstance(value, list):
-            raise ValueError("source_ids must be a list")
-        return [int(source_id) for source_id in value]
+            if isinstance(value, (int, str)):
+                value = [value]
+            else:
+                return None
+        out: list[int | str] = []
+        for item in value:
+            if isinstance(item, int):
+                out.append(item)
+            elif isinstance(item, str) and item.strip():
+                try:
+                    out.append(int(item.strip()))
+                except ValueError:
+                    out.append(item.strip())
+        return out or None

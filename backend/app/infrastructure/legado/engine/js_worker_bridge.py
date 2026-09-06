@@ -99,7 +99,10 @@ class JsWorkerClient:
         if self._execution_deadline is not None and self._execution_deadline <= now:
             self._terminate_process()
             return self._failed_output(context, code, started_at, 'EXECUTION_TIMEOUT')
-        self._ensure_started()
+        try:
+            self._ensure_started()
+        except (FileNotFoundError, OSError):
+            return self._failed_output(context, code, started_at, 'NODE_NOT_FOUND')
         payload = {
             "type": "execute",
             "code": code,

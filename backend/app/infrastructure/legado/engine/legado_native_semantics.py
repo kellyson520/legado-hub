@@ -11,6 +11,10 @@ class LegadoJsCompatProfile:
     mode: str = "native"
     strict: bool = False
     allowed_stages: tuple[str, ...] = (
+        "search",
+        "toc",
+        "content",
+        "book_info",
         "search_url_js",
         "search_rule_js",
         "executor_js_rule",

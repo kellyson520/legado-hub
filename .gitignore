@@ -11,6 +11,7 @@ frontend/vite.config.js
 frontend/vite.config.d.ts
 
 /data/
+backend/data/
 data/*.db
 data/**/*.db
 logs/

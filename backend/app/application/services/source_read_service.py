@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from app.core.exceptions import NotFoundException, ValidationException
@@ -48,12 +49,23 @@ class SourceReadService:
                 routing_mode=routing_mode,
             )
 
+        async def _search_one(routed: dict):
+            source = routed["source"]
+            try:
+                found = await asyncio.wait_for(self._fetcher.search(source, keyword, page=1), timeout=4.0)
+                return routed, found or []
+            except Exception:
+                return routed, []
+
+        search_results = await asyncio.gather(*[_search_one(routed) for routed in ranked_sources])
+
         items: list[dict] = []
         selected_source_ids: list[int] = []
-        for routed in ranked_sources:
+        for routed, found in search_results:
+            if not found:
+                continue
             source = routed["source"]
             decision = routed["decision"]
-            found = await self._fetcher.search(source, keyword, page=1)
             selected_source_ids.append(source["id"])
             ranked = sorted(
                 found,

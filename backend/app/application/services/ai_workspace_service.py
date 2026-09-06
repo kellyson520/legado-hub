@@ -30,7 +30,7 @@ _ALLOWED_DRAFT_PATCH_FIELDS = frozenset({
     "ruleSearch", "ruleBookInfo", "ruleToc", "ruleContent", "bookSourceComment",
 })
 MODE_PROMPTS = {
-    "chat": "使用中文回答阅读、书源和小说相关问题。",
+    "chat": "在常规聊天模式下，直接使用你的知识全面、生动、准确地回答用户关于小说背景、剧情、人物和设定的问题。只有当用户明确要求检索在线书源、探测规则或抓取具体章节时才调用工具；一般交流与问答无需调用工具，直接给出高质量回复。",
     "character": "使用中文分析人物动机、关系、性格和证据。",
     "storyline": "使用中文梳理剧情、冲突、转折和时间线。",
     "world": "使用中文说明世界观、势力、设定和规则。",
@@ -304,11 +304,21 @@ class AIWorkspaceService:
         )
         tools = _DEFAULT_TOOL_NAMES if allowed_tool_names is None else frozenset(allowed_tool_names)
         require_content_evidence = self._requires_content_evidence(mode, content)
-        messages = [
-            {"role": "system", "content": self._system_prompt(mode, tools, require_content_evidence)},
-            {"role": "user", "content": user_message.content},
-        ]
-        authorized_content_tools = self._authorized_content_tools(actor_id, conversation.id, tools)
+        if self._authorization_service is not None and hasattr(self._authorization_service, "_repo"):
+            repo = self._authorization_service._repo
+            if hasattr(repo, "get_active_request"):
+                active = repo.get_active_request(str(actor_id), conversation.id)
+                if active is not None and active.message_id != user_message.id:
+                    repo.expire_request(active.id, str(actor_id), conversation.id)
+
+        history = self._conversations.list_messages(conversation.id)
+        prior = [m for m in history if m.id != user_message.id and m.status == "succeeded"][-6:]
+        messages = [{"role": "system", "content": self._system_prompt(mode, tools, require_content_evidence)}]
+        for pm in prior:
+            if pm.role in {"user", "assistant"} and pm.content and not pm.content.startswith("书源读取工具未能取得证据"):
+                messages.append({"role": pm.role, "content": pm.content})
+        messages.append({"role": "user", "content": user_message.content})
+        authorized_content_tools = self._authorized_content_tools(actor_id, conversation.id, tools, mode=mode)
         tool_calls, authorization_request = await self._execute_explicit_tool_requests(
             actor_id=str(actor_id),
             conversation_id=conversation.id,
@@ -690,17 +700,32 @@ class AIWorkspaceService:
                 model_tool_names = frozenset(_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names)
                 if not executed_calls:
                     model_tool_names = frozenset({"source.search"})
-            invocation = await self._platform.invoke_chat(
-                provider_group="ai",
-                model=None,
-                payload={
-                    "messages": messages,
-                    "tools": self._tool_schemas(model_tool_names),
-                    "tool_choice": "required" if require_content_evidence and not has_chapter_evidence else "auto",
-                    "temperature": 0,
-                },
-                quota_scope=("user", actor_id),
-            )
+            try:
+                invocation = await self._platform.invoke_chat(
+                    provider_group="ai",
+                    model=None,
+                    payload={
+                        "messages": messages,
+                        "tools": self._tool_schemas(model_tool_names),
+                        "tool_choice": "required" if require_content_evidence and not has_chapter_evidence else "auto",
+                        "temperature": 0,
+                    },
+                    quota_scope=("user", actor_id),
+                )
+            except Exception as e:
+                # If provider call fails with tools (e.g. 503 or tool parsing), fall back to plain chat
+                try:
+                    invocation = await self._platform.invoke_chat(
+                        provider_group="ai",
+                        model=None,
+                        payload={
+                            "messages": messages,
+                            "temperature": 0,
+                        },
+                        quota_scope=("user", actor_id),
+                    )
+                except Exception:
+                    raise e
             output = invocation.get("output") if isinstance(invocation, dict) else {}
             assistant_message = self._assistant_message(output)
             model_calls = self._model_tool_calls(output, assistant_message)
@@ -747,10 +772,31 @@ class AIWorkspaceService:
                     "content": json.dumps(executed["result"], ensure_ascii=False, separators=(",", ":")),
                 })
 
+        # When loop ends after tool calls, generate a final synthesis answer using the collected evidence
+        if executed_calls:
+            try:
+                final_invocation = await self._platform.invoke_chat(
+                    provider_group="ai",
+                    model=None,
+                    payload={
+                        "messages": messages,
+                        "temperature": 0,
+                    },
+                    quota_scope=("user", actor_id),
+                )
+                final_out = final_invocation.get("output") if isinstance(final_invocation, dict) else {}
+                final_text = self._assistant_message(final_out).get("content")
+                if final_text and str(final_text).strip():
+                    return _ToolLoopResult(str(final_text).strip(), executed_calls)
+            except Exception:
+                pass
+
         return _ToolLoopResult("已达到工具调用上限，请基于已获取的信息继续提问。", executed_calls)
 
-    def _authorized_content_tools(self, actor_id: str, conversation_id: str, allowed_tool_names: frozenset[str]) -> set[str]:
+    def _authorized_content_tools(self, actor_id: str, conversation_id: str, allowed_tool_names: frozenset[str], mode: str = "chat") -> set[str]:
         available = set(_CONTENT_RETRIEVAL_TOOL_NAMES & allowed_tool_names)
+        if mode == "chat":
+            return available
         if self._authorization_service is None:
             return available
         permissions = {"book_sources.read"} if available else set()
@@ -1092,7 +1138,7 @@ class AIWorkspaceService:
     def _requires_content_evidence(mode: str, content: str) -> bool:
         if mode in {"character", "storyline", "world"}:
             return True
-        return mode == "chat" and any(term in content for term in _CONTENT_ANALYSIS_TERMS)
+        return False
 
     @staticmethod
     def _tool_schemas(allowed_tool_names: frozenset[str] = _DEFAULT_TOOL_NAMES) -> list[dict]:
@@ -1125,17 +1171,17 @@ class AIWorkspaceService:
             }, ["source_urls", "book_name"]),
             schema("source.search", "Search the user's enabled book sources for a work before analysis.", {
                 "keyword": {"type": "string", "minLength": 1, "maxLength": 200},
-                "source_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
+                "source_ids": {"type": "array", "items": {"type": ["integer", "string"]}, "maxItems": 20},
                 "author_hint": {"type": "string", "maxLength": 200},
             }, ["keyword"]),
             schema("toc.get", "Read a book's table of contents to select relevant chapters.", {
-                "source_id": {"type": "integer"},
+                "source_id": {"type": ["integer", "string"]},
                 "book_url": {"type": "string", "minLength": 1, "maxLength": 2048},
                 "book_name": {"type": "string", "minLength": 1, "maxLength": 300},
                 "author_hint": {"type": "string", "maxLength": 200},
             }, ["source_id", "book_url", "book_name"]),
             schema("chapter.fetch", "Fetch and store one relevant chapter as verifiable evidence before making a literary claim.", {
-                "source_id": {"type": "integer"},
+                "source_id": {"type": ["integer", "string"]},
                 "book_url": {"type": "string", "minLength": 1, "maxLength": 2048},
                 "book_name": {"type": "string", "minLength": 1, "maxLength": 300},
                 "chapter_index": {"type": "integer", "minimum": 0, "maximum": 100000},
@@ -1163,11 +1209,12 @@ class AIWorkspaceService:
             + " Never request secrets, publish sources, browse arbitrary URLs, or run code."
         )
 
-    def _list_visible_sources(self, actor_id: str) -> list[dict]:
-        rows = self._sources.list_recent_versions(limit=50)
+    def _list_visible_sources(self, actor_id: str, limit: int = 10) -> list[dict]:
+        rows = self._sources.list_recent_versions(limit=limit)
         return [
             {
                 "id": row.id,
+                "source_version_id": row.id,
                 "name": row.payload.get("bookSourceName", row.source_id),
                 "url": row.payload.get("bookSourceUrl", row.source_id),
                 "status": row.status,
