@@ -82,6 +82,16 @@ export function AIWorkspacePage() {
   const [sendingElapsed, setSendingElapsed] = useState(0)
   const sendingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [error, setError] = useState('')
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const scrollToBottom = useCallback((smooth = true) => {
+    messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' })
+  }, [])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [conversation?.messages, sending, scrollToBottom])
   const [pendingAuthorizations, setPendingAuthorizations] = useState<AIConversationAuthorizationRequest[]>([])
   const [authorizationGrants, setAuthorizationGrants] = useState<AIConversationAuthorizationGrant[]>([])
   const [authorizationBusy, setAuthorizationBusy] = useState<string | null>(null)
@@ -338,12 +348,23 @@ export function AIWorkspacePage() {
       title="小说分析对话"
       description="以受控、只读工具辅助人物介绍、剧情解析与世界观提炼。工具结果会作为引用附在回答中，敏感数据不会进入对话。"
     >
-      <div className="grid min-h-[680px] overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_20px_60px_-35px_hsl(var(--foreground)/0.45)] lg:grid-cols-[290px_minmax(0,1fr)]">
-        <aside className="border-b border-border bg-[linear-gradient(160deg,hsl(var(--muted)/0.52),hsl(var(--background)/0.82))] lg:border-b-0 lg:border-r">
-          <div className="border-b border-border p-4">
-            <Button className="w-full" onClick={() => void createConversation()} disabled={sending}>新建对话</Button>
+      <div className={`relative flex min-h-[750px] max-h-[88vh] overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_20px_60px_-35px_hsl(var(--foreground)/0.45)]`}>
+        {/* 侧边栏：支持切换隐藏与展开 */}
+        <aside className={`flex flex-col border-r border-border bg-[linear-gradient(160deg,hsl(var(--muted)/0.52),hsl(var(--background)/0.82))] transition-all duration-300 ease-in-out ${sidebarOpen ? 'w-[290px] min-w-[290px]' : 'w-0 min-w-0 overflow-hidden border-r-0'}`}>
+          <div className="flex items-center justify-between border-b border-border p-3">
+            <Button className="flex-1" onClick={() => void createConversation()} disabled={sending}>新建对话</Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setSidebarOpen(false)}
+              className="ml-2 h-9 w-9 p-0 text-muted-foreground hover:text-foreground"
+              title="隐藏侧边栏"
+            >
+              ✕
+            </Button>
           </div>
-          <div className="max-h-[290px] space-y-1 overflow-y-auto p-3 lg:max-h-[610px]">
+          <div className="flex-1 space-y-1 overflow-y-auto p-3">
             <PaginatedListControls
               pagination={pagination}
               empty={!loadingConversations && conversations.length === 0}
@@ -365,25 +386,44 @@ export function AIWorkspacePage() {
               ))}
             </PaginatedListControls>
           </div>
-          <div className="border-t border-border p-4 text-xs leading-5 text-muted-foreground">
+          <div className="border-t border-border p-3 text-xs leading-5 text-muted-foreground">
             <p className="font-semibold text-foreground">工具边界</p>
-            <p className="mt-1">仅可调用已列出的只读工具，不执行网页抓取、写入书源或任意代码。</p>
+            <p className="mt-1">仅调用只读工具，不执行任意外部写入代码。</p>
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-col">
-          <header className="border-b border-border bg-card/90 px-5 py-4 backdrop-blur">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">受控 Agent 对话</p>
-            <h2 className="mt-1 font-serif text-xl font-semibold tracking-tight">{conversation?.title ?? '选择或新建一个对话'}</h2>
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <label className="text-xs font-medium text-muted-foreground">选择书籍
-                <select aria-label="选择书籍" value={selectedBookId} onChange={(event) => setSelectedBookId(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring">
+        <section className="flex flex-1 min-w-0 flex-col overflow-hidden">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card/90 px-5 py-3 backdrop-blur">
+            <div className="flex items-center gap-3">
+              {!sidebarOpen ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSidebarOpen(true)}
+                  className="h-8 gap-1.5 px-2.5 text-xs font-medium"
+                  title="展开侧边历史会话"
+                >
+                  <span>☰</span>
+                  <span>历史对话</span>
+                </Button>
+              ) : null}
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">受控 Agent 对话</p>
+                <h2 className="font-serif text-lg font-semibold tracking-tight">{conversation?.title ?? '选择或新建一个对话'}</h2>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <span>书籍:</span>
+                <select aria-label="选择书籍" value={selectedBookId} onChange={(event) => setSelectedBookId(event.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-xs font-normal text-foreground outline-none focus:ring-2 focus:ring-ring">
                   <option value="">不绑定书籍</option>
                   {books.map((book) => <option key={book.id} value={book.id}>{book.book_name}</option>)}
                 </select>
               </label>
-              <label className="text-xs font-medium text-muted-foreground">选择模型
-                <select aria-label="选择模型" value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring">
+              <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <span>模型:</span>
+                <select aria-label="选择模型" value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-xs font-normal text-foreground outline-none focus:ring-2 focus:ring-ring">
                   <option value="">系统路由默认</option>
                   {models.map((item) => <option key={`${item.provider}:${item.model}`} value={item.model}>{item.model} · {item.provider}</option>)}
                 </select>
@@ -391,7 +431,8 @@ export function AIWorkspacePage() {
             </div>
           </header>
 
-          <div className="min-h-[320px] flex-1 space-y-5 bg-[radial-gradient(circle_at_top_right,hsl(var(--accent)/0.8)_0,transparent_32%),linear-gradient(180deg,hsl(var(--background)/0.5),hsl(var(--muted)/0.2))] p-5">
+          {/* 核心消息滚动区域：固定高度、独立滚动容器 */}
+          <div className="flex-1 space-y-5 overflow-y-auto bg-[radial-gradient(circle_at_top_right,hsl(var(--accent)/0.8)_0,transparent_32%),linear-gradient(180deg,hsl(var(--background)/0.5),hsl(var(--muted)/0.2))] p-5 scroll-smooth">
             <StatusMessage tone="error" message={error} className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2" />
             {authorizationGrants.length > 0 ? (
               <div className="space-y-2">
@@ -460,6 +501,8 @@ export function AIWorkspacePage() {
                 <span>AI 深度思考生成中… 已耗时 <strong className="text-foreground">{sendingElapsed}</strong> 秒</span>
               </div>
             ) : null}
+            {/* 自动滚动锚点 */}
+            <div ref={messagesEndRef} className="h-1" />
           </div>
 
           <div className="border-t border-border bg-card p-4">
