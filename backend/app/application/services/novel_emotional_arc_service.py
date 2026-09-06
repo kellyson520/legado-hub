@@ -5,7 +5,18 @@ from typing import Any
 
 
 class NovelEmotionalArcService:
-    """Extracts emotional trajectories, sentiment polarity, and psychological turning points for characters."""
+    """Extracts emotional trajectories, 8-dimensional affective tension space, and psychological turning points."""
+
+    _AFFECT_DIMENSIONS: dict[str, list[str]] = {
+        "喜": ["大喜", "笑曰", "从容", "欣然", "欣喜", "欢喜", "微笑", "悠闲", "高兴", "平静", "安宁", "自信", "轻松"],
+        "怒": ["大怒", "叱曰", "厉声", "杀气", "反击", "冷冽", "咆哮", "死战", "圆睁", "喝道", "愤怒", "忿然"],
+        "哀": ["大痛", "痛哭", "涕泣", "悲切", "伤感", "哀恸", "哭", "悲伤", "痛惜"],
+        "惧": ["大惊", "恐惧", "惊恐", "骇然", "失色", "慌乱", "冷汗", "胆裂", "心跳骤停", "害怕", "大骇"],
+        "忠": ["忠义", "誓死", "死报", "竭力", "尽忠", "厚恩", "大义", "不负", "报效", "誓言"],
+        "雄": ["傲然", "威风", "傲视", "横刀", "纵马", "凛凛", "从容不迫", "英勇", "霸气", "豪迈", "按剑"],
+        "疑": ["沉吟", "生疑", "迟疑", "顾虑", "猜忌", "暗想", "计谋", "深思", "犹豫"],
+        "溃": ["崩塌", "绝望", "大溃", "溃败", "惨白", "崩溃", "力竭", "惨叫", "无力"],
+    }
 
     _EMOTION_LEXICON: dict[str, tuple[float, str]] = {
         # Positive / Calm / Confident (Weight > 0)
@@ -21,6 +32,11 @@ class NovelEmotionalArcService:
         "果断": (1.2, "自信"),
         "从容不迫": (1.8, "从容"),
         "轻松": (1.0, "悠闲"),
+        "大喜": (1.8, "喜悦"),
+        "笑曰": (1.2, "从容"),
+        "忠义": (1.8, "忠诚"),
+        "威风": (1.5, "雄傲"),
+        "傲然": (1.5, "雄傲"),
         # Negative / Despair / Panic (Weight < 0)
         "恐惧": (-2.0, "恐惧"),
         "绝望": (-2.5, "绝望"),
@@ -34,11 +50,17 @@ class NovelEmotionalArcService:
         "崩溃": (-2.5, "绝望"),
         "痛苦": (-1.8, "痛苦"),
         "无力": (-1.5, "绝望"),
+        "大惊": (-1.5, "惊恐"),
+        "大骇": (-2.0, "惊恐"),
+        "失色": (-1.5, "惊恐"),
+        "大溃": (-2.5, "绝望"),
         # Resolute / Combat focus
         "冷冽": (0.8, "果断"),
         "反击": (1.2, "果断"),
         "杀气": (0.5, "愤怒"),
         "死战": (0.6, "果断"),
+        "大怒": (0.8, "愤怒"),
+        "叱曰": (0.8, "愤怒"),
     }
 
     def compute_arc(
@@ -46,9 +68,10 @@ class NovelEmotionalArcService:
         chapters: list[dict[str, Any]],
         character_name: str,
     ) -> dict[str, Any]:
-        """Calculates chapter-by-chapter emotional trajectory and turning points."""
+        """Calculates chapter-by-chapter emotional trajectory, turning points, and 8D affective tensor."""
         trajectory: list[dict[str, Any]] = []
         split_pattern = re.compile(r"[。！？\n；]")
+        global_affect_tensor: dict[str, float] = {axis: 0.0 for axis in self._AFFECT_DIMENSIONS}
 
         for chapter in chapters:
             content = str(chapter.get("content", ""))
@@ -70,6 +93,7 @@ class NovelEmotionalArcService:
 
             target_text = " ".join(relevant_sentences) if relevant_sentences else content
 
+            # Compute standard sentiment score
             score = 0.0
             emotion_counts: dict[str, int] = {}
             for word, (weight, emotion_label) in self._EMOTION_LEXICON.items():
@@ -77,6 +101,14 @@ class NovelEmotionalArcService:
                 if c > 0:
                     score += weight * c
                     emotion_counts[emotion_label] = emotion_counts.get(emotion_label, 0) + c
+
+            # Compute 8-dimensional affective vector for this chapter
+            chapter_affect_vector: dict[str, float] = {}
+            for axis, words in self._AFFECT_DIMENSIONS.items():
+                axis_count = sum(target_text.count(w) for w in words)
+                norm_score = round(min(axis_count * 1.5, 10.0), 2)
+                chapter_affect_vector[axis] = norm_score
+                global_affect_tensor[axis] = round(global_affect_tensor[axis] + norm_score, 2)
 
             if emotion_counts:
                 dominant_emotion = max(emotion_counts.items(), key=lambda x: x[1])[0]
@@ -88,10 +120,11 @@ class NovelEmotionalArcService:
                 "chapter_title": chapter_title,
                 "sentiment_score": round(score, 2),
                 "dominant_emotion": dominant_emotion,
+                "affective_vector": chapter_affect_vector,
                 "excerpt": (relevant_sentences[0] if relevant_sentences else content[:120]),
             })
 
-        # Find turning points (significant sentiment delta between adjacent chapters)
+        # Find turning points
         turning_points: list[dict[str, Any]] = []
         for i in range(1, len(trajectory)):
             prev = trajectory[i - 1]["sentiment_score"]
@@ -121,6 +154,7 @@ class NovelEmotionalArcService:
         return {
             "character_name": character_name,
             "overall_sentiment": overall_sentiment,
+            "affective_tensor": global_affect_tensor,
             "trajectory": trajectory,
             "turning_points": turning_points,
         }
