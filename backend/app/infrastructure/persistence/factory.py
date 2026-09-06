@@ -743,6 +743,11 @@ def build_novel_agent_service() -> NovelAgentService:
     )
 
 
+def build_novel_character_dossier_service():
+    from app.application.services.novel_character_dossier_service import NovelCharacterDossierService
+    return NovelCharacterDossierService(provider_platform=build_provider_platform_service())
+
+
 def build_novel_ingestion_service(*, repo, source_reader=None, runtime_repo=None) -> NovelIngestionService:
     return NovelIngestionService(
         repo=repo,

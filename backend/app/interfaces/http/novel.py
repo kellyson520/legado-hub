@@ -13,6 +13,7 @@ from app.application.services.novel_ingestion.parsers import NovelImportError
 from app.application.services.novel_ingestion.upload_limits import UploadTooLarge, _read_upload_bytes
 from app.infrastructure.persistence.factory import (
     build_novel_agent_service,
+    build_novel_character_dossier_service,
     build_novel_repository,
     build_novel_runtime_repository,
     build_source_read_service,
@@ -384,3 +385,70 @@ async def analyze_book(novel_id: str, identity=Depends(require_permission(Permis
         owner_scope=owner_scope_for(identity),
     )
     return ok(data=task, message="novel analysis queued", meta={})
+
+
+class CharacterDossierRequest(BaseModel):
+    character_name: str = Field(min_length=1, max_length=100)
+    llm_synthesize: bool = Field(default=False)
+
+
+@router.post("/books/{book_id}/character-dossier")
+async def generate_character_dossier_post(
+    book_id: int,
+    payload: CharacterDossierRequest,
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    repo = await get_scoped_novel_repository()
+    db_chapters = await repo.get_chapters_by_book(owner_scope_for(identity), book_id, limit=200)
+    chapters = []
+    for c in db_chapters:
+        text = getattr(c, "raw_text", "")
+        if text:
+            chapters.append({
+                "chapter_id": str(c.id),
+                "chapter_index": getattr(c, "canonical_num", getattr(c, "chapter_num", len(chapters) + 1)),
+                "title": getattr(c, "chapter_title", getattr(c, "raw_title", f"第{len(chapters)+1}章")),
+                "content": text,
+            })
+    if not chapters:
+        runtime_repo = build_novel_runtime_repository()
+        ingestions = runtime_repo.list_ingestions(owner_scope=owner_scope_for(identity))
+        ing = next((item for item in ingestions if item.book_id == book_id), None)
+        if ing and ing.source_text:
+            raw_text = ing.source_text
+            chunk_size = 3000
+            for i in range(0, max(len(raw_text), 1), chunk_size):
+                chunk = raw_text[i:i + chunk_size]
+                chapters.append({
+                    "chapter_id": f"chunk-{len(chapters)+1}",
+                    "chapter_index": len(chapters) + 1,
+                    "title": f"第{len(chapters)+1}节",
+                    "content": chunk,
+                })
+
+    if not chapters:
+        raise HTTPException(status_code=404, detail="No chapters or text found for novel")
+
+    service = build_novel_character_dossier_service()
+    dossier = await service.build_dossier(
+        book_id=book_id,
+        character_name=payload.character_name,
+        chapters=chapters[:30],
+        llm_synthesize=payload.llm_synthesize,
+        actor_id=str(identity.user_id),
+    )
+    return ok(data=dossier, message="character dossier generated")
+
+
+@router.get("/books/{book_id}/characters/{character_name}/dossier")
+async def generate_character_dossier_get(
+    book_id: int,
+    character_name: str,
+    llm_synthesize: bool = Query(default=False),
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    return await generate_character_dossier_post(
+        book_id=book_id,
+        payload=CharacterDossierRequest(character_name=character_name, llm_synthesize=llm_synthesize),
+        identity=identity,
+    )
