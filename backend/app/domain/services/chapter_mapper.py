@@ -42,8 +42,19 @@ class ChapterCanonicalMapper:
     @classmethod
     def map_batch(cls, raw_titles: List[str], book_id: int = 0) -> List[NovelChapter]:
         chapters = []
+        used_keys: set[str] = set()
+        next_numbers: dict[str, int] = {}
         for title in raw_titles:
             ch = cls.map_single(title, book_id)
+            key = ch.canonical_full
+            if key in used_keys:
+                next_num = max(next_numbers.get(ch.canonical_type, ch.canonical_num), ch.canonical_num) + 1
+                while f"{ch.canonical_type}{next_num}" in used_keys:
+                    next_num += 1
+                ch.canonical_num = next_num
+                ch.canonical_full = f"{ch.canonical_type}{next_num}"
+            used_keys.add(ch.canonical_full)
+            next_numbers[ch.canonical_type] = max(next_numbers.get(ch.canonical_type, 0), ch.canonical_num)
             chapters.append(ch)
         chapters = cls._detect_merged_chapters(chapters)
         return chapters

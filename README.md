@@ -30,15 +30,61 @@ core: 日志、异常、响应、分页、认证、安全、脱敏和策略
 
 ## 启动
 
-### Docker Compose
+### Docker Compose（低内存部署）
+
+默认部署只启动 FastAPI 与 Nginx，API 使用单 worker，数据和日志全部挂载到宿主机；为保持镜像精简，默认不携带 Java/Kotlin native runtime，`LEGADO_RUNTIME_HEALTHCHECK_ENABLED=false`；Redis 是可选 profile；MinIO 和 Cloudflare Tunnel 使用独立 Compose override，启用时必须显式提供密码/token。
 
 ```bash
 cp .env.example .env
-# 设置 SECRET_KEY；需要模型时再设置 LLM_API_URL / LLM_API_KEY / LLM_MODEL
-docker compose up -d
+# 生产环境必须修改 SECRET_KEY
+mkdir -p data logs backups
+docker compose up -d --build
+docker compose ps
 ```
 
-控制台默认地址：`http://localhost`。首次使用在登录页初始化管理员。
+控制台默认地址：`http://127.0.0.1:8080`（可用 `.env` 中的 `WEB_PORT` 更换）。首次使用在登录页初始化管理员。
+
+开发时可挂载源码（源码只读挂载，数据仍保存在宿主机）：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.override.yml.example up -d --build
+```
+
+可选 Redis/MinIO：
+
+```bash
+docker compose --profile redis -f docker-compose.yml -f docker-compose.minio.yml up -d --build
+```
+
+### 公网访问（Cloudflare Tunnel）
+
+公网模式不开放数据库、Redis 或 MinIO 端口，而是由 `cloudflared` 主动连接 Cloudflare。先在 Cloudflare Dashboard 创建 Tunnel，并把 Public Hostname 指向 `http://web:80`，再把 token 只写入本机 `.env`：
+
+```bash
+# .env（不要提交）
+CLOUDFLARE_TUNNEL_TOKEN=真实的 tunnel token
+docker compose -f docker-compose.yml -f docker-compose.public.yml up -d
+```
+
+公网配置渲染检查：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.public.yml config
+```
+
+如果没有 Cloudflare token，不要启用 `public` profile。生产默认仍只绑定 `127.0.0.1:8080`。
+
+### 后续源码更新
+
+生产镜像默认固定构建时源码；更新代码后执行：
+
+```bash
+git pull
+docker compose build --pull api web
+docker compose up -d api web
+```
+
+开发模式使用 `docker-compose.override.yml.example` 的 bind mount，可直接替换 `backend/app` 或 `frontend/src` 后重建对应服务。SQLite 数据位于 `./data`，日志位于 `./logs`，备份位于 `./backups`；首次启动的 permissions 服务会为这些目录设置非 root API 所需权限。
 
 ### 本地开发
 
@@ -91,6 +137,19 @@ npm run dev
 | `/api/interactive-browser` | 浏览器人工验证和回放 |
 
 认证使用 `Authorization: Bearer <JWT>`；面向阅读客户端的 API Key 使用 `Authorization: Bearer lh_<key>`。生产环境不要把密钥放进前端源码或日志。
+
+### TXT 到深度分析报告
+
+小说分析默认先走确定性代码路径，不需要 LLM：上传 TXT 后按章节解析，再调用 `GET /api/novel-analysis/works/{work_id}/code-report?chapter_limit=8`。报告包含人物候选、窗口共现、时间表达、事件触发词和每项的章节 offset 证据；相同工作内容重复请求会命中 SHA-256 缓存。
+
+建议流程：
+
+1. 使用 `/api/novel` 的上传预览/导入接口导入 TXT，确认章节标题和切分结果。
+2. 调用 `code-report`，先检查 `characters`、`time_mentions`、`events`、`cooccurrences` 的 evidence；相对时间（如“三天后”）会标记为 `unresolved`，不会自动当作绝对日期。
+3. 只有需要别名归并、关系语义或未锚定时间归一化时，才创建 `/api/novel-analysis/works/{work_id}/tasks` 深析任务，并传入筛选后的 evidence ID。
+4. 任务继承 `max_tokens_per_task`、`max_tool_calls_per_task`、`max_chapters_per_task` 上限；系统不会把整本小说直接发送给 LLM。
+
+无 LLM provider 时，第 2 步仍可完成并返回可复核的代码分析报告。
 
 ## 验证
 

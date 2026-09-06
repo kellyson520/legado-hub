@@ -25,6 +25,16 @@ class ManualBrowserValidationRecoveryPending(RuntimeError):
 
 class SourceBuildAuditService:
     MAX_ATTEMPTS = 5
+
+    @staticmethod
+    def _review_gate_passed(*, audit: dict, autonomous_build: dict | None) -> bool:
+        if not isinstance(audit, dict) or audit.get('workflow') != 'unified':
+            return False
+        agent_review = autonomous_build.get('ai') if isinstance(autonomous_build, dict) else None
+        if isinstance(agent_review, dict) and agent_review.get('status') == 'succeeded':
+            return True
+        agent = autonomous_build.get('agent') if isinstance(autonomous_build, dict) else None
+        return isinstance(agent, dict) and agent.get('reason') == 'deterministic_success'
     MAX_STAGE_ELAPSED_MS = 10_000
     MAX_TOTAL_ELAPSED_MS = 25_000
     MIN_CLOSE_TIMEOUT_SECONDS = 0.001
@@ -228,11 +238,9 @@ class SourceBuildAuditService:
             )
         autonomous_build = payload.get('autonomous_build') if isinstance(payload, dict) else None
         agent_review = autonomous_build.get('ai') if isinstance(autonomous_build, dict) else None
-        unified_review_ready = (
-            isinstance(existing_audit, dict)
-            and existing_audit.get('workflow') == 'unified'
-            and isinstance(agent_review, dict)
-            and agent_review.get('status') == 'succeeded'
+        unified_review_ready = self._review_gate_passed(
+            audit=existing_audit,
+            autonomous_build=autonomous_build,
         )
         audit_status = 'approved_for_publish' if passed and unified_review_ready else ('passed' if passed else 'failed')
         if passed and not unified_review_ready and existing_audit.get('workflow') == 'unified':

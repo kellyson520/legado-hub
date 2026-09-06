@@ -21,6 +21,18 @@ function displayValue(value: unknown): string {
   }
 }
 
+function renderStructuredDetails(value: ToolRecord) {
+  const steps = Array.isArray(value.steps) ? value.steps.filter(isRecord) : []
+  const citations = Array.isArray(value.citations) ? value.citations.filter(isRecord) : []
+  if (!steps.length && !citations.length) return null
+  return (
+    <div className="mb-3 space-y-3 rounded-md border border-primary/20 bg-primary/[.04] p-3 text-xs">
+      {steps.length ? <div><p className="mb-2 font-semibold text-primary">Agent 步骤</p><ol className="space-y-1">{steps.map((step, index) => <li key={index} className="flex justify-between gap-3"><span>{displayValue(step.name ?? `步骤 ${index + 1}`)}</span><span className="font-mono text-muted-foreground">{displayValue(step.status ?? step.result ?? 'done')}</span></li>)}</ol></div> : null}
+      {citations.length ? <div><p className="mb-2 font-semibold text-primary">证据引用</p><ul className="space-y-1">{citations.map((citation, index) => <li key={index}><span className="font-medium">{displayValue(citation.chapter ?? citation.title ?? `证据 ${index + 1}`)}</span><span className="ml-2 text-muted-foreground">{displayValue(citation.evidence ?? citation.text ?? '')}</span></li>)}</ul></div> : null}
+    </div>
+  )
+}
+
 function fallbackJson(value: unknown): string {
   try {
     const serialized = JSON.stringify(value, null, 2)
@@ -48,14 +60,17 @@ export function ToolResultRenderer({ value }: { value: unknown }) {
 
   if (isRecord(value)) {
     return (
-      <dl className="grid gap-2 rounded-md border border-border bg-background/70 p-3 text-xs sm:grid-cols-[minmax(7rem,0.35fr)_minmax(0,1fr)]">
+      <>
+        {renderStructuredDetails(value)}
+        <dl className="grid gap-2 rounded-md border border-border bg-background/70 p-3 text-xs sm:grid-cols-[minmax(7rem,0.35fr)_minmax(0,1fr)]">
         {Object.entries(value).slice(0, MAX_COLUMNS).map(([key, item]) => (
           <div key={key} className="contents">
             <dt className="rounded bg-muted/50 px-2 py-1 font-semibold text-muted-foreground">{key}</dt>
             <dd className="min-w-0 whitespace-pre-wrap break-words rounded px-2 py-1">{displayValue(item)}</dd>
           </div>
         ))}
-      </dl>
+        </dl>
+      </>
     )
   }
 

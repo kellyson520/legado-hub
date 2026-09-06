@@ -1,107 +1,87 @@
-version: "3.8"
-
 services:
-  # Redis 缓存层
-  redis:
-    image: redis:7-alpine
-    container_name: legado-hub-redis
-    restart: unless-stopped
+  permissions:
+    image: alpine:3.20
+    user: root
+    command: ["sh", "-c", "chown -R 10001:10001 /data /logs /backups"]
     volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    networks:
-      - legado-hub-net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - ./data:/data
+      - ./logs:/logs
+      - ./backups:/backups
+    restart: "no"
 
-  # MinIO 对象存储（可选，用于备份和AI结果存储）
-  minio:
-    image: minio/minio:latest
-    container_name: legado-hub-minio
-    restart: unless-stopped
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio_data:/data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-legadohub}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-legadohub-minio-password}
-    command: server /data --console-address ":9001"
-    networks:
-      - legado-hub-net
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # LegadoHub 主服务
-  legado-hub:
+  api:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: legado-hub
-    ports:
-      - "8000:8000"
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+    restart: unless-stopped
+    init: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DB_PATH: /data/legado_hub.db
+      NOVEL_DB_PATH: /data/novel.db
+      LEGADO_RUNTIME_HEALTHCHECK_ENABLED: "false"
+      PYTHONUNBUFFERED: "1"
+      APP_ENV: prod
+      EVENT_DELIVERY_WORKER_ENABLED: "false"
+      SOURCE_BUILD_WORKER_ENABLED: "false"
+      NOVEL_INDEX_WORKER_ENABLED: "false"
+      LLM_API_URL: ${LLM_API_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
     volumes:
       - ./data:/data
-      - ./frontend:/app/frontend:ro
       - ./logs:/app/logs
-    environment:
-      - DB_PATH=/data/legado_hub.db
-      - NOVEL_DB_PATH=/data/novel.db
-      - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=${SECRET_KEY:-legado-hub-change-me-in-production}
-      - PYTHONUNBUFFERED=1
-      - DEBUG=false
-      # MinIO 配置
-      - MINIO_ENDPOINT=http://minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER:-legadohub}
-      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD:-legadohub-minio-password}
-      - MINIO_BUCKET=legado-hub
-      # LLM 配置（可选）
-      - LLM_API_URL=${LLM_API_URL:-}
-      - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
-    restart: unless-stopped
-    depends_on:
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    networks:
-      - legado-hub-net
+      - ./backups:/backups
+    expose:
+      - "8000"
+    mem_limit: 512m
+    cpus: 1.0
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=3)"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
-      start_period: 10s
-
-  # Nginx 反向代理（生产环境）
-  nginx:
-    image: nginx:alpine
-    container_name: legado-hub-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./frontend:/app/frontend:ro
-      - ./logs/nginx:/var/log/nginx
-    depends_on:
-      - legado-hub
+      start_period: 20s
     networks:
-      - legado-hub-net
+      - internal
 
-volumes:
-  redis_data:
-  minio_data:
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
+    depends_on:
+      permissions:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    mem_limit: 64m
+    cpus: 0.5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - ./data/redis:/data
+    mem_limit: 96m
+    networks:
+      - internal
 
 networks:
-  legado-hub-net:
+  internal:
     driver: bridge

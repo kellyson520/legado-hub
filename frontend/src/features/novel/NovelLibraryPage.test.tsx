@@ -38,6 +38,7 @@ const novelMocks = vi.hoisted(() => ({
     meta: {},
     trace_id: null,
   }),
+  previewNovel: vi.fn(),
   uploadNovel: vi.fn(),
   createNovelConversation: vi.fn(),
 }))
@@ -68,7 +69,20 @@ test('书架显示进度并能从书源搜索结果加入书架', async () => {
   })
 })
 
-test('书架上传小说时把文件交给统一导入接口', async () => {
+test('书架上传小说时先展示预览，再由用户确认导入', async () => {
+  novelMocks.previewNovel.mockResolvedValueOnce({
+    success: true,
+    code: 'OK',
+    message: 'previewed',
+    data: {
+      title: '测试书',
+      total_chars: 42,
+      chapters: [{ ordinal: 1, title: '第一章', word_count: 42, preview: '内容' }],
+      warnings: [{ code: 'short_chapter', message: '章节较短', chapter_index: 1 }],
+    },
+    meta: {},
+    trace_id: null,
+  })
   novelMocks.uploadNovel.mockResolvedValueOnce({
     success: true,
     code: 'OK',
@@ -82,6 +96,12 @@ test('书架上传小说时把文件交给统一导入接口', async () => {
   const file = new File(['第一章\n内容'], '测试书.txt', { type: 'text/plain' })
   fireEvent.change(screen.getByLabelText('上传小说'), { target: { files: [file] } })
 
+  expect(await screen.findByText('导入预览')).toBeInTheDocument()
+  expect(screen.getByText(/1 章/)).toBeInTheDocument()
+  expect(screen.getByText('章节较短')).toBeInTheDocument()
+  expect(novelMocks.uploadNovel).not.toHaveBeenCalled()
+
+  fireEvent.click(screen.getByRole('button', { name: '确认导入' }))
   await waitFor(() => expect(novelMocks.uploadNovel).toHaveBeenCalledWith(file))
   expect(await screen.findByText(/导入任务已创建/)).toBeInTheDocument()
 })

@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
     scheduler_started = False
     app.state.runtime_process = RuntimeProcessManager()
     try:
-        if settings.ENV != "test":
+        if settings.ENV != "test" and settings.LEGADO_RUNTIME_HEALTHCHECK_ENABLED:
             app.state.runtime_process.health()
         await build_source_repository().delete_expired_ephemeral_book_sources()
         await build_source_runtime_service().register_published_book_sources()

@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     NOVEL_INDEX_POLL_SECONDS: float = 5.0
     NOVEL_INDEX_BATCH_SIZE: int = 10
     NOVEL_DB_PATH: str = (BASE_DIR / "data" / "novel.db").as_posix()
+    LEGADO_RUNTIME_HEALTHCHECK_ENABLED: bool = True
 
     @field_validator("ENV")
     @classmethod

@@ -122,7 +122,7 @@ User Input → Think (Plan) → Act (Tool Call) → Observe (Result) → Synthes
 class BaseProvider(ABC):
     @abstractmethod
     def stream(self, messages, system, tools) -> AsyncIterator[StreamChunk]
-    @abstractmethod  
+    @abstractmethod
     def complete(self, messages, system, tools) -> (text, tool_calls, usage)
 
 class ProviderRegistry:
@@ -230,7 +230,7 @@ class BaseProvider(ABC):
     def model(self) -> str
     @property
     def context_window(self) -> int
-    
+
     async def stream(self, messages, system, tools, temperature, max_tokens) -> AsyncIterator[StreamChunk]
     async def complete(self, messages, system, tools, temperature, max_tokens) -> (str, List[ToolCall], Usage)
 ```
@@ -242,15 +242,15 @@ class BaseSkill(ABC):
     @property
     @abstractmethod
     def name(self) -> str
-    
+
     @property
     @abstractmethod
     def description(self) -> str
-    
+
     @property
     @abstractmethod
     def tools(self) -> List[Dict]
-    
+
     @abstractmethod
     def execute(self, tool_name: str, params: Dict) -> Dict
 ```
@@ -262,19 +262,19 @@ class BaseTool(ABC):
     @property
     @abstractmethod
     def name(self) -> str
-    
+
     @property
     @abstractmethod
     def description(self) -> str
-    
+
     @property
     @abstractmethod
     def parameters(self) -> Dict  # JSON Schema
-    
+
     @property
     @abstractmethod
     def read_only(self) -> bool
-    
+
     @abstractmethod
     def execute(self, params: Dict) -> Dict
 ```
@@ -299,14 +299,14 @@ from novel_agent import BaseSkill, register_skill
 class MySkill(BaseSkill):
     name = "my_skill"
     description = "我的自定义技能"
-    
+
     def tools(self):
         return [{
             "name": "my_tool",
             "description": "...",
             "parameters": {"type": "object", "properties": {...}}
         }]
-    
+
     def execute(self, tool_name, params):
         if tool_name == "my_tool":
             return {"result": "ok"}
@@ -322,7 +322,7 @@ class MyProvider(BaseProvider):
     async def stream(self, messages, system, tools, **kwargs):
         # 实现流式生成
         ...
-    
+
     async def complete(self, messages, system, tools, **kwargs):
         # 实现非流式生成
         ...
@@ -339,7 +339,7 @@ class MyTool(BaseTool):
     description = "..."
     parameters = {"type": "object", "properties": {...}}
     read_only = True
-    
+
     def execute(self, params):
         return {"result": "ok"}
 ```

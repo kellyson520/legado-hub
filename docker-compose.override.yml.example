@@ -1,0 +1,12 @@
+services:
+  api:
+    environment:
+      APP_ENV: development
+      DEBUG: "true"
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./data:/data
+      - ./logs:/app/logs
+  web:
+    ports:
+      - "127.0.0.1:3000:80"

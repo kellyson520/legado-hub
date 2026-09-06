@@ -7,6 +7,7 @@ import aiosqlite
 
 from app.infrastructure.persistence.sqlite.novel_repo_impl import SqliteNovelRepository
 from app.application.services.novel_ingestion_service import NovelIngestionService
+from app.domain.services.chapter_mapper import ChapterCanonicalMapper
 from app.domain.entities.novel import NovelStatus
 
 
@@ -19,6 +20,13 @@ async def ingestion_service():
     service = NovelIngestionService(repo)
     yield service
     await db.close()
+
+
+def test_chapter_mapper_keeps_repeated_volume_numbers_unique():
+    mapped = ChapterCanonicalMapper.map_batch(
+        ["第1章 第一卷", "第2章 第一卷", "第1章 第二卷", "第2章 第二卷"]
+    )
+    assert len({chapter.canonical_full for chapter in mapped}) == 4
 
 
 class TestNovelIngestionService:

@@ -27,3 +27,16 @@ test('工具返回 Markdown 字符串时渲染为富文本表格', () => {
   expect(screen.getByText('陈舟')).toBeInTheDocument()
   expect(screen.queryByText('| 人物 | 身份 |')).not.toBeInTheDocument()
 })
+
+test('工具结果显示 Agent 步骤和证据引用', () => {
+  render(<ToolResultRenderer value={{
+    status: 'completed',
+    steps: [{ name: 'chapter_quality', status: 'passed' }],
+    citations: [{ chapter: '第一章', evidence: '主角进入城门' }],
+  }} />)
+
+  expect(screen.getByText('chapter_quality')).toBeInTheDocument()
+  expect(screen.getByText('passed')).toBeInTheDocument()
+  expect(screen.getByText('第一章')).toBeInTheDocument()
+  expect(screen.getByText('主角进入城门')).toBeInTheDocument()
+})

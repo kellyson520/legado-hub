@@ -9,9 +9,11 @@ import {
   importNovelFromUrl,
   listNovelBooks,
   listNovelChapters,
+  previewNovel,
   searchNovelBooks,
   uploadNovel,
   type NovelBook,
+  type NovelImportPreview,
   type NovelChapter,
   type NovelSearchResult,
 } from '@/api/modules/novel'
@@ -63,6 +65,7 @@ export function NovelLibraryPage() {
   const [busyKey, setBusyKey] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [pendingUpload, setPendingUpload] = useState<{ file: File; preview: NovelImportPreview } | null>(null)
 
   const loadBooks = async () => {
     setLoading(true)
@@ -150,14 +153,32 @@ export function NovelLibraryPage() {
 
   const handleUpload = async (file?: File) => {
     if (!file) return
+    setBusyKey(`preview:${file.name}`)
+    setNotice('')
+    setError('')
+    try {
+      const response = await previewNovel(file)
+      setPendingUpload({ file, preview: response.data })
+    } catch {
+      setError(`无法预览 ${file.name}，支持 TXT、Markdown、HTML 和 EPUB。`)
+      if (uploadInput.current) uploadInput.current.value = ''
+    } finally {
+      setBusyKey('')
+    }
+  }
+
+  const confirmUpload = async () => {
+    if (!pendingUpload) return
+    const { file } = pendingUpload
     setBusyKey(`upload:${file.name}`)
     setNotice('')
     try {
       await uploadNovel(file)
       setNotice(`导入任务已创建：${file.name}`)
+      setPendingUpload(null)
       await loadBooks()
     } catch {
-      setError(`无法读取 ${file.name}，支持 TXT、Markdown、HTML 和 EPUB。`)
+      setError(`无法导入 ${file.name}，请修正文件后重试。`)
     } finally {
       setBusyKey('')
       if (uploadInput.current) uploadInput.current.value = ''
@@ -199,6 +220,26 @@ export function NovelLibraryPage() {
     >
       {error ? <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p> : null}
       {notice ? <p role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">{notice}</p> : null}
+      {pendingUpload ? (
+        <section aria-labelledby="novel-import-preview-title" className="rounded-xl border border-primary/30 bg-primary/[.04] p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Upload review</p>
+              <h2 id="novel-import-preview-title" className="mt-1 text-lg font-semibold">导入预览</h2>
+              <p className="mt-1 text-sm text-muted-foreground">{pendingUpload.file.name} · {pendingUpload.preview.chapters.length} 章 · {pendingUpload.preview.total_chars.toLocaleString()} 字</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setPendingUpload(null)} disabled={Boolean(busyKey)}>取消</Button>
+              <Button onClick={() => void confirmUpload()} disabled={Boolean(busyKey)}>{busyKey ? <Loader2 className="h-4 w-4 animate-spin" aria-label="正在导入" /> : '确认导入'}</Button>
+            </div>
+          </div>
+          {pendingUpload.preview.warnings.length ? (
+            <ul className="mt-4 space-y-2 text-sm text-amber-700 dark:text-amber-300">
+              {pendingUpload.preview.warnings.map((warning, index) => <li key={`${warning.code}-${index}`} className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2">{warning.message}</li>)}
+            </ul>
+          ) : <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">未发现明显分章问题。</p>}
+        </section>
+      ) : null}
 
       {currentBook ? (
         <section className="space-y-5">

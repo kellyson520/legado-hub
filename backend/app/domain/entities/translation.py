@@ -35,7 +35,7 @@ class TextChunk:
     index: int
     content: str
     paragraph_indices: List[int] = field(default_factory=list)
-    
+
     @property
     def length(self) -> int:
         return len(self.content)
@@ -51,12 +51,12 @@ class TranslationChunk:
     error_msg: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
-    
+
     def mark_translated(self, translated_text: str):
         self.translated = translated_text
         self.status = TranslationStatus.COMPLETED
         self.updated_at = datetime.utcnow()
-    
+
     def mark_failed(self, error_msg: str):
         self.status = TranslationStatus.FAILED
         self.error_msg = error_msg
@@ -73,7 +73,7 @@ class TranslationDictionary:
     max_entries: int = 80
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
-    
+
     def add_entry(self, original: str, translated: str) -> bool:
         """添加词典条目，超过上限时返回 False"""
         if len(self.entries) >= self.max_entries and original not in self.entries:
@@ -81,7 +81,7 @@ class TranslationDictionary:
         self.entries[original] = translated
         self.updated_at = datetime.utcnow()
         return True
-    
+
     def merge_entries(self, new_entries: Dict[str, str]) -> int:
         """合并新条目，返回实际添加的数量"""
         added = 0
@@ -89,7 +89,7 @@ class TranslationDictionary:
             if self.add_entry(original, translated):
                 added += 1
         return added
-    
+
     def to_prompt_text(self) -> str:
         """转换为 LLM 提示词中的词典文本"""
         lines = []
@@ -118,33 +118,33 @@ class TranslationJob:
     error_msg: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
-    
+
     @property
     def progress(self) -> float:
         """计算翻译进度百分比"""
         if self.total_chunks <= 0:
             return 0.0
         return round(self.completed_chunks / self.total_chunks * 100, 2)
-    
+
     @property
     def is_done(self) -> bool:
         """是否已完成（成功或失败）"""
         return self.status in (TranslationStatus.COMPLETED, TranslationStatus.FAILED)
-    
+
     def mark_started(self):
         self.status = TranslationStatus.RUNNING
         self.updated_at = datetime.utcnow()
-    
+
     def mark_completed(self, translated_text: str):
         self.translated_text = translated_text
         self.status = TranslationStatus.COMPLETED
         self.updated_at = datetime.utcnow()
-    
+
     def mark_failed(self, error_msg: str):
         self.status = TranslationStatus.FAILED
         self.error_msg = error_msg
         self.updated_at = datetime.utcnow()
-    
+
     def update_progress(self, completed: int, failed: int = 0):
         self.completed_chunks = completed
         self.failed_chunks = failed

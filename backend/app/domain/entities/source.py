@@ -53,23 +53,23 @@ class BookSource:
     sourceOrigin: Optional[str] = None
     createdAt: datetime = field(default_factory=datetime.utcnow)
     updatedAt: datetime = field(default_factory=datetime.utcnow)
-    
+
     @property
     def id(self) -> str:
         """实体唯一标识"""
         return self.bookSourceUrl
-    
+
     def is_available(self) -> bool:
         """业务规则：源是否可用"""
         return self.enabled and self.sourceStatus == "ok"
-    
+
     def mark_checked(self, status: str, error_msg: Optional[str] = None):
         """标记检查状态"""
         self.sourceStatus = status
         self.lastCheckTime = datetime.utcnow()
         self.errorMsg = error_msg
         self.updatedAt = datetime.utcnow()
-    
+
     def to_legado_dict(self) -> Dict[str, Any]:
         """转换为 Legado 标准格式（移除内部字段）"""
         hub_fields = {"sourceStatus", "lastCheckTime", "errorMsg", "sourceOrigin", "createdAt", "updatedAt"}
@@ -78,7 +78,7 @@ class BookSource:
             if k not in hub_fields and v is not None and v != "":
                 result[k] = v
         return result
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BookSource":
         """从字典创建实体"""
@@ -142,20 +142,20 @@ class RssSource:
     sourceOrigin: Optional[str] = None
     createdAt: datetime = field(default_factory=datetime.utcnow)
     updatedAt: datetime = field(default_factory=datetime.utcnow)
-    
+
     @property
     def id(self) -> str:
         return self.sourceUrl
-    
+
     def is_available(self) -> bool:
         return self.enabled and self.sourceStatus == "ok"
-    
+
     def mark_checked(self, status: str, error_msg: Optional[str] = None):
         self.sourceStatus = status
         self.lastCheckTime = datetime.utcnow()
         self.errorMsg = error_msg
         self.updatedAt = datetime.utcnow()
-    
+
     def to_legado_dict(self) -> Dict[str, Any]:
         hub_fields = {"sourceStatus", "lastCheckTime", "errorMsg", "sourceOrigin", "createdAt", "updatedAt"}
         result = {}
@@ -163,7 +163,7 @@ class RssSource:
             if k not in hub_fields and v is not None and v != "":
                 result[k] = v
         return result
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RssSource":
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
@@ -185,7 +185,7 @@ class Subscription:
     sourceCount: int = 0
     createdAt: datetime = field(default_factory=datetime.utcnow)
     updatedAt: datetime = field(default_factory=datetime.utcnow)
-    
+
     def mark_fetched(self, source_count: int = 0):
         self.lastFetchTime = datetime.utcnow()
         self.sourceCount = source_count
@@ -205,20 +205,20 @@ class FilterRule:
     isEnabled: bool = True
     order: int = 0
     createdAt: datetime = field(default_factory=datetime.utcnow)
-    
+
     def should_filter(self, source_name: str = "", source_url: str = "", source_group: str = "", content: str = "") -> bool:
         """业务规则：判断规则是否匹配（返回 True 表示应该过滤掉）"""
         import re
-        
+
         scope_map = {
             "sourceName": source_name,
             "sourceUrl": source_url,
             "sourceGroup": source_group,
             "content": content,
         }
-        
+
         value = scope_map.get(self.scope or "sourceName", "")
-        
+
         try:
             if self.isRegex:
                 return bool(re.search(self.pattern, value))

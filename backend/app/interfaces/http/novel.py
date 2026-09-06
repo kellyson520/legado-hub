@@ -3,17 +3,21 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from enum import Enum
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from app.core.permissions import Permission
 from app.core.response import from_paginated_result, ok
 from app.application.services.novel_ingestion_service import NovelIngestionService
+from app.application.services.novel_ingestion.parsers import NovelImportError
+from app.application.services.novel_ingestion.upload_limits import UploadTooLarge, _read_upload_bytes
 from app.infrastructure.persistence.factory import (
     build_novel_agent_service,
+    build_novel_character_dossier_service,
     build_novel_repository,
     build_novel_runtime_repository,
     build_source_read_service,
+    build_canonical_content_repository,
     build_scoped_novel_agent_app_service,
 )
 from app.infrastructure.novel_ingestion.url_security import NovelUrlPolicy
@@ -75,6 +79,7 @@ async def get_novel_ingestion_service():
         repo=repo,
         source_reader=build_source_read_service(),
         runtime_repo=build_novel_runtime_repository(),
+        canonical_repo=build_canonical_content_repository(),
         url_policy=NovelUrlPolicy(),
     )
 
@@ -109,26 +114,81 @@ def _import_data(result) -> dict:
     }
 
 
+def _preview_data(preview) -> dict:
+    return _serialize(preview)
+
+
 def _json_dumps(value) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+@router.post("/books/import/preview")
+async def preview_upload(
+    file: UploadFile = File(...),
+    title: str = Form(default=""),
+    author: str = Form(default=""),
+    split_mode: str = Form(default="heading"),
+    min_chapter_chars: int = Form(default=20, ge=0, le=100_000),
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    try:
+        data = await _read_upload_bytes(file)
+    except UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail={"code": exc.code, "message": str(exc)}) from exc
+    service = await get_novel_ingestion_service()
+    try:
+        preview = await service.preview_upload(
+            owner_scope_for(identity),
+            file.filename or "novel.txt",
+            file.content_type or "application/octet-stream",
+            data,
+            title=title,
+            author=author,
+            split_mode=split_mode,
+            min_chapter_chars=min_chapter_chars,
+        )
+    except NovelImportError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
+    return {"success": True, "code": "OK", "message": "novel upload previewed", "data": _preview_data(preview), "meta": {}, "trace_id": None}
 
 
 @router.post("/books/import/upload")
 async def import_upload(
     file: UploadFile = File(...),
+    title: str = Form(default=""),
+    author: str = Form(default=""),
+    split_mode: str = Form(default="heading"),
+    min_chapter_chars: int = Form(default=20, ge=0, le=100_000),
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
-    data = await file.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="uploaded file is empty")
+    try:
+        data = await _read_upload_bytes(file)
+    except UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail={"code": exc.code, "message": str(exc)}) from exc
     service = await get_novel_ingestion_service()
-    result = await service.import_upload(
-        owner_scope_for(identity),
-        file.filename or "novel.txt",
-        file.content_type or "application/octet-stream",
-        data,
-    )
-    return {"success": True, "code": "OK", "message": "novel upload queued", "data": _import_data(result), "meta": {}, "trace_id": None}
+    try:
+        document, preview = await service.prepare_upload(
+            file.filename or "novel.txt",
+            file.content_type or "application/octet-stream",
+            data,
+            title=title,
+            author=author,
+            split_mode=split_mode,
+            min_chapter_chars=min_chapter_chars,
+        )
+        result = await service.import_document(
+            owner_scope_for(identity),
+            document,
+            filename=file.filename or "novel.txt",
+            media_type=file.content_type or "application/octet-stream",
+            data=data,
+            title=title,
+            author=author,
+        )
+    except NovelImportError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": str(exc)}) from exc
+    preview_data = _preview_data(preview)
+    return {"success": True, "code": "OK", "message": "novel upload queued", "data": {**_import_data(result), "preview": preview_data, "warnings": preview_data.get("warnings", [])}, "meta": {}, "trace_id": None}
 
 
 @router.post("/books/import/source")
@@ -325,3 +385,70 @@ async def analyze_book(novel_id: str, identity=Depends(require_permission(Permis
         owner_scope=owner_scope_for(identity),
     )
     return ok(data=task, message="novel analysis queued", meta={})
+
+
+class CharacterDossierRequest(BaseModel):
+    character_name: str = Field(min_length=1, max_length=100)
+    llm_synthesize: bool = Field(default=False)
+
+
+@router.post("/books/{book_id}/character-dossier")
+async def generate_character_dossier_post(
+    book_id: int,
+    payload: CharacterDossierRequest,
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    repo = await get_scoped_novel_repository()
+    db_chapters = await repo.get_chapters_by_book(owner_scope_for(identity), book_id, limit=200)
+    chapters = []
+    for c in db_chapters:
+        text = getattr(c, "raw_text", "")
+        if text:
+            chapters.append({
+                "chapter_id": str(c.id),
+                "chapter_index": getattr(c, "canonical_num", getattr(c, "chapter_num", len(chapters) + 1)),
+                "title": getattr(c, "chapter_title", getattr(c, "raw_title", f"第{len(chapters)+1}章")),
+                "content": text,
+            })
+    if not chapters:
+        runtime_repo = build_novel_runtime_repository()
+        ingestions = runtime_repo.list_ingestions(owner_scope=owner_scope_for(identity))
+        ing = next((item for item in ingestions if item.book_id == book_id), None)
+        if ing and ing.source_text:
+            raw_text = ing.source_text
+            chunk_size = 3000
+            for i in range(0, max(len(raw_text), 1), chunk_size):
+                chunk = raw_text[i:i + chunk_size]
+                chapters.append({
+                    "chapter_id": f"chunk-{len(chapters)+1}",
+                    "chapter_index": len(chapters) + 1,
+                    "title": f"第{len(chapters)+1}节",
+                    "content": chunk,
+                })
+
+    if not chapters:
+        raise HTTPException(status_code=404, detail="No chapters or text found for novel")
+
+    service = build_novel_character_dossier_service()
+    dossier = await service.build_dossier(
+        book_id=book_id,
+        character_name=payload.character_name,
+        chapters=chapters[:30],
+        llm_synthesize=payload.llm_synthesize,
+        actor_id=str(identity.user_id),
+    )
+    return ok(data=dossier, message="character dossier generated")
+
+
+@router.get("/books/{book_id}/characters/{character_name}/dossier")
+async def generate_character_dossier_get(
+    book_id: int,
+    character_name: str,
+    llm_synthesize: bool = Query(default=False),
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    return await generate_character_dossier_post(
+        book_id=book_id,
+        payload=CharacterDossierRequest(character_name=character_name, llm_synthesize=llm_synthesize),
+        identity=identity,
+    )

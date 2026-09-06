@@ -88,11 +88,17 @@ class SourceRuntimeService:
 
     @staticmethod
     def _legacy_book_source_payload(payload: dict) -> dict | None:
-        for candidate in (payload.get("source_rule"), payload):
-            source = SourceRuntimeService._normalize_legacy_book_source_payload(candidate)
-            if source is not None:
-                return source
-        return None
+        top_level = SourceRuntimeService._normalize_legacy_book_source_payload(payload)
+        if top_level is not None:
+            return top_level
+        return SourceRuntimeService._normalize_legacy_book_source_payload(payload.get("source_rule"))
+
+    @staticmethod
+    def _source_rule_richness(source: dict) -> tuple[int, int]:
+        rule_fields = ("ruleSearch", "ruleBookInfo", "ruleToc", "ruleContent")
+        populated = sum(bool(source.get(field)) for field in rule_fields)
+        detail = sum(len(str(value)) for field in rule_fields for value in (source.get(field),) if value)
+        return populated, detail
 
     @staticmethod
     def _normalize_legacy_book_source_payload(candidate: object) -> dict | None:
@@ -373,7 +379,7 @@ class SourceRuntimeService:
             evidence = await asyncio.wait_for(
                 self._source_probe.probe_source(
                     source,
-                    keyword_samples=[self._probe_keyword(version.payload)],
+                    keyword_samples=self._probe_keywords(version.payload),
                     probe_mode="full_chain",
                 ),
                 timeout=self.LIVE_PROBE_TIMEOUT_SECONDS,
@@ -431,9 +437,11 @@ class SourceRuntimeService:
         return result
 
     @staticmethod
-    def _probe_keyword(payload: dict) -> str:
+    def _probe_keywords(payload: dict) -> list[str]:
         keyword = payload.get("keyword") if isinstance(payload, dict) else None
-        return keyword.strip() if isinstance(keyword, str) and keyword.strip() else "斗罗大陆"
+        values = [keyword] if isinstance(keyword, str) and keyword.strip() else []
+        values.extend(["斗罗大陆", "捞尸人", "剑来"])
+        return list(dict.fromkeys(value.strip() for value in values if value and value.strip()))
 
     @staticmethod
     def _live_probe_diagnostic(stage_name: str, step: dict) -> str:

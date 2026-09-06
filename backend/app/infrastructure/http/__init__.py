@@ -7,4 +7,3 @@ this package owns URL validation, DNS checks and concrete HTTP clients.
 from .outbound import SafeAsyncHttpClient, SafeSyncHttpClient, SafeWebhookSender
 
 __all__ = ["SafeAsyncHttpClient", "SafeSyncHttpClient", "SafeWebhookSender"]
-

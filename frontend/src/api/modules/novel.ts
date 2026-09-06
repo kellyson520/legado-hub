@@ -74,12 +74,37 @@ export interface NovelSearchResult {
   healthStatus?: string
 }
 
+export interface NovelImportWarning {
+  code: string
+  message: string
+  chapter_index?: number | null
+}
+
+export interface NovelImportChapterPreview {
+  ordinal: number
+  title: string
+  word_count: number
+  content_hash?: string
+  preview?: string
+}
+
+export interface NovelImportPreview {
+  content_hash: string
+  title: string
+  author: string
+  media_type: string
+  total_chars: number
+  chapters: NovelImportChapterPreview[]
+  warnings: NovelImportWarning[]
+}
+
 export interface NovelImportResult {
   book_id: number
   duplicate?: boolean
   status: string
   task_id?: string
   error_code?: string | null
+  preview?: NovelImportPreview
 }
 
 export interface NovelConversationSummary {
@@ -220,10 +245,20 @@ export async function searchNovelBooks(keyword: string) {
   return { ...response, data: response.data.map(normalizeSearchResult) } satisfies ApiEnvelope<NovelSearchResult[]>
 }
 
-export async function uploadNovel(file: File) {
+function novelFileForm(file: File) {
   const form = new FormData()
   form.append('file', file)
-  return apiClient.post<NovelImportResult>('/novel/books/import/upload', form, {
+  return form
+}
+
+export async function previewNovel(file: File) {
+  return apiClient.post<NovelImportPreview>('/novel/books/import/preview', novelFileForm(file), {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export async function uploadNovel(file: File) {
+  return apiClient.post<NovelImportResult>('/novel/books/import/upload', novelFileForm(file), {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }

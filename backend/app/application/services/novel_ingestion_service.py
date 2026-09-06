@@ -26,6 +26,7 @@ from app.application.services.novel_ingestion.parsers import (
     ParsedChapter,
     ParsedNovelDocument,
 )
+from app.application.services.novel_ingestion.quality import NovelImportPreview, build_import_preview
 @dataclass(frozen=True)
 class ImportResult:
     book_id: int
@@ -45,12 +46,87 @@ class NovelIngestionService:
         storage_dir: str | os.PathLike[str] | None = None,
         url_policy=None,
         runtime_repo=None,
+        canonical_repo=None,
     ):
         self._repo = repo
         self._source_reader = source_reader
         self._storage_dir = Path(storage_dir or os.getenv("NOVEL_STORAGE_DIR", "data/novels"))
         self._url_policy = url_policy
         self._runtime_repo = runtime_repo
+        self._canonical_repo = canonical_repo
+
+    async def prepare_upload(
+        self,
+        filename: str,
+        media_type: str,
+        data: bytes,
+        *,
+        title: str = "",
+        author: str = "",
+        split_mode: str = "heading",
+        fixed_size: int = 2000,
+        min_chapter_chars: int = 20,
+    ) -> tuple[ParsedNovelDocument, NovelImportPreview]:
+        document = NovelDocumentParser().parse(filename, media_type, data, split_mode=split_mode, fixed_size=fixed_size)
+        if title or author:
+            document = ParsedNovelDocument(
+                title=title or document.title,
+                author=author or document.author,
+                normalized_text=document.normalized_text,
+                chapters=document.chapters,
+                content_hash=document.content_hash,
+                media_type=document.media_type,
+            )
+        return document, build_import_preview(document, min_chapter_chars=min_chapter_chars)
+
+    async def preview_upload(
+        self,
+        owner_scope: str,
+        filename: str,
+        media_type: str,
+        data: bytes,
+        *,
+        title: str = "",
+        author: str = "",
+        split_mode: str = "heading",
+        fixed_size: int = 2000,
+        min_chapter_chars: int = 20,
+    ) -> NovelImportPreview:
+        del owner_scope
+        _, preview = await self.prepare_upload(
+            filename,
+            media_type,
+            data,
+            title=title,
+            author=author,
+            split_mode=split_mode,
+            fixed_size=fixed_size,
+            min_chapter_chars=min_chapter_chars,
+        )
+        return preview
+
+    async def import_document(
+        self,
+        owner_scope: str,
+        document: ParsedNovelDocument,
+        *,
+        filename: str,
+        media_type: str,
+        data: bytes,
+        title: str = "",
+        author: str = "",
+    ) -> ImportResult:
+        content_hash = document.content_hash
+        return await self._save_document(
+            owner_scope,
+            f"upload:{content_hash}",
+            document,
+            title=title or document.title,
+            author=author or document.author,
+            source_name="用户上传",
+            source_type=IngestSource.UPLOAD,
+            original=(filename, media_type, data),
+        )
 
     async def ingest_catalog(
         self,
@@ -129,21 +205,16 @@ class NovelIngestionService:
         title: str = "",
         author: str = "",
     ) -> ImportResult:
-        parser = NovelDocumentParser()
-        document = parser.parse(filename, media_type, data)
-        content_hash = document.content_hash
-        book_url = f"upload:{content_hash}"
-        result = await self._save_document(
+        document, _ = await self.prepare_upload(filename, media_type, data, title=title, author=author)
+        return await self.import_document(
             owner_scope,
-            book_url,
             document,
-            title=title or document.title,
-            author=author or document.author,
-            source_name="用户上传",
-            source_type=IngestSource.UPLOAD,
-            original=(filename, media_type, data),
+            filename=filename,
+            media_type=media_type,
+            data=data,
+            title=title,
+            author=author,
         )
-        return result
 
     async def import_source(
         self,
@@ -258,8 +329,33 @@ class NovelIngestionService:
     ) -> ImportResult:
         existing = await self._repo.get_book_by_url(owner_scope, book_url)
         if existing is not None:
+            existing_chapters = await self._repo.get_chapters_by_book(
+                owner_scope, existing.id, limit=100_000
+            )
+            if len(existing_chapters) >= len(document.chapters):
+                await self._mirror_to_canonical(document, source_name=source_name)
+                await self._ensure_initial_progress(owner_scope, existing.id)
+                return ImportResult(existing.id, True, "ready", "")
+            existing_keys = {chapter.canonical_full for chapter in existing_chapters}
+            mapped = ChapterCanonicalMapper.map_batch(
+                [parsed.title for parsed in document.chapters], book_id=existing.id
+            )
+            missing = []
+            for parsed, chapter in zip(document.chapters, mapped):
+                if chapter.canonical_full in existing_keys:
+                    continue
+                chapter.raw_text = parsed.text
+                chapter.word_count = len(parsed.text)
+                chapter.raw_text_hash = parsed.content_hash
+                missing.append(chapter)
+                existing_keys.add(chapter.canonical_full)
+            if missing:
+                await self._repo.save_chapters_batch(owner_scope, missing)
+            await self._repo.update_book_status(owner_scope, existing.id, NovelStatus.SUMMARIZING, progress=0.3)
+            await self._mirror_to_canonical(document, source_name=source_name)
             await self._ensure_initial_progress(owner_scope, existing.id)
-            return ImportResult(existing.id, True, "ready", "")
+            task_id = await self._queue_analysis(owner_scope, existing, document.normalized_text)
+            return ImportResult(existing.id, True, "queued", task_id)
 
         book = await self._repo.save_book(
             owner_scope,
@@ -276,8 +372,10 @@ class NovelIngestionService:
             ),
         )
         chapters: list[NovelChapter] = []
-        for parsed in document.chapters:
-            chapter = ChapterCanonicalMapper.map_single(parsed.title, book_id=book.id)
+        mapped_chapters = ChapterCanonicalMapper.map_batch(
+            [parsed.title for parsed in document.chapters], book_id=book.id
+        )
+        for parsed, chapter in zip(document.chapters, mapped_chapters):
             chapter.raw_text = parsed.text
             chapter.word_count = len(parsed.text)
             chapter.raw_text_hash = parsed.content_hash
@@ -288,6 +386,7 @@ class NovelIngestionService:
                 NovelReadingProgress(owner_scope=owner_scope, book_id=book.id, chapter_id=chapters[0].id)
             )
         await self._repo.update_book_status(owner_scope, book.id, NovelStatus.SUMMARIZING, progress=0.3)
+        await self._mirror_to_canonical(document, source_name=source_name)
         if original is not None:
             self._store_original(owner_scope, document.content_hash, original)
         task_id = await self._queue_analysis(owner_scope, book, document.normalized_text)
@@ -300,6 +399,45 @@ class NovelIngestionService:
         if chapters:
             await self._repo.save_reading_progress(
                 NovelReadingProgress(owner_scope=owner_scope, book_id=book_id, chapter_id=chapters[0].id)
+            )
+
+    async def _mirror_to_canonical(self, document: ParsedNovelDocument, *, source_name: str) -> None:
+        if self._canonical_repo is None:
+            return
+        work = self._canonical_repo.create_canonical_work(title=document.title, author="")
+        existing = self._canonical_repo.list_canonical_chapters(work.id)
+        if len(existing) >= len(document.chapters):
+            return
+        source_work = self._canonical_repo.create_source_work(
+            canonical_work_id=work.id,
+            source_id="upload",
+            title=source_name or document.title,
+            author="",
+        )
+        for index, parsed in enumerate(document.chapters[len(existing):], start=len(existing)):
+            canonical_chapter = self._canonical_repo.add_canonical_chapter(
+                canonical_work_id=work.id,
+                chapter_index=index,
+                title=parsed.title,
+            )
+            source_chapter = self._canonical_repo.add_source_chapter(
+                source_work_id=source_work.id,
+                chapter_index=index,
+                title=parsed.title,
+                chapter_url=f"upload:{document.content_hash}#chapter-{index}",
+                canonical_chapter_id=canonical_chapter.id,
+            )
+            self._canonical_repo.add_content_variant(
+                canonical_chapter_id=canonical_chapter.id,
+                source_chapter_id=source_chapter.id,
+                source_id="upload",
+                content=parsed.text,
+                health_status="healthy",
+                quality_score=1.0,
+                coverage_score=1.0,
+                freshness_score=1.0,
+                latency_ms=0,
+                is_verified=True,
             )
 
     async def _queue_analysis(self, owner_scope: str, book: NovelBook, text: str) -> str:

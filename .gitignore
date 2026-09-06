@@ -1,33 +1,18 @@
-# Python
-backend/.venv/
-backend/__pycache__/
-backend/**/__pycache__/
-backend/.pytest_cache/
-backend/.coverage
-backend/**/*.py[cod]
-backend/nodejs/node_modules/
-backend/app/services/data/*.db
+__pycache__/
+*.py[cod]
 
-# Runtime data, credentials and logs
 .env
-backend/.env
-frontend/.env
-backend/data/
-*.sqlite
-*.sqlite3
-*.log
-
-# Node/Vite output
+.venv/
+backend/.pytest_cache/
 frontend/node_modules/
 frontend/dist/
-frontend/.vite/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
-# Editor and OS files
-.vscode/
-.idea/
-*.swp
-Thumbs.db
-.DS_Store
-
-# Local feature worktrees
-.worktrees/
+/data/
+data/*.db
+data/**/*.db
+logs/
+backups/
+*.log

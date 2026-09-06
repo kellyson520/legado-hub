@@ -130,7 +130,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 class JSONFormatter(logging.Formatter):
     """JSON 结构化日志格式器"""
-    
+
     def format(self, record: logging.LogRecord) -> str:
         log_obj: Dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -141,36 +141,36 @@ class JSONFormatter(logging.Formatter):
             "function": record.funcName,
             "line": record.lineno,
         }
-        
+
         # 添加上下文信息
         trace_id = _context.trace_id
         if trace_id:
             log_obj["trace_id"] = trace_id
-        
+
         user_id = _context.user_id
         if user_id:
             log_obj["user_id"] = user_id
-        
+
         api_key_id = _context.api_key_id
         if api_key_id:
             log_obj["api_key_id"] = api_key_id
-        
+
         # 异常信息
         if record.exc_info:
             log_obj["exception"] = redact_sensitive_data(self.formatException(record.exc_info))
-        
+
         # 额外字段
         for key in _EXTRA_FIELDS:
             val = getattr(record, key, None)
             if val is not None:
                 log_obj[key] = redact_sensitive_data(val)
-        
+
         return json.dumps(log_obj, ensure_ascii=False, default=str)
 
 
 class ContextAdapter(logging.LoggerAdapter):
     """带上下文的日志适配器"""
-    
+
     def process(self, msg, kwargs):
         extra = dict(kwargs.get("extra") or {})
         # 将上下文注入 extra，由 formatter 读取
@@ -214,7 +214,7 @@ def setup_logging(
 ):
     """
     初始化全局日志配置
-    
+
     Args:
         level: 日志级别 DEBUG/INFO/WARNING/ERROR
         enable_json: 是否使用 JSON 格式（生产环境建议开启）
@@ -223,11 +223,11 @@ def setup_logging(
     """
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
-    
+
     # 清除已有 handler
     for h in root.handlers[:]:
         root.removeHandler(h)
-    
+
     # 格式化器
     if enable_json:
         formatter = JSONFormatter()
@@ -235,13 +235,13 @@ def setup_logging(
         formatter = RedactingTextFormatter(
             "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
         )
-    
+
     # 控制台 handler
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
     console.addFilter(SecretRedactionFilter())
     root.addHandler(console)
-    
+
     # 文件 handler（按大小轮转）
     app_file = logging.handlers.RotatingFileHandler(
         os.path.join(LOG_DIR, "app.log"),
@@ -252,7 +252,7 @@ def setup_logging(
     app_file.setFormatter(formatter)
     app_file.addFilter(SecretRedactionFilter())
     root.addHandler(app_file)
-    
+
     # 错误日志单独文件
     error_file = logging.handlers.RotatingFileHandler(
         os.path.join(LOG_DIR, "error.log"),
@@ -264,18 +264,18 @@ def setup_logging(
     error_file.setFormatter(formatter)
     error_file.addFilter(SecretRedactionFilter())
     root.addHandler(error_file)
-    
+
     # 降低第三方库日志级别
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-    
+
     root.info(f"[Logging] 日志系统初始化完成, 级别={level}, JSON={enable_json}", extra={"action": "logging_initialized"})
 
 
 def get_logger(name: str) -> ContextAdapter:
     """
     获取带模块标识的统一 logger
-    
+
     Usage:
         logger = get_logger("source_manager")
         logger.info("拉取订阅完成", extra={"action": "fetch", "source_url": "..."})

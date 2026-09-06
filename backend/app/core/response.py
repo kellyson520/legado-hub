@@ -31,7 +31,7 @@ class ApiMeta(BaseModel):
     page_size: Optional[int] = None
     total: Optional[int] = None
     total_pages: Optional[int] = None
-    
+
     class Config:
         extra = "allow"
 
@@ -39,7 +39,7 @@ class ApiMeta(BaseModel):
 class UnifiedResponse(GenericModel, Generic[T]):
     """
     统一 API 响应模型
-    
+
     所有接口返回的数据必须包装为此结构。
     """
     success: bool = Field(default=True, description="是否成功")
@@ -48,7 +48,7 @@ class UnifiedResponse(GenericModel, Generic[T]):
     data: Optional[T] = Field(default=None, description="业务数据")
     meta: Optional[ApiMeta] = Field(default=None, description="元数据（分页等）")
     trace_id: Optional[str] = Field(default=None, description="链路追踪 ID")
-    
+
     class Config:
         extra = "allow"
 

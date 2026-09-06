@@ -125,7 +125,7 @@ export function EngineRunsPage() {
         <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
           <div className="border-b border-border bg-muted/30 px-5 py-4">
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-primary">Rule lab</p>
-            <h2 className="mt-2 text-xl font-semibold text-foreground">Rule writing studio</h2>
+            <h2 className="mt-2 text-xl font-semibold text-foreground">规则写作工作台</h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               输入站点入口后端会排队执行 source.build，产出 source_rule、rule_patch 和 live probe 验证摘要。
             </p>
@@ -133,7 +133,7 @@ export function EngineRunsPage() {
           <form className="space-y-4 p-5" onSubmit={handleSubmit}>
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground" htmlFor="engine-source-url">
-                Source URL
+                书源 URL
               </label>
               <Input
                 id="engine-source-url"
@@ -146,7 +146,7 @@ export function EngineRunsPage() {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground" htmlFor="engine-source-keyword">
-                Keyword
+                关键词
               </label>
               <Input
                 id="engine-source-keyword"
@@ -158,7 +158,7 @@ export function EngineRunsPage() {
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Button type="submit" disabled={submitting}>
-                Start source build
+                开始构建书源
               </Button>
               <StatusMessage tone="success" message={feedback} as="span" className="font-medium" />
               <StatusMessage tone="error" message={error} as="span" className="font-medium text-rose-600 dark:text-rose-400" />

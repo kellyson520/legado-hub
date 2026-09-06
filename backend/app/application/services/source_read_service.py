@@ -25,6 +25,9 @@ class SourceReadService:
         tenant_id: str | None = None,
     ) -> dict:
         sources = await self._list_sources(tenant_id, enabled_only=True, ids=source_ids)
+        if not sources:
+            from app.core.exceptions import ServiceUnavailableException
+            raise ServiceUnavailableException("no enabled book sources are available")
         ranked_sources = [
             {
                 "source": source,
