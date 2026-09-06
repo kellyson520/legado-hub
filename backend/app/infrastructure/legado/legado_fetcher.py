@@ -324,6 +324,14 @@ class LegadoBookSourceFetcher:
             )
         )
 
+    @staticmethod
+    def _serialize_chapters(chapters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {"title": str(chapter.get("title", "")), "url": str(chapter.get("url", "")), "index": chapter.get("index", idx)}
+            for idx, chapter in enumerate(chapters)
+            if chapter.get("title") and chapter.get("url")
+        ]
+
     async def get_toc(
         self,
         source: Dict[str, Any],
@@ -452,7 +460,7 @@ class LegadoBookSourceFetcher:
                     }
                 )
 
-        return chapters
+        return self._serialize_chapters(chapters)
 
     async def get_content(
         self,
