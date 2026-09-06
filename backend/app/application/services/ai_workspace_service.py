@@ -316,7 +316,8 @@ class AIWorkspaceService:
         messages = [{"role": "system", "content": self._system_prompt(mode, tools, require_content_evidence)}]
         for pm in prior:
             if pm.role in {"user", "assistant"} and pm.content and not pm.content.startswith("书源读取工具未能取得证据"):
-                messages.append({"role": pm.role, "content": pm.content})
+                content_snippet = pm.content if len(pm.content) <= 1200 else (pm.content[:900] + "\n...(省略中段细节)...\n" + pm.content[-250:])
+                messages.append({"role": pm.role, "content": content_snippet})
         messages.append({"role": "user", "content": user_message.content})
         authorized_content_tools = self._authorized_content_tools(actor_id, conversation.id, tools, mode=mode)
         tool_calls, authorization_request = await self._execute_explicit_tool_requests(

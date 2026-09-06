@@ -42,10 +42,17 @@ class NovelAnalysisToolExecutor:
 
         run_id = str(arguments.get("agent_run_id") or "")
         if not run_id or self._agent_runtime.get_run(run_id, tenant_id=tenant_id) is None:
+            conv_id = str(arguments.get("conversation_id") or "")
+            target_hint = str(arguments.get("keyword") or arguments.get("book_name") or "")
+            input_payload = {"tool": tool_name}
+            if conv_id:
+                input_payload["conversation_id"] = conv_id
+            if target_hint:
+                input_payload["target"] = target_hint
             run_id = self._agent_runtime.create_run(
                 tenant_id=tenant_id,
-                agent_kind="knowledge",
-                input_payload={"tool": tool_name},
+                agent_kind=f"tool:{tool_name}",
+                input_payload=input_payload,
             ).id
         invocation = self._agent_runtime.record_tool_invocation(
             run_id=run_id,

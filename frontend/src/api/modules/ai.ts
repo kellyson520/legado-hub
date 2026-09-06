@@ -130,7 +130,7 @@ export function sendAIConversationMessage(
     stream?: boolean
   }
 ): Promise<ApiEnvelope<AIConversationMessage>> {
-  return apiClient.post(`/ai/conversations/${conversationId}/messages`, payload)
+  return apiClient.post(`/ai/conversations/${conversationId}/messages`, payload, { timeout: 180_000 })
 }
 
 export function decideAIConversationAuthorization(
@@ -138,7 +138,7 @@ export function decideAIConversationAuthorization(
   requestId: string,
   payload: { decision: AIConversationAuthorizationDecision },
 ): Promise<ApiEnvelope<{ authorization: AIConversationAuthorizationRequest; next_authorization?: AIConversationAuthorizationRequest; message?: AIConversationMessage }>> {
-  return apiClient.post(`/ai/conversations/${conversationId}/authorization-requests/${requestId}/decision`, payload)
+  return apiClient.post(`/ai/conversations/${conversationId}/authorization-requests/${requestId}/decision`, payload, { timeout: 180_000 })
 }
 
 export function listAIConversationAuthorizations(conversationId: string): Promise<ApiEnvelope<AIConversationAuthorizationRequest[]>> {
