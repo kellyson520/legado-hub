@@ -373,7 +373,7 @@ class SourceRuntimeService:
             evidence = await asyncio.wait_for(
                 self._source_probe.probe_source(
                     source,
-                    keyword_samples=[self._probe_keyword(version.payload)],
+                    keyword_samples=self._probe_keywords(version.payload),
                     probe_mode="full_chain",
                 ),
                 timeout=self.LIVE_PROBE_TIMEOUT_SECONDS,
@@ -431,9 +431,11 @@ class SourceRuntimeService:
         return result
 
     @staticmethod
-    def _probe_keyword(payload: dict) -> str:
+    def _probe_keywords(payload: dict) -> list[str]:
         keyword = payload.get("keyword") if isinstance(payload, dict) else None
-        return keyword.strip() if isinstance(keyword, str) and keyword.strip() else "斗罗大陆"
+        values = [keyword] if isinstance(keyword, str) and keyword.strip() else []
+        values.extend(["斗罗大陆", "捞尸人", "剑来"])
+        return list(dict.fromkeys(value.strip() for value in values if value and value.strip()))
 
     @staticmethod
     def _live_probe_diagnostic(stage_name: str, step: dict) -> str:
