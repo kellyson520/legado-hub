@@ -27,10 +27,12 @@ class NovelCodeAnalysisService:
         "站在", "走在", "坐在", "跑在", "来到了", "走入", "走出", "推门", "看着", "汇报", "倒了",
         "点头", "商讨", "碰面", "倒了", "笑着", "笑了", "说道", "问道", "看见", "抵达", "进入", "离开",
         "决定", "发现", "重逢", "战斗", "死亡", "在", "站", "走", "看", "说", "问",
+        # Modern actions
+        "戴上", "戴着", "按下", "点燃", "收下", "接过", "指挥", "引爆", "破译", "计算", "握紧", "掏出", "取出",
         # Classical Chinese Dialogue & Action Verbs
         "笑曰", "叹曰", "言曰", "急曰", "厉声曰", "叱曰", "喝道", "大喝曰", "大喜曰", "抚掌曰", "高叫",
         "按剑", "纵马", "拍马", "飞马", "跃马", "勒马", "回马", "引兵", "引军", "出阵", "急令", "杀入",
-        "掣", "挺枪", "舞刀", "提刀", "圆睁", "大喜", "大怒", "大惊", "大痛", "失色", "登坛",
+        "掣", "挺枪", "舞刀", "提刀", "圆睁", "大喜", "大怒", "大惊", "大痛", "失色", "登坛", "跨坐",
     )
     _event_triggers: ClassVar[tuple[str, ...]] = (
         "发现", "进入", "离开", "决定", "战斗", "死亡", "重逢",
@@ -61,6 +63,7 @@ class NovelCodeAnalysisService:
         # Classical Chinese Noise Words
         "忽探子", "探子", "左右", "诸侯", "众诸侯", "众将", "军士", "三姓家奴", "先锋", "小人", "夫人", "次日", "当夜",
         "忽然", "原来", "不知", "如何", "安得", "何不", "且慢", "大将", "天下", "关前", "阵前", "鸣金", "下关",
+        "飞马", "跃马", "纵马", "回马", "勒马",
     }
 
     def analyze(self, work_id: str, chapters: list[dict]) -> NovelCodeAnalysisReport:
@@ -137,7 +140,7 @@ class NovelCodeAnalysisService:
             verbs = "|".join(sorted((re.escape(v) for v in self._character_verbs), key=len, reverse=True))
             punct = r"[\s\n，。！？；：、“”‘’]"
             boundary = r"[\s\n，。！？；：、“”‘’向往从与和道说看走在笑]"
-            adv = r"(?:亦|复|又|遂|乃|便|即|自)?"
+            adv = r"(?:亦|复|又|遂|乃|便|即|自|正色|厉声|奋勇|急忙|急|大步|慌忙|冷静地|悄悄地|缓缓地)?"
             self._character_patterns = (
                 re.compile(rf"(?:^|{punct})(?P<name>[\u4e00-\u9fff]{{2,3}}?){adv}(?=(?:{verbs}))"),
                 re.compile(rf"(?:^|{punct})(?P<name>[\u4e00-\u9fff]{{2,3}}?)(?=与|和)|(?:与|和)(?P<name2>[\u4e00-\u9fff]{{2,3}}?)(?=(?:{verbs}|{punct}|与|和|$))"),
