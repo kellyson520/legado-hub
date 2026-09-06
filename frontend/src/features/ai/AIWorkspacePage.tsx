@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   createAIConversation,
@@ -79,6 +79,8 @@ export function AIWorkspacePage() {
   const [enabledTools, setEnabledTools] = useState<string[]>([])
   const [sourceVersionId, setSourceVersionId] = useState('')
   const [sending, setSending] = useState(false)
+  const [sendingElapsed, setSendingElapsed] = useState(0)
+  const sendingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [error, setError] = useState('')
   const [pendingAuthorizations, setPendingAuthorizations] = useState<AIConversationAuthorizationRequest[]>([])
   const [authorizationGrants, setAuthorizationGrants] = useState<AIConversationAuthorizationGrant[]>([])
@@ -198,6 +200,21 @@ export function AIWorkspacePage() {
     }
   }
 
+  const startSendingTimer = useCallback(() => {
+    setSendingElapsed(0)
+    sendingTimerRef.current = setInterval(() => {
+      setSendingElapsed((prev) => prev + 1)
+    }, 1000)
+  }, [])
+
+  const stopSendingTimer = useCallback(() => {
+    if (sendingTimerRef.current) {
+      clearInterval(sendingTimerRef.current)
+      sendingTimerRef.current = null
+    }
+    setSendingElapsed(0)
+  }, [])
+
   const send = async (
     outgoingContent = content.trim(),
     outgoingMode = mode,
@@ -205,6 +222,7 @@ export function AIWorkspacePage() {
   ) => {
     if (!activeConversationId || !outgoingContent || sending) return
     setSending(true)
+    startSendingTimer()
     setError('')
     const createdAt = new Date().toISOString()
     const optimisticUser: AIConversationMessage = {
@@ -242,6 +260,7 @@ export function AIWorkspacePage() {
       setConversation((current) => current ? { ...current, messages: [...current.messages, failed] } : current)
       setError('AI 服务暂时不可用，已保留你的问题，可点击失败消息上的“重试”。')
     } finally {
+      stopSendingTimer()
       setSending(false)
     }
   }
@@ -435,7 +454,12 @@ export function AIWorkspacePage() {
                 ) : null}
               </article>
             ))}
-            {sending ? <p className="text-sm text-muted-foreground">AI 正在整理分析结果…</p> : null}
+            {sending ? (
+              <div className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-4 py-2.5 text-sm text-muted-foreground animate-pulse">
+                <span className="inline-block h-2 w-2 rounded-full bg-primary animate-ping" />
+                <span>AI 深度思考生成中… 已耗时 <strong className="text-foreground">{sendingElapsed}</strong> 秒</span>
+              </div>
+            ) : null}
           </div>
 
           <div className="border-t border-border bg-card p-4">
