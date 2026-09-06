@@ -247,7 +247,7 @@ export function NovelLibraryPage() {
       const response = await uploadNovel(pendingUpload.file)
       setPendingUpload(null)
       if (uploadInput.current) uploadInput.current.value = ''
-      setNotice(`《${pendingUpload.preview.title || pendingUpload.file.name}》导入已提交，正在分析章节。`)
+      setNotice(`导入任务已创建：《${pendingUpload.preview.title || pendingUpload.file.name}》`)
       await loadBooks()
       if (response.data.book_id) {
         navigate(`/novel/books/${response.data.book_id}`)
@@ -303,14 +303,14 @@ export function NovelLibraryPage() {
         <section aria-label="上传预览" className="mb-6 rounded-2xl border border-primary/40 bg-card p-6 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-primary">Import check</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary">导入预览</p>
               <h3 className="text-lg font-semibold">{pendingUpload.preview.title || pendingUpload.file.name}</h3>
               <p className="text-xs text-muted-foreground">{pendingUpload.preview.author || '作者未标注'} · 共 {pendingUpload.preview.chapters.length} 章 · {pendingUpload.preview.total_chars.toLocaleString()} 字</p>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setPendingUpload(null)}>取消</Button>
               <Button onClick={() => void confirmUpload()} disabled={Boolean(busyKey)}>
-                {busyKey ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="mr-2 h-4 w-4" aria-hidden="true" />}确认并导入
+                {busyKey ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="mr-2 h-4 w-4" aria-hidden="true" />}确认导入
               </Button>
             </div>
           </div>
@@ -748,11 +748,12 @@ export function NovelLibraryPage() {
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Reading room / 01</p>
               <h2 className="mt-3 max-w-xl text-3xl font-semibold tracking-tight md:text-4xl">把故事放回它该在的地方。</h2>
-              <p className="mt-3 max-w-2xl text-sm leading-7 text-muted-foreground">每一本书都有自己的进度、章节证据和 Agent 记忆。你可以从任何入口回来，接着读，也接着问。</p>
+              <p className="mt-3 max-w-2xl text-sm leading-7 text-muted-foreground">每一本书都有自己的阅读进度、原著全量证据和全景人物关系图谱。你可以从任何入口回来，接着读，也接着问。</p>
             </div>
             <div className="flex items-center gap-5 border-t border-border/70 pt-4 md:border-l md:border-t-0 md:pl-6 md:pt-0">
               <div><p className="font-mono text-2xl font-semibold">{books.length}</p><p className="text-xs text-muted-foreground">书架藏书</p></div>
-              <div><p className="font-mono text-2xl font-semibold">{books.filter((book) => book.status === 'ready' || book.status === 'summarizing').length}</p><p className="text-xs text-muted-foreground">可继续阅读</p></div>
+              <div><p className="font-mono text-2xl font-semibold">{books.filter((book) => book.status === 'ready').length}</p><p className="text-xs text-muted-foreground">全本已就绪</p></div>
+              <div><p className="font-mono text-2xl font-semibold">{books.reduce((sum, b) => sum + (b.character_count || 0), 0)}</p><p className="text-xs text-muted-foreground">图谱人物</p></div>
             </div>
           </section>
 
@@ -789,7 +790,12 @@ export function NovelLibraryPage() {
             <div className="flex items-center justify-between"><h3 className="font-serif text-lg font-semibold tracking-tight">全部藏书</h3><span className="text-xs text-muted-foreground">{loading ? '正在同步…' : `${books.length} 本`}</span></div>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {books.map((book) => {
-                const percent = percentOf(book)
+                const isReady = book.status === 'ready'
+                const isAnalyzing = book.status === 'summarizing' || book.status === 'ingesting'
+                const charCount = book.character_count ?? 0
+                const readPercent = Math.round(Math.max(0, Math.min(1, Number(book.progress?.percent ?? 0))) * 100)
+                const ingestPercent = Math.round(Math.max(0, Math.min(1, Number(book.ingest_progress ?? 1))) * 100)
+
                 return (
                   <Card key={book.id} className="flex flex-col justify-between overflow-hidden border border-border bg-card transition hover:border-primary/50 hover:shadow-md">
                     <div className="p-5">
@@ -798,11 +804,64 @@ export function NovelLibraryPage() {
                         <div className="min-w-0 flex-1">
                           <h4 className="truncate font-semibold tracking-tight"><Link to={`/novel/books/${book.id}`} className="hover:text-primary">{book.book_name}</Link></h4>
                           <p className="mt-1 truncate text-xs text-muted-foreground">{book.author || '作者未标注'} · {book.source_name || '本地内容'}</p>
-                          <div className="mt-2 flex items-center gap-2"><span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" /><span className="text-[11px] text-muted-foreground">{(book.status ? statusLabel[book.status] : null) || book.status || ''} · {formatDate(book.updated_at)}</span></div>
+                          <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                            {isReady ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                全本可读
+                              </span>
+                            ) : isAnalyzing ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                正在解析入库 · {ingestPercent}%
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                                {statusLabel[book.status ?? ''] || book.status}
+                              </span>
+                            )}
+                            {charCount > 0 ? (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">
+                                <Users className="h-3 w-3" />
+                                {charCount} 位人物图谱
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     </div>
-                    <div className="border-t border-border bg-muted/20 px-5 py-3"><div className="mb-2 flex items-center justify-between text-xs text-muted-foreground"><span>进度 {bookChapter(book)}</span><span>{book.total_chapters ? `${percent}% · ${book.total_chapters} 章` : '章节统计中'}</span></div><div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${percent}%` }} /></div><div className="mt-4 flex gap-2"><Link to={`/novel/books/${book.id}/read/${book.progress?.chapter_id ?? 1}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"><BookOpen className="h-3.5 w-3.5" aria-hidden="true" />继续阅读</Link><Link to={`/novel/books/${book.id}`} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-input bg-card px-3 text-xs font-medium hover:bg-accent">详情<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link></div></div>
+                    <div className="border-t border-border bg-muted/20 px-5 py-3.5">
+                      {isReady || book.progress ? (
+                        <>
+                          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                            <span>阅读进度：{book.progress?.chapter_title || (book.progress?.chapter_id ? `第 ${book.progress.chapter_id} 章` : '尚未开始阅读')}</span>
+                            <span className="font-mono"><span>{readPercent}%</span> · 共 {book.total_chapters ?? 0} 章</span>
+                          </div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${readPercent}%` }} />
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+                            <span>系统解析进度</span>
+                            <span className="font-mono"><span>{ingestPercent}%</span> · 共 {book.total_chapters ?? 0} 章</span>
+                          </div>
+                          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full bg-amber-500 transition-[width] duration-500" style={{ width: `${ingestPercent}%` }} />
+                          </div>
+                        </>
+                      )}
+                      <div className="mt-4 flex gap-2">
+                        <Link to={`/novel/books/${book.id}/read/${book.progress?.chapter_id ?? 1}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90">
+                          <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                          {book.progress?.chapter_id ? '继续阅读' : '开始阅读'}
+                        </Link>
+                        <Link to={`/novel/books/${book.id}`} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-input bg-card px-3 text-xs font-medium hover:bg-accent">
+                          详情与图谱<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+                        </Link>
+                      </div>
+                    </div>
                   </Card>
                 )
               })}

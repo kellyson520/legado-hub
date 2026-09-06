@@ -185,12 +185,12 @@ class NovelIngestionService:
         # 6. 更新书籍统计
         total = len(existing_chapters) + len(new_chapters)
         book.total_chapters = total
-        book.status = NovelStatus.SUMMARIZING
+        book.status = NovelStatus.READY
         await self._repo.update_book_status(
             owner_scope,
             book.id,
-            NovelStatus.SUMMARIZING,
-            progress=0.3,
+            NovelStatus.READY,
+            progress=1.0,
         )
 
         return book
@@ -351,7 +351,7 @@ class NovelIngestionService:
                 existing_keys.add(chapter.canonical_full)
             if missing:
                 await self._repo.save_chapters_batch(owner_scope, missing)
-            await self._repo.update_book_status(owner_scope, existing.id, NovelStatus.SUMMARIZING, progress=0.3)
+            await self._repo.update_book_status(owner_scope, existing.id, NovelStatus.READY, progress=1.0)
             await self._mirror_to_canonical(document, source_name=source_name)
             await self._ensure_initial_progress(owner_scope, existing.id)
             task_id = await self._queue_analysis(owner_scope, existing, document.normalized_text)
@@ -368,7 +368,7 @@ class NovelIngestionService:
                 source_type=source_type,
                 total_chapters=len(document.chapters),
                 total_words=len(document.normalized_text),
-                status=NovelStatus.INGESTING,
+                status=NovelStatus.READY,
             ),
         )
         chapters: list[NovelChapter] = []
@@ -385,7 +385,7 @@ class NovelIngestionService:
             await self._repo.save_reading_progress(
                 NovelReadingProgress(owner_scope=owner_scope, book_id=book.id, chapter_id=chapters[0].id)
             )
-        await self._repo.update_book_status(owner_scope, book.id, NovelStatus.SUMMARIZING, progress=0.3)
+        await self._repo.update_book_status(owner_scope, book.id, NovelStatus.READY, progress=1.0)
         await self._mirror_to_canonical(document, source_name=source_name)
         if original is not None:
             self._store_original(owner_scope, document.content_hash, original)

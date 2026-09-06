@@ -319,7 +319,9 @@ class NovelAdjudicator:
             return dict(item)
         if is_dataclass(item):
             return asdict(item)
-        return dict(vars(item))
+        if hasattr(item, "__dict__"):
+            return dict(vars(item))
+        return {"text": str(item)}
 
     @staticmethod
     def _evidence_id(item: dict[str, Any], index: int) -> str:
