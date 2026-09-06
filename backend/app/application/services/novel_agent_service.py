@@ -78,19 +78,22 @@ class NovelAgentService:
 
     @staticmethod
     def _build_payload(ingestion: NovelIngestion) -> dict:
+        raw_text = ingestion.source_text or ""
+        max_chars = 12000
+        bounded_text = raw_text[:max_chars] if len(raw_text) > max_chars else raw_text
         return {
             "task": "novel_analysis",
             "novel_id": ingestion.id,
             "title": ingestion.title,
-            "text": ingestion.source_text,
+            "text": bounded_text,
             "messages": [
                 {
                     "role": "system",
-                    "content": "Extract novel entities, summary, and structured insights.",
+                    "content": "你是一位专业的小说结构化分析专家。请根据提供的小说样本提取主要角色、关键时间节点、核心冲突与情节摘要，输出结构化分析报告。",
                 },
                 {
                     "role": "user",
-                    "content": f"Title: {ingestion.title}\n\nText:\n{ingestion.source_text}",
+                    "content": f"小说标题: {ingestion.title}\n\n样本内容:\n{bounded_text}",
                 },
             ],
         }
