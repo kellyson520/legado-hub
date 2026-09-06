@@ -50,7 +50,7 @@ class NovelCharacterScoringService:
         composite = (plot_impact * 0.4) + (power_score * 0.3) + (mental_score * 0.3)
         if composite >= 75.0 or (plot_impact >= 80.0 and power_score >= 60.0):
             overall_tier = "S"
-        elif composite >= 60.0:
+        elif composite >= 55.0 or character.importance_tier == "protagonist" or (power_score >= 60.0 and mental_score >= 60.0):
             overall_tier = "A"
         elif composite >= 40.0:
             overall_tier = "B"
