@@ -135,6 +135,59 @@ export interface NovelConversation extends NovelConversationSummary {
   messages: NovelConversationMessage[]
 }
 
+export interface NovelCharacterListItem {
+  name: string
+  role: string
+  importance_tier: string
+  overall_tier: string
+  aliases: string[]
+  summary: string
+  avatar_tag?: string
+  items_count: number
+  events_count: number
+  relationships_count: number
+}
+
+export interface CharacterRelationship {
+  target: string
+  relation: string
+  affinity?: number
+  description: string
+}
+
+export interface CharacterEvent {
+  chapter: string
+  title: string
+  description: string
+}
+
+export interface CharacterItem {
+  name: string
+  action: string
+  desc: string
+}
+
+export interface NovelCharacterDossier {
+  name: string
+  role: string
+  importance_tier: string
+  overall_tier: string
+  aliases: string[]
+  summary: string
+  avatar_tag?: string
+  alignment?: string
+  personal_info?: {
+    gender?: string
+    identity?: string
+    status?: string
+    mentality?: string
+  }
+  relationships: CharacterRelationship[]
+  events: CharacterEvent[]
+  items: CharacterItem[]
+  canonical_excerpts?: Array<{ chapter: string; text: string }>
+}
+
 export interface NovelModelOption {
   provider: string
   model: string
@@ -282,6 +335,14 @@ export function getNovelBook(bookId: number | string) {
 
 export function listNovelChapters(bookId: number | string) {
   return apiClient.get<NovelChapter[]>(`/novel/books/${bookId}/chapters`)
+}
+
+export function listNovelCharacters(bookId: number | string) {
+  return apiClient.get<NovelCharacterListItem[]>(`/novel/books/${bookId}/characters`)
+}
+
+export function getNovelCharacterDossier(bookId: number | string, characterName: string) {
+  return apiClient.get<NovelCharacterDossier>(`/novel/books/${bookId}/characters/${encodeURIComponent(characterName)}/dossier`)
 }
 
 export function getNovelChapter(bookId: number | string, chapterId: number | string) {

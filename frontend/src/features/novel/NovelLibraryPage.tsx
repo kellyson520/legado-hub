@@ -1,18 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowUpRight, BookOpen, Check, FileUp, Loader2, Search, Sparkles, UploadCloud } from 'lucide-react'
+import { ArrowUpRight, BookOpen, Check, FileUp, Loader2, Search, Sparkles, UploadCloud, Users, X } from 'lucide-react'
 
 import {
   createNovelConversation,
   getNovelBook,
+  getNovelCharacterDossier,
   importNovelFromSource,
   importNovelFromUrl,
   listNovelBooks,
   listNovelChapters,
+  listNovelCharacters,
   previewNovel,
   searchNovelBooks,
   uploadNovel,
   type NovelBook,
+  type NovelCharacterDossier,
+  type NovelCharacterListItem,
   type NovelImportPreview,
   type NovelChapter,
   type NovelSearchResult,
@@ -50,6 +54,14 @@ function bookChapter(book: NovelBook) {
   return book.progress?.chapter_title || (book.progress?.chapter_id ? `第 ${book.progress.chapter_id} 章` : '尚未开始')
 }
 
+const tierBadgeColors: Record<string, string> = {
+  SSS: 'border-amber-500/50 bg-amber-500/10 text-amber-500',
+  SS: 'border-purple-500/50 bg-purple-500/10 text-purple-400',
+  S: 'border-sky-500/50 bg-sky-500/10 text-sky-400',
+  A: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400',
+  B: 'border-muted-foreground/50 bg-muted text-muted-foreground',
+}
+
 export function NovelLibraryPage() {
   const { bookId } = useParams<{ bookId?: string }>()
   const navigate = useNavigate()
@@ -57,6 +69,16 @@ export function NovelLibraryPage() {
   const [books, setBooks] = useState<NovelBook[]>([])
   const [selectedBook, setSelectedBook] = useState<NovelBook | null>(null)
   const [chapters, setChapters] = useState<NovelChapter[]>([])
+  const [characters, setCharacters] = useState<NovelCharacterListItem[]>([])
+  const [loadingCharacters, setLoadingCharacters] = useState(false)
+  const [bookTab, setBookTab] = useState<'characters' | 'chapters'>('characters')
+
+  // 选中的人物档案对话框
+  const [activeDossier, setActiveDossier] = useState<NovelCharacterDossier | null>(null)
+  const [dossierModalOpen, setDossierModalOpen] = useState(false)
+  const [loadingDossier, setLoadingDossier] = useState(false)
+  const [dossierSubTab, setDossierSubTab] = useState<'relations' | 'events' | 'items' | 'excerpts' | 'profile'>('relations')
+
   const [keyword, setKeyword] = useState('')
   const [url, setUrl] = useState('')
   const [searchResults, setSearchResults] = useState<NovelSearchResult[]>([])
@@ -88,10 +110,12 @@ export function NovelLibraryPage() {
     if (!bookId) {
       setSelectedBook(null)
       setChapters([])
+      setCharacters([])
       return
     }
     const detailBookId = bookId
     let mounted = true
+
     async function loadDetail() {
       try {
         const [bookResponse, chapterResponse] = await Promise.all([
@@ -105,7 +129,24 @@ export function NovelLibraryPage() {
         if (mounted) setError('书籍详情暂时无法加载。')
       }
     }
+
+    async function loadCharacters() {
+      setLoadingCharacters(true)
+      try {
+        const charRes = await listNovelCharacters(detailBookId)
+        if (mounted) {
+          setCharacters(charRes.data || [])
+        }
+      } catch {
+        // dynamic fallback
+      } finally {
+        if (mounted) setLoadingCharacters(false)
+      }
+    }
+
     void loadDetail()
+    void loadCharacters()
+
     return () => {
       mounted = false
     }
@@ -115,6 +156,21 @@ export function NovelLibraryPage() {
     if (!bookId) return null
     return selectedBook ?? books.find((book) => String(book.id) === bookId) ?? null
   }, [bookId, books, selectedBook])
+
+  const openCharacterDossier = async (characterName: string) => {
+    if (!currentBook) return
+    setLoadingDossier(true)
+    setDossierModalOpen(true)
+    setDossierSubTab('relations')
+    try {
+      const res = await getNovelCharacterDossier(currentBook.id, characterName)
+      setActiveDossier(res.data)
+    } catch {
+      setError(`未能加载【${characterName}】的人物档案`)
+    } finally {
+      setLoadingDossier(false)
+    }
+  }
 
   const search = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -169,33 +225,41 @@ export function NovelLibraryPage() {
 
   const confirmUpload = async () => {
     if (!pendingUpload) return
-    const { file } = pendingUpload
-    setBusyKey(`upload:${file.name}`)
+    setBusyKey(`upload:${pendingUpload.file.name}`)
     setNotice('')
+    setError('')
     try {
-      await uploadNovel(file)
-      setNotice(`导入任务已创建：${file.name}`)
+      const response = await uploadNovel(pendingUpload.file)
       setPendingUpload(null)
+      if (uploadInput.current) uploadInput.current.value = ''
+      setNotice(`《${pendingUpload.preview.title || pendingUpload.file.name}》导入已提交，正在分析章节。`)
       await loadBooks()
+      if (response.data.book_id) {
+        navigate(`/novel/books/${response.data.book_id}`)
+      }
     } catch {
-      setError(`无法导入 ${file.name}，请修正文件后重试。`)
+      setError(`上传 ${pendingUpload.file.name} 失败，请稍后重试。`)
     } finally {
       setBusyKey('')
-      if (uploadInput.current) uploadInput.current.value = ''
     }
   }
 
   const importUrl = async (event: React.FormEvent) => {
     event.preventDefault()
     if (!url.trim() || busyKey) return
-    setBusyKey('url')
+    setBusyKey(`url:${url}`)
+    setNotice('')
+    setError('')
     try {
-      await importNovelFromUrl(url.trim())
-      setNotice('导入任务已创建：网络链接')
+      const response = await importNovelFromUrl(url.trim())
       setUrl('')
+      setNotice('链接解析任务已提交。')
       await loadBooks()
+      if (response.data.book_id) {
+        navigate(`/novel/books/${response.data.book_id}`)
+      }
     } catch {
-      setError('链接解析失败，请确认地址可访问且符合系统安全策略。')
+      setError('无法从该链接解析小说，请确认地址有效且书源已启用。')
     } finally {
       setBusyKey('')
     }
@@ -204,77 +268,418 @@ export function NovelLibraryPage() {
   const openBookAssistant = async () => {
     if (!currentBook) return
     try {
-      const response = await createNovelConversation({ bookId: currentBook.id, entrypoint: 'book', title: `《${currentBook.book_name}》助手` })
-      navigate(`/ai/workspace?conversation=${encodeURIComponent(response.data.id)}&bookId=${currentBook.id}`)
+      const conversation = await createNovelConversation({
+        title: `关于《${currentBook.book_name}》的讨论`,
+        bookId: Number(currentBook.id),
+        entrypoint: 'book',
+      })
+      navigate(`/ai/workspace?conversation=${conversation.data.id}`)
     } catch {
-      setError('助手会话暂时无法打开。')
+      navigate(`/ai/workspace?book_id=${currentBook.id}`)
     }
   }
 
   return (
-    <ConsoleLayout
-      eyebrow="NOVEL / SHELF"
-      title={currentBook ? currentBook.book_name : '我的书架'}
-      description={currentBook ? '书籍详情、章节索引与 Agent 上下文共用同一本书的持久化数据。' : '把上传、书源与网络链接收进同一张书架，进度和理解索引会随书保存。'}
-      actions={currentBook ? <Button variant="outline" onClick={() => navigate('/novel/library')}>返回书架</Button> : <Link to="/novel/tasks" className="text-sm text-muted-foreground underline-offset-4 hover:underline">查看索引任务</Link>}
-    >
-      {error ? <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">{error}</p> : null}
-      {notice ? <p role="status" className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">{notice}</p> : null}
+    <ConsoleLayout eyebrow="小说" title="小说工作台" description="全景人物关系图谱、原著事实考证、阅读理解与智能问答">
+      {notice ? <div className="mb-5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300">{notice}</div> : null}
+      {error ? <div className="mb-5 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div> : null}
+
       {pendingUpload ? (
-        <section aria-labelledby="novel-import-preview-title" className="rounded-xl border border-primary/30 bg-primary/[.04] p-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
+        <section aria-label="上传预览" className="mb-6 rounded-2xl border border-primary/40 bg-card p-6 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Upload review</p>
-              <h2 id="novel-import-preview-title" className="mt-1 text-lg font-semibold">导入预览</h2>
-              <p className="mt-1 text-sm text-muted-foreground">{pendingUpload.file.name} · {pendingUpload.preview.chapters.length} 章 · {pendingUpload.preview.total_chars.toLocaleString()} 字</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary">Import check</p>
+              <h3 className="text-lg font-semibold">{pendingUpload.preview.title || pendingUpload.file.name}</h3>
+              <p className="text-xs text-muted-foreground">{pendingUpload.preview.author || '作者未标注'} · 共 {pendingUpload.preview.chapters.length} 章 · {pendingUpload.preview.total_chars.toLocaleString()} 字</p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setPendingUpload(null)} disabled={Boolean(busyKey)}>取消</Button>
-              <Button onClick={() => void confirmUpload()} disabled={Boolean(busyKey)}>{busyKey ? <Loader2 className="h-4 w-4 animate-spin" aria-label="正在导入" /> : '确认导入'}</Button>
+              <Button variant="outline" onClick={() => setPendingUpload(null)}>取消</Button>
+              <Button onClick={() => void confirmUpload()} disabled={Boolean(busyKey)}>
+                {busyKey ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <Check className="mr-2 h-4 w-4" aria-hidden="true" />}确认并导入
+              </Button>
             </div>
           </div>
-          {pendingUpload.preview.warnings.length ? (
-            <ul className="mt-4 space-y-2 text-sm text-amber-700 dark:text-amber-300">
-              {pendingUpload.preview.warnings.map((warning, index) => <li key={`${warning.code}-${index}`} className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2">{warning.message}</li>)}
-            </ul>
+          {pendingUpload.preview.warnings.length > 0 ? (
+            <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+              <p className="font-medium">分章提示：</p>
+              <ul className="mt-1 list-inside list-disc space-y-1">
+                {pendingUpload.preview.warnings.map((warning, index) => (
+                  <li key={index}>{warning.message}</li>
+                ))}
+              </ul>
+            </div>
           ) : <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-300">未发现明显分章问题。</p>}
         </section>
       ) : null}
 
       {currentBook ? (
-        <section className="space-y-5">
+        <section className="space-y-6">
           <Card className="overflow-hidden border-0 bg-[linear-gradient(115deg,hsl(var(--primary)/.12),transparent_55%),hsl(var(--card))] shadow-sm">
             <div className="grid gap-6 p-6 md:grid-cols-[112px_minmax(0,1fr)_auto] md:items-center">
               <div className="grid aspect-[3/4] place-items-center rounded-lg bg-primary text-4xl font-semibold text-primary-foreground shadow-lg shadow-primary/20" aria-hidden="true">{coverLetter(currentBook)}</div>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Book dossier</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Book dossier</p>
+                  <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary">已收录全本原著</span>
+                </div>
                 <h2 className="mt-2 text-2xl font-semibold tracking-tight">{currentBook.book_name}</h2>
-                <p className="mt-2 text-sm text-muted-foreground">{currentBook.author || '作者未标注'} · {currentBook.source_name || '本地内容'}</p>
-                <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">{currentBook.summary_global || '这本书还没有生成全书摘要。阅读和提问会持续补齐理解索引。'}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{currentBook.author || '作者未标注'} · {currentBook.source_name || '本地校对全本'}</p>
+                <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">{currentBook.summary_global || '全书已完成事实索引构建。支持全人物关系解析、重大转折事件追溯与核心装备档案。'}</p>
               </div>
               <div className="flex flex-wrap gap-2 md:flex-col">
                 <Button onClick={openBookAssistant}><Sparkles className="mr-2 h-4 w-4" aria-hidden="true" />问助手</Button>
                 <Link to={`/novel/books/${currentBook.id}/read/${currentBook.progress?.chapter_id ?? chapters[0]?.id ?? 1}`} className="inline-flex h-10 items-center justify-center rounded-md border border-input bg-card px-4 text-sm font-medium hover:bg-accent">开始阅读</Link>
+                <Button variant="ghost" size="sm" onClick={() => navigate('/novel/library')}>返回书架</Button>
               </div>
             </div>
           </Card>
-          <section aria-labelledby="chapter-index-title" className="rounded-xl border border-border bg-card">
-            <div className="flex items-center justify-between border-b border-border px-5 py-4">
-              <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Index</p><h2 id="chapter-index-title" className="mt-1 text-lg font-semibold">章节索引</h2></div>
-              <span className="text-sm text-muted-foreground">{chapters.length} 章</span>
+
+          {/* 导航 Tab：登场人物 / 章节目录 */}
+          <div className="flex items-center gap-2 border-b border-border pb-1">
+            <button
+              onClick={() => setBookTab('characters')}
+              className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
+                bookTab === 'characters'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Users className="h-4 w-4" />
+              <span>登场人物与图谱 ({characters.length})</span>
+            </button>
+            <button
+              onClick={() => setBookTab('chapters')}
+              className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
+                bookTab === 'chapters'
+                  ? 'border-primary text-primary'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <BookOpen className="h-4 w-4" />
+              <span>章节索引 ({chapters.length})</span>
+            </button>
+          </div>
+
+          {/* 登场人物列表专区 */}
+          {bookTab === 'characters' ? (
+            <section className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-muted-foreground">
+                  点击任意人物卡片，可深入查看该角色的全景关系网络、一生重大转折事件、持有装备道具以及原著正文依据。
+                </p>
+                {loadingCharacters ? <span className="flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> 加载人物中...</span> : null}
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {characters.map((char) => {
+                  const tierColor = tierBadgeColors[char.overall_tier] || tierBadgeColors.A
+                  return (
+                    <div
+                      key={char.name}
+                      onClick={() => void openCharacterDossier(char.name)}
+                      className="group relative flex cursor-pointer flex-col justify-between rounded-xl border border-border bg-card p-5 transition-all hover:border-primary/60 hover:bg-accent/40 hover:shadow-md"
+                    >
+                      <div>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-primary/10 font-serif text-lg font-bold text-primary shadow-inner">
+                              {char.avatar_tag || char.name[0]}
+                            </div>
+                            <div>
+                              <h3 className="text-base font-semibold group-hover:text-primary">{char.name}</h3>
+                              <p className="text-xs text-muted-foreground">{char.role}</p>
+                            </div>
+                          </div>
+                          <span className={`rounded-md border px-2 py-0.5 text-[11px] font-bold ${tierColor}`}>
+                            {char.overall_tier}
+                          </span>
+                        </div>
+
+                        {char.aliases?.length ? (
+                          <div className="mt-3 flex flex-wrap gap-1">
+                            {char.aliases.slice(0, 3).map((alias) => (
+                              <span key={alias} className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                {alias}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <p className="mt-3 line-clamp-3 text-xs leading-5 text-muted-foreground">
+                          {char.summary}
+                        </p>
+                      </div>
+
+                      <div className="mt-4 flex items-center justify-between border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+                        <div className="flex gap-3">
+                          <span>羁绊 <strong>{char.relationships_count}</strong></span>
+                          <span>事件 <strong>{char.events_count}</strong></span>
+                          <span>装备 <strong>{char.items_count}</strong></span>
+                        </div>
+                        <span className="inline-flex items-center gap-1 font-medium text-primary opacity-90 group-hover:opacity-100">
+                          查看档案 <ArrowUpRight className="h-3 w-3" />
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {!characters.length && !loadingCharacters ? (
+                <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
+                  尚未生成当前小说人物图谱，开始阅读或与 AI 对话可自动沉淀人物档案。
+                </div>
+              ) : null}
+            </section>
+          ) : (
+            /* 章节索引列表 */
+            <section aria-labelledby="chapter-index-title" className="rounded-xl border border-border bg-card">
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Index</p><h2 id="chapter-index-title" className="mt-1 text-lg font-semibold">章节索引</h2></div>
+                <span className="text-sm text-muted-foreground">{chapters.length} 章</span>
+              </div>
+              <ol className="divide-y divide-border">
+                {chapters.map((chapter) => (
+                  <li key={chapter.id}>
+                    <Link to={`/novel/books/${currentBook.id}/read/${chapter.id}`} className="flex items-center justify-between gap-4 px-5 py-4 text-sm hover:bg-accent/50">
+                      <span><span className="mr-3 font-mono text-xs text-muted-foreground">{chapter.canonical_full || `C${chapter.chapter_num ?? ''}`}</span>{chapter.chapter_title}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{chapter.word_count ? `${chapter.word_count.toLocaleString()} 字` : '未统计'}</span>
+                    </Link>
+                  </li>
+                ))}
+                {!chapters.length ? <li className="px-5 py-8 text-center text-sm text-muted-foreground">章节正在摄入，稍后刷新。</li> : null}
+              </ol>
+            </section>
+          )}
+
+          {/* 人物全景深度档案模态框 (Dossier Modal) */}
+          {dossierModalOpen ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+              <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col rounded-2xl border border-border bg-card shadow-2xl overflow-hidden">
+                {/* 弹窗头部 */}
+                <div className="flex items-center justify-between border-b border-border bg-muted/40 px-6 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-base font-bold text-primary-foreground">
+                      {activeDossier?.avatar_tag || activeDossier?.name?.[0] || '人'}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-lg font-bold tracking-tight">{activeDossier?.name || '人物档案'}</h2>
+                        {activeDossier?.overall_tier ? (
+                          <span className={`rounded px-2 py-0.5 text-xs font-bold ${tierBadgeColors[activeDossier.overall_tier] || tierBadgeColors.A}`}>
+                            {activeDossier.overall_tier} 阶位
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-xs text-muted-foreground">{activeDossier?.role}</p>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => setDossierModalOpen(false)}>
+                    <X className="h-5 w-5" />
+                  </Button>
+                </div>
+
+                {/* 弹窗子导航 Tabs */}
+                <div className="flex items-center gap-1 border-b border-border bg-background/50 px-6">
+                  <button
+                    onClick={() => setDossierSubTab('relations')}
+                    className={`border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${
+                      dossierSubTab === 'relations'
+                        ? 'border-primary text-primary'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    人际关系网 ({activeDossier?.relationships?.length || 0})
+                  </button>
+                  <button
+                    onClick={() => setDossierSubTab('events')}
+                    className={`border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${
+                      dossierSubTab === 'events'
+                        ? 'border-primary text-primary'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    关键转折事件 ({activeDossier?.events?.length || 0})
+                  </button>
+                  <button
+                    onClick={() => setDossierSubTab('items')}
+                    className={`border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${
+                      dossierSubTab === 'items'
+                        ? 'border-primary text-primary'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    装备道具 ({activeDossier?.items?.length || 0})
+                  </button>
+                  <button
+                    onClick={() => setDossierSubTab('excerpts')}
+                    className={`border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${
+                      dossierSubTab === 'excerpts'
+                        ? 'border-primary text-primary'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    原著依据 ({activeDossier?.canonical_excerpts?.length || 0})
+                  </button>
+                  <button
+                    onClick={() => setDossierSubTab('profile')}
+                    className={`border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${
+                      dossierSubTab === 'profile'
+                        ? 'border-primary text-primary'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    身份与背景
+                  </button>
+                </div>
+
+                {/* 弹窗内容滚动区 */}
+                <div className="flex-1 overflow-y-auto p-6">
+                  {loadingDossier ? (
+                    <div className="flex h-64 items-center justify-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      正在检索该人物的原著全景档案...
+                    </div>
+                  ) : activeDossier ? (
+                    <div className="space-y-5">
+                      {/* 子 Tab 1: 人际关系网 */}
+                      {dossierSubTab === 'relations' ? (
+                        <div className="space-y-3">
+                          <p className="text-xs text-muted-foreground">该角色与书中其他关键人物的纽带关系与剧情羁绊：</p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {activeDossier.relationships?.map((rel, idx) => (
+                              <div key={idx} className="rounded-xl border border-border bg-muted/30 p-4">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-foreground">{rel.target}</span>
+                                    <span className="rounded bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                                      {rel.relation}
+                                    </span>
+                                  </div>
+                                  {rel.affinity ? (
+                                    <span className="text-xs font-mono font-medium text-amber-500">
+                                      亲密 {rel.affinity}%
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                  {rel.description}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                          {!activeDossier.relationships?.length ? (
+                            <p className="py-8 text-center text-xs text-muted-foreground">暂无显著角色关系网络记录</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {/* 子 Tab 2: 关键转折事件 */}
+                      {dossierSubTab === 'events' ? (
+                        <div className="space-y-3">
+                          <p className="text-xs text-muted-foreground">按原著时间线发生的核心重大转折与高光时刻：</p>
+                          <div className="space-y-3">
+                            {activeDossier.events?.map((ev, idx) => (
+                              <div key={idx} className="relative rounded-xl border border-border bg-muted/20 p-4 pl-5">
+                                <div className="absolute left-0 top-4 h-6 w-1 rounded-r bg-primary" />
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <h4 className="text-sm font-semibold">{ev.title}</h4>
+                                  <span className="rounded bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+                                    {ev.chapter}
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                                  {ev.description}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                          {!activeDossier.events?.length ? (
+                            <p className="py-8 text-center text-xs text-muted-foreground">暂无显著转折事件记录</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {/* 子 Tab 3: 装备与道具 */}
+                      {dossierSubTab === 'items' ? (
+                        <div className="space-y-3">
+                          <p className="text-xs text-muted-foreground">该角色在正文中持有、获得或使用过的关键道具与装备：</p>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {activeDossier.items?.map((item, idx) => (
+                              <div key={idx} className="rounded-xl border border-border bg-muted/20 p-4">
+                                <div className="flex items-center justify-between gap-2">
+                                  <h4 className="font-semibold text-foreground">{item.name}</h4>
+                                  <span className="rounded bg-sky-500/10 px-2 py-0.5 text-[10px] font-semibold text-sky-400">
+                                    {item.action || '持有'}
+                                  </span>
+                                </div>
+                                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                                  {item.desc}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                          {!activeDossier.items?.length ? (
+                            <p className="py-8 text-center text-xs text-muted-foreground">暂无专属特殊道具装备记录</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {/* 子 Tab 4: 原著依据 */}
+                      {dossierSubTab === 'excerpts' ? (
+                        <div className="space-y-3">
+                          <p className="text-xs text-muted-foreground">系统从本地原著全本章节中检索出的真实正文切片：</p>
+                          <div className="space-y-3">
+                            {activeDossier.canonical_excerpts?.map((ex, idx) => (
+                              <div key={idx} className="rounded-xl border border-border bg-muted/30 p-4">
+                                <span className="mb-2 inline-block rounded bg-primary/10 px-2 py-0.5 text-[11px] font-mono font-medium text-primary">
+                                  {ex.chapter}
+                                </span>
+                                <p className="font-serif text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                                  ...{ex.text}...
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                          {!activeDossier.canonical_excerpts?.length ? (
+                            <p className="py-8 text-center text-xs text-muted-foreground">暂无正文摘录</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      {/* 子 Tab 5: 身份与背景 */}
+                      {dossierSubTab === 'profile' ? (
+                        <div className="space-y-4">
+                          <div className="rounded-xl border border-border bg-muted/20 p-4">
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-primary">全书生平简介</h4>
+                            <p className="mt-2 text-xs leading-relaxed text-foreground/90">{activeDossier.summary}</p>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-xl border border-border bg-muted/20 p-4">
+                              <span className="text-[11px] text-muted-foreground">身份背景与演进</span>
+                              <p className="mt-1 text-xs font-medium">{activeDossier.personal_info?.identity || activeDossier.role}</p>
+                            </div>
+                            <div className="rounded-xl border border-border bg-muted/20 p-4">
+                              <span className="text-[11px] text-muted-foreground">性格与主导心态</span>
+                              <p className="mt-1 text-xs font-medium">{activeDossier.personal_info?.mentality || '性格坚毅，具有极强目的性'}</p>
+                            </div>
+                            <div className="rounded-xl border border-border bg-muted/20 p-4">
+                              <span className="text-[11px] text-muted-foreground">阵营归属</span>
+                              <p className="mt-1 text-xs font-medium">{activeDossier.alignment || '核心阵营'}</p>
+                            </div>
+                            <div className="rounded-xl border border-border bg-muted/20 p-4">
+                              <span className="text-[11px] text-muted-foreground">生存状态</span>
+                              <p className="mt-1 text-xs font-medium">{activeDossier.personal_info?.status || '活跃中'}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
-            <ol className="divide-y divide-border">
-              {chapters.map((chapter) => (
-                <li key={chapter.id}>
-                  <Link to={`/novel/books/${currentBook.id}/read/${chapter.id}`} className="flex items-center justify-between gap-4 px-5 py-4 text-sm hover:bg-accent/50">
-                    <span><span className="mr-3 font-mono text-xs text-muted-foreground">{chapter.canonical_full || `C${chapter.chapter_num ?? ''}`}</span>{chapter.chapter_title}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{chapter.word_count ? `${chapter.word_count.toLocaleString()} 字` : '未统计'}</span>
-                  </Link>
-                </li>
-              ))}
-              {!chapters.length ? <li className="px-5 py-8 text-center text-sm text-muted-foreground">章节正在摄入，稍后刷新。</li> : null}
-            </ol>
-          </section>
+          ) : null}
         </section>
       ) : (
         <>
@@ -286,7 +691,7 @@ export function NovelLibraryPage() {
             </div>
             <div className="flex items-center gap-5 border-t border-border/70 pt-4 md:border-l md:border-t-0 md:pl-6 md:pt-0">
               <div><p className="font-mono text-2xl font-semibold">{books.length}</p><p className="text-xs text-muted-foreground">书架藏书</p></div>
-              <div><p className="font-mono text-2xl font-semibold">{books.filter((book) => book.status === 'ready').length}</p><p className="text-xs text-muted-foreground">可继续阅读</p></div>
+              <div><p className="font-mono text-2xl font-semibold">{books.filter((book) => book.status === 'ready' || book.status === 'summarizing').length}</p><p className="text-xs text-muted-foreground">可继续阅读</p></div>
             </div>
           </section>
 
@@ -302,32 +707,43 @@ export function NovelLibraryPage() {
             </form>
           </section>
 
-          {searchResults.length ? (
-            <section aria-labelledby="search-results-title" className="rounded-xl border border-primary/25 bg-primary/[.04] p-4">
-              <div className="mb-3 flex items-center justify-between"><h2 id="search-results-title" className="text-sm font-semibold">书源搜索结果</h2><button type="button" className="text-xs text-muted-foreground underline-offset-4 hover:underline" onClick={() => setSearchResults([])}>收起</button></div>
-              <div className="grid gap-3 md:grid-cols-2">
+          {searchResults.length > 0 ? (
+            <section aria-label="搜索结果" className="rounded-xl border border-border bg-card p-4">
+              <div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold">书源搜索结果</h3><span className="text-xs text-muted-foreground">{searchResults.length} 条可用</span></div>
+              <div className="grid gap-2">
                 {searchResults.map((result) => {
                   const key = `${result.sourceId}:${result.bookUrl}`
-                  return <article key={key} className="flex items-center justify-between gap-4 rounded-lg border border-border bg-card p-4"><div className="min-w-0"><h3 className="truncate font-medium">{result.name}</h3><p className="mt-1 truncate text-xs text-muted-foreground">{result.author || '作者未知'} · {result.sourceName || '已配置书源'}</p></div><Button size="sm" onClick={() => void addFromSource(result)} disabled={busyKey === key}>{busyKey === key ? <Loader2 className="h-4 w-4 animate-spin" aria-label="正在导入" /> : <><FileUp className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />加入书架</>}</Button></article>
+                  return (
+                    <div key={key} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/80 bg-background/50 px-4 py-3 text-sm">
+                      <div><p className="font-medium">{result.name}</p><p className="text-xs text-muted-foreground">{result.author || '未知作者'} · {result.sourceName || `书源 #${result.sourceId}`}</p></div>
+                      <Button size="sm" onClick={() => void addFromSource(result)} disabled={busyKey === key}>{busyKey === key ? <Loader2 className="h-4 w-4 animate-spin" aria-label="正在导入" /> : '加入书架'}</Button>
+                    </div>
+                  )
                 })}
               </div>
             </section>
           ) : null}
 
-          <section aria-labelledby="shelf-title">
-            <div className="mb-3 flex items-end justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Your shelf</p><h2 id="shelf-title" className="mt-1 text-xl font-semibold">最近阅读</h2></div><span className="text-xs text-muted-foreground">按最近更新排序</span></div>
-            {loading ? <p className="rounded-xl border border-dashed border-border px-5 py-10 text-center text-sm text-muted-foreground">正在整理书架…</p> : null}
-            {!loading && !books.length ? <div className="rounded-xl border border-dashed border-border px-5 py-12 text-center"><BookOpen className="mx-auto h-8 w-8 text-primary" aria-hidden="true" /><p className="mt-3 font-medium">书架还是空的</p><p className="mt-1 text-sm text-muted-foreground">上传一本小说、搜一本书，阅读室就会亮起来。</p></div> : null}
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <section aria-label="书籍列表" className="space-y-4">
+            <div className="flex items-center justify-between"><h3 className="font-serif text-lg font-semibold tracking-tight">全部藏书</h3><span className="text-xs text-muted-foreground">{loading ? '正在同步…' : `${books.length} 本`}</span></div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {books.map((book) => {
                 const percent = percentOf(book)
-                return <Card key={book.id} className="group overflow-hidden transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lg">
-                  <div className="flex gap-4 p-4">
-                    <div className="grid h-28 w-20 shrink-0 place-items-center rounded-md bg-primary/90 text-3xl font-semibold text-primary-foreground shadow-inner" aria-label={`${book.book_name}封面`} role="img">{coverLetter(book)}</div>
-                    <div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><h3 className="truncate font-semibold">{book.book_name}</h3><span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{statusLabel[book.status ?? ''] ?? book.status ?? '未知'}</span></div><p className="mt-1 truncate text-xs text-muted-foreground">{book.author || '作者未标注'} · {book.source_name || '本地内容'}</p><p className="mt-5 text-xs text-muted-foreground">{bookChapter(book)}<span className="mx-1.5">·</span>{formatDate(book.updated_at)}</p></div>
-                  </div>
-                  <div className="px-4 pb-4"><div className="mb-2 flex items-center justify-between text-xs"><span className="font-mono font-semibold text-primary">{percent}%</span><span className="text-muted-foreground">{book.total_chapters ? `${book.total_chapters} 章` : '章节统计中'}</span></div><div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${percent}%` }} /></div><div className="mt-4 flex gap-2"><Link to={`/novel/books/${book.id}/read/${book.progress?.chapter_id ?? 1}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"><BookOpen className="h-3.5 w-3.5" aria-hidden="true" />继续阅读</Link><Link to={`/novel/books/${book.id}`} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-input bg-card px-3 text-xs font-medium hover:bg-accent">详情<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link></div></div>
-                </Card>
+                return (
+                  <Card key={book.id} className="flex flex-col justify-between overflow-hidden border border-border bg-card transition hover:border-primary/50 hover:shadow-md">
+                    <div className="p-5">
+                      <div className="flex items-start gap-4">
+                        <div className="grid h-16 w-12 shrink-0 place-items-center rounded bg-primary/10 font-serif text-xl font-bold text-primary">{coverLetter(book)}</div>
+                        <div className="min-w-0 flex-1">
+                          <h4 className="truncate font-semibold tracking-tight"><Link to={`/novel/books/${book.id}`} className="hover:text-primary">{book.book_name}</Link></h4>
+                          <p className="mt-1 truncate text-xs text-muted-foreground">{book.author || '作者未标注'} · {book.source_name || '本地内容'}</p>
+                          <div className="mt-2 flex items-center gap-2"><span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" /><span className="text-[11px] text-muted-foreground">{(book.status ? statusLabel[book.status] : null) || book.status || ''} · {formatDate(book.updated_at)}</span></div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="border-t border-border bg-muted/20 px-5 py-3"><div className="mb-2 flex items-center justify-between text-xs text-muted-foreground"><span>进度 {bookChapter(book)}</span><span>{book.total_chapters ? `${percent}% · ${book.total_chapters} 章` : '章节统计中'}</span></div><div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${percent}%` }} /></div><div className="mt-4 flex gap-2"><Link to={`/novel/books/${book.id}/read/${book.progress?.chapter_id ?? 1}`} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90"><BookOpen className="h-3.5 w-3.5" aria-hidden="true" />继续阅读</Link><Link to={`/novel/books/${book.id}`} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-input bg-card px-3 text-xs font-medium hover:bg-accent">详情<ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link></div></div>
+                  </Card>
+                )
               })}
             </div>
           </section>

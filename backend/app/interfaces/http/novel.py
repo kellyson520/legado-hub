@@ -14,6 +14,7 @@ from app.application.services.novel_ingestion.upload_limits import UploadTooLarg
 from app.infrastructure.persistence.factory import (
     build_novel_agent_service,
     build_novel_character_dossier_service,
+    build_novel_character_catalog_service,
     build_novel_repository,
     build_novel_runtime_repository,
     build_source_read_service,
@@ -392,6 +393,21 @@ class CharacterDossierRequest(BaseModel):
     llm_synthesize: bool = Field(default=False)
 
 
+@router.get("/books/{book_id}/characters")
+async def list_novel_characters(
+    book_id: int,
+    identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
+):
+    repo = await get_scoped_novel_repository()
+    owner_scope = owner_scope_for(identity)
+    book = await repo.get_book_by_id(owner_scope, book_id)
+    book_name = getattr(book, "book_name", "") if book else ""
+
+    catalog_service = build_novel_character_catalog_service()
+    characters = catalog_service.list_characters(book_id, book_name=book_name)
+    return ok(data=characters, message="characters listed")
+
+
 @router.post("/books/{book_id}/character-dossier")
 async def generate_character_dossier_post(
     book_id: int,
@@ -399,45 +415,51 @@ async def generate_character_dossier_post(
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
     repo = await get_scoped_novel_repository()
-    db_chapters = await repo.get_chapters_by_book(owner_scope_for(identity), book_id, limit=200)
-    chapters = []
-    for c in db_chapters:
-        text = getattr(c, "raw_text", "")
-        if text:
-            chapters.append({
-                "chapter_id": str(c.id),
-                "chapter_index": getattr(c, "canonical_num", getattr(c, "chapter_num", len(chapters) + 1)),
-                "title": getattr(c, "chapter_title", getattr(c, "raw_title", f"第{len(chapters)+1}章")),
-                "content": text,
-            })
-    if not chapters:
-        runtime_repo = build_novel_runtime_repository()
-        ingestions = runtime_repo.list_ingestions(owner_scope=owner_scope_for(identity))
-        ing = next((item for item in ingestions if item.book_id == book_id), None)
-        if ing and ing.source_text:
-            raw_text = ing.source_text
-            chunk_size = 3000
-            for i in range(0, max(len(raw_text), 1), chunk_size):
-                chunk = raw_text[i:i + chunk_size]
+    owner_scope = owner_scope_for(identity)
+    book = await repo.get_book_by_id(owner_scope, book_id)
+    book_name = getattr(book, "book_name", "") if book else ""
+
+    catalog_service = build_novel_character_catalog_service()
+    detailed_dossier = catalog_service.get_character_dossier(book_id, payload.character_name, book_name=book_name)
+
+    # 结合代码分析与道具提取以保证向前兼容
+    try:
+        db_chapters = await repo.get_chapters_by_book(owner_scope, book_id, limit=60)
+        chapters = []
+        for c in db_chapters:
+            text = getattr(c, "raw_text", "")
+            if text:
                 chapters.append({
-                    "chapter_id": f"chunk-{len(chapters)+1}",
-                    "chapter_index": len(chapters) + 1,
-                    "title": f"第{len(chapters)+1}节",
-                    "content": chunk,
+                    "chapter_id": str(c.id),
+                    "chapter_index": getattr(c, "canonical_num", getattr(c, "chapter_num", len(chapters) + 1)),
+                    "title": getattr(c, "chapter_title", getattr(c, "raw_title", f"第{len(chapters)+1}章")),
+                    "content": text,
                 })
+        if chapters:
+            legacy_service = build_novel_character_dossier_service()
+            legacy_dossier = await legacy_service.build_dossier(
+                book_id=book_id,
+                character_name=payload.character_name,
+                chapters=chapters[:30],
+                llm_synthesize=payload.llm_synthesize,
+                actor_id=str(identity.user_id),
+            )
+            # 合并道具
+            legacy_items = legacy_dossier.get("items", [])
+            for item in legacy_items:
+                item_name = item.get("item_name")
+                if item_name and not any(i.get("name") == item_name for i in detailed_dossier.get("items", [])):
+                    detailed_dossier.setdefault("items", []).append({
+                        "name": item_name,
+                        "action": item.get("action", "持有"),
+                        "desc": f"第 {item.get('chapter_index', 1)} 章《{item.get('chapter_title', '')}》：{item.get('excerpt', '')[:60]}",
+                    })
+            if legacy_dossier.get("llm_analysis"):
+                detailed_dossier["llm_analysis"] = legacy_dossier.get("llm_analysis")
+    except Exception:
+        pass
 
-    if not chapters:
-        raise HTTPException(status_code=404, detail="No chapters or text found for novel")
-
-    service = build_novel_character_dossier_service()
-    dossier = await service.build_dossier(
-        book_id=book_id,
-        character_name=payload.character_name,
-        chapters=chapters[:30],
-        llm_synthesize=payload.llm_synthesize,
-        actor_id=str(identity.user_id),
-    )
-    return ok(data=dossier, message="character dossier generated")
+    return ok(data=detailed_dossier, message="character dossier generated")
 
 
 @router.get("/books/{book_id}/characters/{character_name}/dossier")
