@@ -26,6 +26,9 @@ class CharacterCandidate:
     count: int
     confidence: float
     evidence: list[EvidenceLocation] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    importance_tier: str = "minor"
+    centrality: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,7 @@ class NovelCodeAnalysisReport:
     cooccurrences: list[Cooccurrence]
     time_mentions: list[TimeMention]
     events: list[EventCandidate]
+    character_graph: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     cache_hit: bool = False
 
