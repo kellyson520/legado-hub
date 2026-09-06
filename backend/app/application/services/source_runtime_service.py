@@ -88,11 +88,21 @@ class SourceRuntimeService:
 
     @staticmethod
     def _legacy_book_source_payload(payload: dict) -> dict | None:
+        candidates = []
         for candidate in (payload.get("source_rule"), payload):
             source = SourceRuntimeService._normalize_legacy_book_source_payload(candidate)
             if source is not None:
-                return source
-        return None
+                candidates.append(source)
+        if not candidates:
+            return None
+        return max(candidates, key=SourceRuntimeService._source_rule_richness)
+
+    @staticmethod
+    def _source_rule_richness(source: dict) -> tuple[int, int]:
+        rule_fields = ("ruleSearch", "ruleBookInfo", "ruleToc", "ruleContent")
+        populated = sum(bool(source.get(field)) for field in rule_fields)
+        detail = sum(len(str(value)) for field in rule_fields for value in (source.get(field),) if value)
+        return populated, detail
 
     @staticmethod
     def _normalize_legacy_book_source_payload(candidate: object) -> dict | None:
