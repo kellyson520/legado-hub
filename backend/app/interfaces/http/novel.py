@@ -396,6 +396,7 @@ class CharacterDossierRequest(BaseModel):
 @router.get("/books/{book_id}/characters")
 async def list_novel_characters(
     book_id: int,
+    force_refresh: bool = Query(default=False),
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
     repo = await get_scoped_novel_repository()
@@ -404,7 +405,12 @@ async def list_novel_characters(
     book_name = getattr(book, "book_name", "") if book else ""
 
     catalog_service = build_novel_character_catalog_service()
-    characters = catalog_service.list_characters(book_id, book_name=book_name)
+    characters = await catalog_service.list_characters(
+        book_id,
+        book_name=book_name,
+        force_refresh=force_refresh,
+        actor_id=str(identity.user_id),
+    )
     return ok(data=characters, message="characters listed")
 
 
@@ -412,6 +418,7 @@ async def list_novel_characters(
 async def generate_character_dossier_post(
     book_id: int,
     payload: CharacterDossierRequest,
+    force_refresh: bool = Query(default=False),
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
     repo = await get_scoped_novel_repository()
@@ -420,45 +427,13 @@ async def generate_character_dossier_post(
     book_name = getattr(book, "book_name", "") if book else ""
 
     catalog_service = build_novel_character_catalog_service()
-    detailed_dossier = catalog_service.get_character_dossier(book_id, payload.character_name, book_name=book_name)
-
-    # 结合代码分析与道具提取以保证向前兼容
-    try:
-        db_chapters = await repo.get_chapters_by_book(owner_scope, book_id, limit=60)
-        chapters = []
-        for c in db_chapters:
-            text = getattr(c, "raw_text", "")
-            if text:
-                chapters.append({
-                    "chapter_id": str(c.id),
-                    "chapter_index": getattr(c, "canonical_num", getattr(c, "chapter_num", len(chapters) + 1)),
-                    "title": getattr(c, "chapter_title", getattr(c, "raw_title", f"第{len(chapters)+1}章")),
-                    "content": text,
-                })
-        if chapters:
-            legacy_service = build_novel_character_dossier_service()
-            legacy_dossier = await legacy_service.build_dossier(
-                book_id=book_id,
-                character_name=payload.character_name,
-                chapters=chapters[:30],
-                llm_synthesize=payload.llm_synthesize,
-                actor_id=str(identity.user_id),
-            )
-            # 合并道具
-            legacy_items = legacy_dossier.get("items", [])
-            for item in legacy_items:
-                item_name = item.get("item_name")
-                if item_name and not any(i.get("name") == item_name for i in detailed_dossier.get("items", [])):
-                    detailed_dossier.setdefault("items", []).append({
-                        "name": item_name,
-                        "action": item.get("action", "持有"),
-                        "desc": f"第 {item.get('chapter_index', 1)} 章《{item.get('chapter_title', '')}》：{item.get('excerpt', '')[:60]}",
-                    })
-            if legacy_dossier.get("llm_analysis"):
-                detailed_dossier["llm_analysis"] = legacy_dossier.get("llm_analysis")
-    except Exception:
-        pass
-
+    detailed_dossier = await catalog_service.get_character_dossier(
+        book_id,
+        payload.character_name,
+        book_name=book_name,
+        force_refresh=force_refresh,
+        actor_id=str(identity.user_id),
+    )
     return ok(data=detailed_dossier, message="character dossier generated")
 
 
@@ -467,10 +442,12 @@ async def generate_character_dossier_get(
     book_id: int,
     character_name: str,
     llm_synthesize: bool = Query(default=False),
+    force_refresh: bool = Query(default=False),
     identity=Depends(require_principal_permission(Permission.NOVEL_MANAGE)),
 ):
     return await generate_character_dossier_post(
         book_id=book_id,
         payload=CharacterDossierRequest(character_name=character_name, llm_synthesize=llm_synthesize),
+        force_refresh=force_refresh,
         identity=identity,
     )

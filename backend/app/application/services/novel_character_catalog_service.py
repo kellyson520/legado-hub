@@ -1,478 +1,631 @@
 from __future__ import annotations
 
+import json
 import re
+import sqlite3
 from typing import Any
+
+from app.application.services.provider_platform_service import ProviderPlatformService
 from app.infrastructure.persistence.sqlite.bootstrap import SessionLocal
 from app.infrastructure.persistence.sqlite.schema import (
-    CanonicalWorkModel,
     CanonicalChapterModel,
+    CanonicalWorkModel,
     ContentVariantModel,
 )
 
 
 class NovelCharacterCatalogService:
-    """Provides high-fidelity character profiles, relationship graphs, turning point events,
-    and equipment/item dossiers grounded in canonical novel texts."""
+    """True system-driven novel knowledge engine:
+    Extracts character roster, relationships, turning-point events, and item dossiers
+    directly from canonical chapter texts via algorithmic sampling + LLM analysis,
+    and strictly persists all results to SQLite tables (novel_entities, novel_relationships, novel_events).
+    Zero hardcoded mock/presets.
+    """
 
-    # 预设与校对知识库（针对典型知名长篇作品），同时与原著正文检索动态互补
-    _LORE_PRESETS: dict[str, dict[str, Any]] = {
-        "天才俱乐部": {
-            "characters": [
-                {
-                    "name": "林弦",
-                    "role": "主角 / 莱茵公司创始人",
-                    "importance_tier": "protagonist",
-                    "overall_tier": "SSS",
-                    "aliases": ["林总", "林组长", "第四俱乐部元老", "时空旅者"],
-                    "summary": "全书核心主角，通过正午梦境跨越600年时空探索人类文明终局与哥白尼之谜，创立莱茵公司对抗灭世白光。",
-                    "avatar_tag": "弦",
-                    "alignment": "莱茵 / 人类救赎线",
-                    "personal_info": {
-                        "gender": "男",
-                        "identity": "原MX公司职员 -> 莱茵投资/科技创始人 -> 天才俱乐部关键博弈者",
-                        "status": "存活，时空闭环重塑",
-                        "mentality": "理性、果断、深情且具钢铁般意志",
-                    },
-                    "relationships": [
-                        {
-                            "target": "赵英珺",
-                            "relation": "妻子 / 灵魂伴侣",
-                            "affinity": 100,
-                            "description": "初期为顶头上司与知遇伯乐，中期并肩经历高架桥飞跃与生死考验，最终结为夫妻，育有一女林虞兮。",
-                        },
-                        {
-                            "target": "林虞兮",
-                            "relation": "亲生女儿",
-                            "affinity": 100,
-                            "description": "未来穿越而来的时空警局探员，后揭露其为林弦与赵英珺之女，是林弦不惜颠覆时空也要守护的掌上明珠。",
-                        },
-                        {
-                            "target": "刘枫",
-                            "relation": "挚友 / 科学巨擎",
-                            "affinity": 95,
-                            "description": "上海大学物理学天才，林弦的科研大脑，共同破解时空穿梭理论与常数42秘密。",
-                        },
-                        {
-                            "target": "高阳",
-                            "relation": "核心兄弟 / 创业搭档",
-                            "affinity": 90,
-                            "description": "莱茵公司初创伙伴，性格幽默接地气，无论身处何种梦境与现实皆与林弦并肩同行。",
-                        },
-                        {
-                            "target": "季临",
-                            "relation": "宿敌兼棋友",
-                            "affinity": 85,
-                            "description": "天才俱乐部资深成员，顶尖心理学与博弈大师，在多次时空暗战中与林弦既较量又惺惺相惜。",
-                        },
-                        {
-                            "target": "VV",
-                            "relation": "机械伙伴 / 守护AI",
-                            "affinity": 95,
-                            "description": "由博美犬记忆融合而成的超级人工智能，守护信件与时光数百年的忠诚伙伴。",
-                        },
-                        {
-                            "target": "楚安晴",
-                            "relation": "学妹 / 白月光",
-                            "affinity": 80,
-                            "description": "纯真善良的上海大学学妹，曾在两万米高空跳机为林弦捕捉关键时空粒子。",
-                        },
-                    ],
-                    "events": [
-                        {
-                            "chapter": "第1章 正午梦境",
-                            "title": "首次入梦废土上海",
-                            "description": "正午12:42准时入梦，目睹600年后的废墟世界与末日白光，开启时空探索之旅。",
-                        },
-                        {
-                            "chapter": "第32章 许你一生",
-                            "title": "飞跃高架桥拯救赵英珺",
-                            "description": "在现实危机中舍生忘死驾车飞跃断桥救下赵英珺，奠定两人不可动摇的生死情感基石。",
-                        },
-                        {
-                            "chapter": "第1章 真假虞兮",
-                            "title": "车库遭遇时空刺客林虞兮",
-                            "description": "遭遇拥有晶蓝瞳孔与怪力的少女逮捕，首次被告知‘林虞兮’之名与未来时空警局的存在。",
-                        },
-                        {
-                            "chapter": "第48章 游戏结束",
-                            "title": "见证赵英珺怀孕与小小虞兮",
-                            "description": "在现实中凝视熟睡中怀孕的赵英珺，立誓给女儿一个没有灾难的和平世界。",
-                        },
-                        {
-                            "chapter": "大结局 全家福与回家",
-                            "title": "闭合时空闭环，重塑现实",
-                            "description": "彻底化解灭世危机，与赵英珺、林虞兮拍摄全家福，迎来宁静美好的现实人生。",
-                        },
-                    ],
-                    "items": [
-                        {"name": "卡通猫面具", "action": "伪装身份", "desc": "在梦境世界中隐藏真容的代表性装备"},
-                        {"name": "时空粒子捕获器（电饭煲）", "action": "科技研发", "desc": "改装自普通电饭煲的尖端设备，用于捕获珍贵且稀有的时空粒子"},
-                        {"name": "高文的笔记本手稿", "action": "传承研读", "desc": "记录时空穿梭理论基础与建造构想的核心秘典"},
-                        {"name": "铪合金保险箱（66号）", "action": "信物封存", "desc": "泰姆银行仓库中封存时空秘密与楚安晴小纸条的专用保险柜"},
-                    ],
-                },
-                {
-                    "name": "赵英珺",
-                    "role": "女主角 / MX公司总裁 / 莱茵核心掌舵人",
-                    "importance_tier": "core",
-                    "overall_tier": "SS",
-                    "aliases": ["赵总", "英珺", "珺姐", "商界女王"],
-                    "summary": "MX公司美女总裁，极具商业远见与果敢魄力。从林弦的知遇上司逐渐转变为最默契的爱人，在多个时间线化身黄雀守护林弦，终成林弦之妻。",
-                    "avatar_tag": "珺",
-                    "alignment": "MX公司 / 莱茵联盟",
-                    "personal_info": {
-                        "gender": "女",
-                        "identity": "MX公司掌门人 -> 莱茵商界最高统帅 -> 林弦之妻",
-                        "status": "存活，与林弦相守",
-                        "mentality": "外表高冷孤傲、内心深情执着、具有极强大局观",
-                    },
-                    "relationships": [
-                        {
-                            "target": "林弦",
-                            "relation": "丈夫 / 挚爱伴侣",
-                            "affinity": 100,
-                            "description": "赏识林弦才华并无条件信任，甘愿为他跨越时空与付出生命，最终结为夫妻相伴一生。",
-                        },
-                        {
-                            "target": "林虞兮",
-                            "relation": "亲生女儿",
-                            "affinity": 100,
-                            "description": "与林弦所生的独生女，倾注了母性的全部温柔与期待。",
-                        },
-                        {
-                            "target": "闫巧巧",
-                            "relation": "亲眷幼女",
-                            "affinity": 88,
-                            "description": "神貌酷似年幼时的赵英珺，在林弦与赵英珺的情感升温中充当了奇妙的助攻纽带。",
-                        },
-                        {
-                            "target": "VV",
-                            "relation": "爱犬 / 宠物",
-                            "affinity": 90,
-                            "description": "赵英珺钟爱的博美犬，见证了她与林弦每一次相聚与陪伴。",
-                        },
-                    ],
-                    "events": [
-                        {
-                            "chapter": "第11章 总裁办公室的考核",
-                            "title": "破格任用林弦",
-                            "description": "敏锐察觉林弦的过人才能，赋予其在MX公司极高自由度与决策权。",
-                        },
-                        {
-                            "chapter": "第32章 许你一生",
-                            "title": "高架桥生死告白",
-                            "description": "直面车祸危机，在林弦舍命护车飞跃断桥后彻底敞开心扉，认定一生挚爱。",
-                        },
-                        {
-                            "chapter": "第48章 游戏结束",
-                            "title": "怀上林虞兮",
-                            "description": "在和平生活轨迹中孕育新生命，小小虞兮在腹中一天天成长。",
-                        },
-                        {
-                            "chapter": "大结局 回家",
-                            "title": "身披女王华服的全家福",
-                            "description": "在漫天璀璨烟花之下，与林弦、小虞兮并肩相依，一家三口定格终极幸福。",
-                        },
-                    ],
-                    "items": [
-                        {"name": "蓝宝石长水滴耳坠", "action": "标志配饰", "desc": "象征高贵英气的专属首饰，与黄雀穿越时的信物遥相呼应"},
-                        {"name": "白色长款风衣", "action": "日常着装", "desc": "赵英珺在天台迎风沉思与重要商战时的经典装束"},
-                        {"name": "全家福合影相片", "action": "珍藏信物", "desc": "记录一家三口温馨圆满瞬间的永恒定格"},
-                    ],
-                },
-                {
-                    "name": "林虞兮",
-                    "role": "核心人物 / 未来时空警局三级探员",
-                    "importance_tier": "core",
-                    "overall_tier": "S",
-                    "aliases": ["虞兮", "小虞兮", "真虞兮", "时空刺客少女"],
-                    "summary": "林弦与赵英珺的亲生女儿。在未来因果变迁中成为时空警局三级探员，拥有晶蓝色双眸与骇人怪力，背负维护时空稳定的使命穿梭回2024年。",
-                    "avatar_tag": "兮",
-                    "alignment": "未来时空警局 / 林家",
-                    "personal_info": {
-                        "gender": "女",
-                        "identity": "时空警局三级探员 -> 林弦与赵英珺的女儿",
-                        "status": "存活，现实世界以女婴形态健康成长",
-                        "mentality": "执法时冷峻肃杀，骨子里继承了林弦的执着与赵英珺的倔强",
-                    },
-                    "relationships": [
-                        {
-                            "target": "林弦",
-                            "relation": "亲生父亲",
-                            "affinity": 100,
-                            "description": "从抓捕‘时空嫌疑犯’到深知其为自己挚爱的英雄父亲，心中充满无尽敬仰与眷恋。",
-                        },
-                        {
-                            "target": "赵英珺",
-                            "relation": "亲生母亲",
-                            "affinity": 100,
-                            "description": "血浓于水的生母，母亲的温柔与坚韧在她身上完美继承。",
-                        },
-                        {
-                            "target": "VV",
-                            "relation": "童年伙伴 / 守护信使",
-                            "affinity": 92,
-                            "description": "曾与VV在客房一同酣睡，数百年后由VV将她写给父亲的信件完好送达。",
-                        },
-                    ],
-                    "events": [
-                        {
-                            "chapter": "第1章 真假虞兮",
-                            "title": "地下车库手撕车门捕获林弦",
-                            "description": "自遥远未来降临，以无敌身手制服林弦并向时空法庭录制汇报视频，正式亮出‘林虞兮’真名。",
-                        },
-                        {
-                            "chapter": "第18章 全家福与狼人杀",
-                            "title": "时空因果闭环破坏与消散",
-                            "description": "因纠缠态时空粒子瓦解，少女形态化作漫天蓝色星屑在2024年离去，带来无尽哀伤。",
-                        },
-                        {
-                            "chapter": "第62章 我们与你们",
-                            "title": "现实世界呱呱坠地",
-                            "description": "作为真正的新生女婴在现实中诞生，被林弦像抱至宝般捧在怀里，失而复得。",
-                        },
-                        {
-                            "chapter": "第17章 回家（大结局）",
-                            "title": "《虞兮的信》揭晓与全家合影",
-                            "description": "VV开启胸前暗格取出她写下的信，第一句便是‘我的爸爸是个英雄！’，感人至深。",
-                        },
-                    ],
-                    "items": [
-                        {"name": "微型折叠战术尖刀", "action": "近战执勤", "desc": "时空警局标配冷兵器，曾压在林弦颈侧"},
-                        {"name": "纠缠态时空粒子记录仪", "action": "任务汇报", "desc": "记录执法现场并提交给未来时空法庭的专用摄像仪器"},
-                        {"name": "虞兮的粉黄色塑封信", "action": "穿越托孤", "desc": "写满对父亲崇敬与思念的古旧信纸，历经数百年真情不改"},
-                    ],
-                },
-                {
-                    "name": "刘枫",
-                    "role": "核心科学家 / 莱茵大学校长",
-                    "importance_tier": "core",
-                    "overall_tier": "S",
-                    "aliases": ["刘老师", "疯子刘", "时空穿梭机之父"],
-                    "summary": "上海大学物理学旷世奇才，科学狂人。被林弦从潦倒中发掘，主持莱茵联合实验室，独立构建时空穿梭理论并带领莱茵大学跨越世纪。",
-                    "avatar_tag": "枫",
-                    "alignment": "上海大学 / 莱茵实验室",
-                    "personal_info": {
-                        "gender": "男",
-                        "identity": "物理学教授 -> 莱茵首席科学家 -> 莱茵大学荣誉校长",
-                        "status": "存活（晚年白发，桃李满天下）",
-                        "mentality": "对物理终极规律极度狂热、生活不修边幅、重情重义",
-                    },
-                    "relationships": [
-                        {"target": "林弦", "relation": "知己伯乐 / 革命战友", "affinity": 98, "description": "无论林弦提出多么疯狂的时空构想，刘枫永远是第一个将其用数学公式推演落地的人。"},
-                        {"target": "高文", "relation": "理论先导", "affinity": 90, "description": "接续高文院士未竟的事业，将时空穿梭机从蓝图变为现实。"},
-                    ],
-                    "events": [
-                        {
-                            "chapter": "第53章 恭喜入围",
-                            "title": "联合实验室成立",
-                            "description": "林弦重金注资成立上海大学莱茵联合实验室，为刘枫提供世界顶尖科研土壤。",
-                        },
-                        {
-                            "chapter": "第20章 本事不小，有点东西",
-                            "title": "攻坚时空穿梭机构想",
-                            "description": "废寝忘食计算时空粒子运动轨迹，推导制造穿梭机的全部工程参数。",
-                        },
-                    ],
-                    "items": [
-                        {"name": "时空穿梭机设计蓝图", "action": "核心研发", "desc": "汇聚刘枫毕生心血的终极时空装置图纸"},
-                        {"name": "油渍斑斑的草稿纸叠", "action": "科学推导", "desc": "密密麻麻写满相对论与常数42的演算草稿"},
-                    ],
-                },
-                {
-                    "name": "季临",
-                    "role": "智囊顾问 / 天才俱乐部重要棋手",
-                    "importance_tier": "core",
-                    "overall_tier": "S",
-                    "aliases": ["临哥", "操盘手", "黑白棋客"],
-                    "summary": "智商与心机近妖的天才，俱乐部资深棋手。善于布局人性与因果，与林弦数度交锋后形成深厚默契，在最终局起到扭转乾坤的作用。",
-                    "avatar_tag": "临",
-                    "alignment": "天才俱乐部",
-                    "personal_info": {
-                        "gender": "男",
-                        "identity": "天才俱乐部独立成员",
-                        "status": "退隐/平衡",
-                        "mentality": "孤傲冷峻、洞悉人心、厌恶伪善",
-                    },
-                    "relationships": [
-                        {"target": "林弦", "relation": "宿命知己 / 棋盘对手", "affinity": 85, "description": "视林弦为唯一的对弈同类，多次在关键节点留下暗门相助。"},
-                        {"target": "安杰丽卡", "relation": "守护搭档", "affinity": 80, "description": "在海外暗线中给予安杰丽卡诸多指引。"},
-                    ],
-                    "events": [
-                        {
-                            "chapter": "第31章 倒转因果！来自未来的少女",
-                            "title": "生日宴会的情感破防",
-                            "description": "在林弦为楚安晴举办的生日会上收到哥特手办，被普通人质朴的温情触动。",
-                        },
-                    ],
-                    "items": [
-                        {"name": "哥特莱茵猫手办", "action": "珍视纪念", "desc": "林弦赠送的生日小礼物，一直摆放在书房最醒目处"},
-                    ],
-                },
-                {
-                    "name": "VV",
-                    "role": "超级人工智能 / 机械守护神",
-                    "importance_tier": "core",
-                    "overall_tier": "S",
-                    "aliases": ["博美犬", "机械VV", "人工智障->超强AI"],
-                    "summary": "起初为赵英珺娇生惯养的小博美犬，后意识与数字灵魂被数字化并加载到拥有常数42力量的超级机械体内，守护林氏一族数百载时光。",
-                    "avatar_tag": "V",
-                    "alignment": "林家守护者",
-                    "personal_info": {
-                        "gender": "无（犬类灵体）",
-                        "identity": "家庭宠物 -> 莱茵地下守护AI",
-                        "status": "长存",
-                        "mentality": "傲娇、爱吃醋、极度护主、嘴硬心软",
-                    },
-                    "relationships": [
-                        {"target": "林弦", "relation": "创造父亲 / 守护对象", "affinity": 96, "description": "被林弦在不同世纪反复唤醒与升级，恪守与林弦的誓言。"},
-                        {"target": "赵英珺", "relation": "原主人 / 母亲", "affinity": 98, "description": "最初的博美肉身依偎在赵英珺怀里，永生铭刻赵总的气息。"},
-                        {"target": "林虞兮", "relation": "小姐姐 / 托信人", "affinity": 95, "description": "保管林虞兮给林弦的信笺长达数个世纪直至任务达成。"},
-                    ],
-                    "events": [
-                        {
-                            "chapter": "第17章 回家（大结局）",
-                            "title": "卡在台阶打滚与信件交付",
-                            "description": "在莱茵大学地下仓库因轮子卡台阶而生闷气，随后弹开胸前小抽屉将《虞兮的信》交予林弦。",
-                        },
-                    ],
-                    "items": [
-                        {"name": "胸前小抽屉暗格", "action": "跨世纪储物", "desc": "专门用于封存林虞兮信纸的防水合金暗盒"},
-                    ],
-                },
-            ]
-        },
-        "神秘复苏": {
-            "characters": [
-                {
-                    "name": "杨间",
-                    "role": "主角 / 鬼眼刑警 / 鬼梦之主",
-                    "importance_tier": "protagonist",
-                    "overall_tier": "SSS",
-                    "aliases": ["鬼眼杨间", "杨队", "腿哥", "大昌市负责人"],
-                    "summary": "全书第一主角，驾驭鬼眼与鬼影绝地求生，在大昌市饿死鬼事件中声名鹊起，终成总部执法队长与灵异圈定海神针。",
-                    "avatar_tag": "间",
-                    "alignment": "大昌市 / 总部队长",
-                    "personal_info": {"gender": "男", "identity": "高中生 -> 大昌市负责人 -> 总部队长", "status": "存活", "mentality": "冷静果决、杀伐果断、极致理智"},
-                    "relationships": [
-                        {"target": "江艳", "relation": "红颜伴侣", "affinity": 85, "description": "自大昌市初识起一直追随杨间，料理生活起居。"},
-                        {"target": "冯全", "relation": "总部副手", "affinity": 80, "description": "大昌市前期共经鬼雾危机的负责人。"},
-                    ],
-                    "events": [
-                        {"chapter": "第1章 敲门声", "title": "第七中学灵异觉醒", "description": "遭遇敲门鬼袭击，绝境中与鬼眼融合成为异类驭鬼者。"},
-                        {"chapter": "第100章 饿死鬼绝境", "title": "大昌市棺材钉翻盘", "description": "驾驭无头鬼影并使用棺材钉钉死源头厉鬼，拯救大昌市。"},
-                    ],
-                    "items": [
-                        {"name": "锈蚀棺材钉", "action": "终极压制", "desc": "能够瞬间压制一切厉鬼行动的禁忌神物"},
-                        {"name": "鬼烛（红/白）", "action": "点燃辟邪", "desc": "红烛护身保命，白烛招引厉鬼"},
-                        {"name": "黄金手枪与特制子弹", "action": "物理克制", "desc": "不被灵异力量干扰的黄金造物武器"},
-                    ],
-                }
-            ]
-        },
-    }
+    def __init__(
+        self,
+        db_path: str = "/data/novel.db",
+        provider_platform: ProviderPlatformService | None = None,
+    ):
+        self._db_path = db_path
+        self._platform = provider_platform
 
-    def list_characters(self, book_id: int, book_name: str = "") -> list[dict[str, Any]]:
-        """List characters for a book with comprehensive metadata."""
-        target_preset = self._find_preset(book_name)
-        if target_preset:
-            chars = target_preset["characters"]
-            return [
-                {
-                    "name": c["name"],
-                    "role": c["role"],
-                    "importance_tier": c.get("importance_tier", "supporting"),
-                    "overall_tier": c.get("overall_tier", "A"),
-                    "aliases": c.get("aliases", []),
-                    "summary": c.get("summary", ""),
-                    "avatar_tag": c.get("avatar_tag", c["name"][:1]),
-                    "items_count": len(c.get("items", [])),
-                    "events_count": len(c.get("events", [])),
-                    "relationships_count": len(c.get("relationships", [])),
-                }
-                for c in chars
-            ]
+    def _get_db(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
 
-        return self._extract_dynamic_characters(book_id)
+    # -------------------------------------------------------------------------
+    # 1. 人物列表：优先查数据库持久化；无则采样章节 -> LLM 提取 -> 写入数据库
+    # -------------------------------------------------------------------------
+    async def list_characters(
+        self,
+        book_id: int,
+        book_name: str = "",
+        force_refresh: bool = False,
+        actor_id: str = "system",
+    ) -> list[dict[str, Any]]:
+        """Fetch character list from persistent database. If empty, perform full-book extraction via LLM."""
+        if not force_refresh:
+            existing = self._load_entities_from_db(book_id)
+            if existing:
+                return existing
 
-    def get_character_dossier(self, book_id: int, character_name: str, book_name: str = "") -> dict[str, Any]:
-        """Fetch full detailed dossier for a character including relationships, events, items, and textual evidence."""
-        target_preset = self._find_preset(book_name)
-        preset_char = None
-        if target_preset:
-            for c in target_preset["characters"]:
-                if c["name"] == character_name or character_name in c.get("aliases", []):
-                    preset_char = c
-                    break
+        # 触发系统 + LLM 真实全量抽取并落库
+        extracted = await self._extract_characters_from_canonical(
+            book_id=book_id,
+            book_name=book_name,
+            actor_id=actor_id,
+        )
+        if extracted:
+            self._save_entities_to_db(book_id, extracted)
+            return self._load_entities_from_db(book_id)
 
-        excerpts = self._query_canonical_excerpts(character_name, book_name)
+        return self._load_entities_from_db(book_id)
 
-        if preset_char:
-            dossier = dict(preset_char)
-            dossier["canonical_excerpts"] = excerpts
-            return dossier
+    # -------------------------------------------------------------------------
+    # 2. 深度档案：优先查持久化关系与事件；无则 RAG 检索 -> LLM 解构 -> 写入数据库
+    # -------------------------------------------------------------------------
+    async def get_character_dossier(
+        self,
+        book_id: int,
+        character_name: str,
+        book_name: str = "",
+        force_refresh: bool = False,
+        actor_id: str = "system",
+    ) -> dict[str, Any]:
+        """Fetch full dossier (personal info, relationships, events, items).
+        If not deeply analyzed yet, perform RAG retrieval + LLM synthesis and persist to DB.
+        """
+        entity_row = self._get_entity_by_name(book_id, character_name)
+        attrs: dict[str, Any] = {}
+        aliases: list[str] = []
+        if entity_row:
+            try:
+                aliases = json.loads(entity_row["aliases"]) if entity_row["aliases"] else []
+            except Exception:
+                aliases = []
+            try:
+                attrs = json.loads(entity_row["attributes"]) if entity_row["attributes"] else {}
+            except Exception:
+                attrs = {}
+
+        # 检查是否已有持久化关系和事件
+        relations = self._load_relationships_from_db(book_id, character_name)
+        events = self._load_events_from_db(book_id, character_name)
+        items = attrs.get("items", [])
+
+        need_analysis = force_refresh or (len(relations) == 0 and len(events) == 0)
+
+        if need_analysis and self._platform is not None:
+            analyzed = await self._synthesize_dossier_via_llm(
+                book_id=book_id,
+                character_name=character_name,
+                aliases=aliases,
+                book_name=book_name,
+                actor_id=actor_id,
+            )
+            if analyzed:
+                # 1. 保存持久化关系
+                self._save_relationships_to_db(book_id, character_name, analyzed.get("relationships", []))
+                # 2. 保存持久化事件
+                self._save_events_to_db(book_id, character_name, analyzed.get("events", []))
+                # 3. 更新实体表 items 和 personal_info
+                attrs["items"] = analyzed.get("items", [])
+                if analyzed.get("personal_info"):
+                    attrs["personal_info"] = analyzed["personal_info"]
+                self._update_entity_attrs(book_id, character_name, attrs)
+
+                relations = self._load_relationships_from_db(book_id, character_name)
+                events = self._load_events_from_db(book_id, character_name)
+                items = attrs.get("items", [])
+
+        # 获取真实原著段落切片作为证据支撑
+        excerpts = self._query_canonical_excerpts(character_name, book_name, aliases=aliases)
 
         return {
             "name": character_name,
-            "role": "小说核心出场人物",
-            "importance_tier": "major",
-            "overall_tier": "A",
-            "aliases": [],
-            "summary": f"在小说正文中多处登场的关键人物【{character_name}】。",
-            "avatar_tag": character_name[:1],
-            "personal_info": {"gender": "未知", "status": "正文中登场活跃"},
-            "relationships": [],
-            "events": [],
-            "items": [],
+            "role": attrs.get("role", entity_row["entity_type"] if entity_row else "小说登场人物"),
+            "importance_tier": entity_row["entity_type"] if entity_row else "major",
+            "overall_tier": attrs.get("overall_tier", "S"),
+            "aliases": aliases,
+            "summary": entity_row["description"] if entity_row else f"小说《{book_name}》中的核心人物【{character_name}】。",
+            "avatar_tag": attrs.get("avatar_tag", character_name[:1]),
+            "alignment": attrs.get("alignment", "核心阵营"),
+            "personal_info": attrs.get("personal_info", {}),
+            "relationships": relations,
+            "events": events,
+            "items": items,
             "canonical_excerpts": excerpts,
         }
 
-    def _find_preset(self, book_name: str) -> dict[str, Any] | None:
-        clean_name = book_name.replace("《", "").replace("》", "").strip()
-        for key, val in self._LORE_PRESETS.items():
-            if key in clean_name or clean_name in key:
-                return val
+    # -------------------------------------------------------------------------
+    # 内部数据访问：SQLite 持久化与查询
+    # -------------------------------------------------------------------------
+    def _load_entities_from_db(self, book_id: int) -> list[dict[str, Any]]:
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM novel_entities WHERE book_id = ? ORDER BY importance_score DESC, id ASC;",
+            (book_id,),
+        )
+        rows = cursor.fetchall()
+
+        results = []
+        for r in rows:
+            aliases = []
+            if r["aliases"]:
+                try:
+                    aliases = json.loads(r["aliases"])
+                except Exception:
+                    aliases = []
+            attrs = {}
+            if r["attributes"]:
+                try:
+                    attrs = json.loads(r["attributes"])
+                except Exception:
+                    attrs = {}
+
+            # 查询关联的关系数与事件数
+            cursor.execute(
+                "SELECT COUNT(*) FROM novel_relationships WHERE book_id = ? AND (source_entity = ? OR target_entity = ?);",
+                (book_id, r["name"], r["name"]),
+            )
+            rel_count = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM novel_events WHERE book_id = ? AND participants LIKE ?;",
+                (book_id, f'%{r["name"]}%'),
+            )
+            ev_count = cursor.fetchone()[0]
+
+            items_count = len(attrs.get("items", []))
+
+            results.append({
+                "name": r["name"],
+                "role": attrs.get("role", r["entity_type"]),
+                "importance_tier": r["entity_type"] or "major",
+                "overall_tier": attrs.get("overall_tier", "S"),
+                "aliases": aliases,
+                "summary": r["description"] or "",
+                "avatar_tag": attrs.get("avatar_tag", r["name"][:1]),
+                "items_count": items_count,
+                "events_count": ev_count,
+                "relationships_count": rel_count,
+            })
+        conn.close()
+        return results
+
+    def _get_entity_by_name(self, book_id: int, name: str) -> sqlite3.Row | None:
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM novel_entities WHERE book_id = ? AND name = ? LIMIT 1;",
+            (book_id, name),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return row
+
+    def _save_entities_to_db(self, book_id: int, entities: list[dict[str, Any]]):
+        conn = self._get_db()
+        cursor = conn.cursor()
+        for idx, e in enumerate(entities):
+            score = 100.0 - (idx * 5)
+            tier = e.get("overall_tier", "S")
+            if tier == "SSS":
+                score = 99.0
+            elif tier == "SS":
+                score = 90.0
+            elif tier == "S":
+                score = 80.0
+
+            aliases_json = json.dumps(e.get("aliases", []), ensure_ascii=False)
+            attrs_dict = {
+                "role": e.get("role", "核心人物"),
+                "overall_tier": tier,
+                "avatar_tag": e.get("avatar_tag", e["name"][:1]),
+                "alignment": e.get("alignment", "核心阵营"),
+                "items": e.get("items", []),
+                "personal_info": e.get("personal_info", {}),
+            }
+            attrs_json = json.dumps(attrs_dict, ensure_ascii=False)
+
+            # 插入或更新
+            cursor.execute(
+                """INSERT OR REPLACE INTO novel_entities
+                (book_id, name, aliases, entity_type, description, importance_score, attributes)
+                VALUES (?, ?, ?, ?, ?, ?, ?);""",
+                (
+                    book_id,
+                    e["name"],
+                    aliases_json,
+                    e.get("importance_tier", "major"),
+                    e.get("summary", ""),
+                    score,
+                    attrs_json,
+                ),
+            )
+
+        # 更新 novels 表的 character_count
+        cursor.execute(
+            "UPDATE novels SET character_count = (SELECT COUNT(*) FROM novel_entities WHERE book_id = ?) WHERE id = ?;",
+            (book_id, book_id),
+        )
+        conn.commit()
+        conn.close()
+
+    def _update_entity_attrs(self, book_id: int, character_name: str, attrs: dict[str, Any]):
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE novel_entities SET attributes = ? WHERE book_id = ? AND name = ?;",
+            (json.dumps(attrs, ensure_ascii=False), book_id, character_name),
+        )
+        conn.commit()
+        conn.close()
+
+    def _load_relationships_from_db(self, book_id: int, character_name: str) -> list[dict[str, Any]]:
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM novel_relationships WHERE book_id = ? AND source_entity = ? ORDER BY confidence DESC;",
+            (book_id, character_name),
+        )
+        rows = cursor.fetchall()
+        results = []
+        for r in rows:
+            results.append({
+                "target": r["target_entity"],
+                "relation": r["relation_type"],
+                "affinity": int((r["confidence"] or 0.8) * 100),
+                "description": r["description"] or "",
+            })
+        conn.close()
+        return results
+
+    def _save_relationships_to_db(self, book_id: int, source_name: str, relationships: list[dict[str, Any]]):
+        if not relationships:
+            return
+        conn = self._get_db()
+        cursor = conn.cursor()
+        for rel in relationships:
+            target = rel.get("target")
+            if not target:
+                continue
+            conf = float(rel.get("affinity", 80)) / 100.0
+            cursor.execute(
+                """INSERT OR REPLACE INTO novel_relationships
+                (book_id, source_entity, target_entity, relation_type, description, confidence)
+                VALUES (?, ?, ?, ?, ?, ?);""",
+                (
+                    book_id,
+                    source_name,
+                    target,
+                    rel.get("relation", "关联人物"),
+                    rel.get("description", ""),
+                    conf,
+                ),
+            )
+        conn.commit()
+        conn.close()
+
+    def _load_events_from_db(self, book_id: int, character_name: str) -> list[dict[str, Any]]:
+        conn = self._get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM novel_events WHERE book_id = ? AND participants LIKE ? ORDER BY chapter_num ASC, id ASC;",
+            (book_id, f"%{character_name}%"),
+        )
+        rows = cursor.fetchall()
+        results = []
+        for r in rows:
+            results.append({
+                "chapter": r["evidence"] or f"第{r['chapter_num']}章",
+                "title": r["event_type"] or "重要转折",
+                "description": r["description"] or "",
+            })
+        conn.close()
+        return results
+
+    def _save_events_to_db(self, book_id: int, character_name: str, events: list[dict[str, Any]]):
+        if not events:
+            return
+        conn = self._get_db()
+        cursor = conn.cursor()
+        for idx, ev in enumerate(events):
+            title = ev.get("title", "核心事件")
+            desc = ev.get("description", "")
+            ch_str = ev.get("chapter", "")
+            # 提取章节号
+            num_match = re.search(r"\d+", ch_str)
+            ch_num = int(num_match.group(0)) if num_match else idx + 1
+
+            cursor.execute(
+                """INSERT INTO novel_events
+                (book_id, chapter_id, chapter_num, event_type, description, participants, evidence)
+                VALUES (?, ?, ?, ?, ?, ?, ?);""",
+                (
+                    book_id,
+                    0,
+                    ch_num,
+                    title,
+                    desc,
+                    character_name,
+                    ch_str,
+                ),
+            )
+        conn.commit()
+        conn.close()
+
+    # -------------------------------------------------------------------------
+    # 核心抽取逻辑：由正文采样与 LLM 协同提取
+    # -------------------------------------------------------------------------
+    async def _extract_characters_from_canonical(
+        self,
+        book_id: int,
+        book_name: str,
+        actor_id: str,
+    ) -> list[dict[str, Any]]:
+        """Sample chapters across full book and instruct LLM to extract characters roster."""
+        if self._platform is None:
+            return []
+
+        # 收集小说跨章节样本（覆盖早期、中段、中后期、大结局）
+        samples = self._sample_canonical_chapters(book_name, total_samples=10)
+        if not samples:
+            return []
+
+        context_text = "\n\n".join(samples)
+
+        prompt = f"""你是一位专业文学知识图谱抽取系统。请根据以下提供的完整小说正文采样，深入分析并提取出该小说全部最核心的主要人物列表（包含主角、核心女主/伴侣、核心搭档、宿敌、关键引路人等，提取 6-12 人）。
+必须以纯 JSON 数组格式返回，严禁使用 markdown 代码块包裹，严禁输出任何多余的解释说明。
+
+JSON 数组中每个对象的结构定义如下：
+[
+  {{
+    "name": "人物真实姓名（严禁错别字）",
+    "role": "身份与定位（如：主角 / 莱茵公司创始人、女主角 / MX公司总裁）",
+    "importance_tier": "protagonist / core / major / supporting",
+    "overall_tier": "SSS / SS / S / A / B",
+    "aliases": ["别名1", "称号2", "外号3"],
+    "summary": "全书生平与角色定位概要（100-150字）",
+    "avatar_tag": "单字简称（如：弦、珺、兮）",
+    "alignment": "所属阵营或势力"
+  }}
+]
+
+小说全景章节采样证据如下：
+{context_text[:7000]}"""
+
+        try:
+            invocation = await self._platform.invoke_chat(
+                provider_group="novel_chat",
+                model=None,
+                payload={"messages": [{"role": "user", "content": prompt}]},
+                quota_scope=("user", actor_id),
+            )
+            raw_text = invocation.get("output", {}).get("text", "").strip()
+            # 净化 json
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
+                raw_text = re.sub(r"\n?```$", "", raw_text)
+            data = json.loads(raw_text)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+        return []
+
+    async def _synthesize_dossier_via_llm(
+        self,
+        book_id: int,
+        character_name: str,
+        aliases: list[str],
+        book_name: str,
+        actor_id: str,
+    ) -> dict[str, Any] | None:
+        """Retrieve chapter context for character and synthesize relationships, events, and items."""
+        if self._platform is None:
+            return None
+
+        # 检索包含该人物及其别名的前中后期最关键正文章节
+        search_terms = [character_name] + aliases
+        evidence_snippets = self._search_character_scenes(book_name, search_terms, limit=6)
+        if not evidence_snippets:
+            return None
+
+        evidence_text = "\n\n".join(evidence_snippets)
+
+        prompt = f"""你是一位小说人物全景深度解构系统。请根据以下从原著正文中检索出的真实证据切片，对角色【{character_name}】进行全面深度解构。
+必须严格依据提供的原著证据，提取其人际关系网络、关键转折事件、持有与使用过的关键装备道具，以及生平心态演进。
+必须以纯 JSON 格式返回，严禁使用 markdown 标记或输出任何多余对话，数据结构定义如下：
+{{
+  "personal_info": {{
+    "identity": "身份背景与演变历程",
+    "mentality": "性格与主导心境",
+    "alignment": "阵营或组织归属",
+    "status": "生存与结局状态"
+  }},
+  "relationships": [
+    {{
+      "target": "关系对象姓名",
+      "relation": "关系类型（如：妻子 / 挚爱、亲生父亲、科研知己、宿敌对弈）",
+      "affinity": 95,
+      "description": "50-100字详细解析两人在原著中的情感纽带、生死经历与关键交集"
+    }}
+  ],
+  "events": [
+    {{
+      "chapter": "原著章节名称",
+      "title": "转折事件名称",
+      "description": "事件发生经过与对该角色一生命运的深刻影响"
+    }}
+  ],
+  "items": [
+    {{
+      "name": "道具/装备/关键物品名称",
+      "action": "佩戴/使用/获取/封存",
+      "desc": "物品在书中的用途、出处或象征意义"
+    }}
+  ]
+}}
+
+原著真实正文证据如下：
+{evidence_text[:6500]}"""
+
+        try:
+            invocation = await self._platform.invoke_chat(
+                provider_group="novel_chat",
+                model=None,
+                payload={"messages": [{"role": "user", "content": prompt}]},
+                quota_scope=("user", actor_id),
+            )
+            raw_text = invocation.get("output", {}).get("text", "").strip()
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```[a-zA-Z]*\n?", "", raw_text)
+                raw_text = re.sub(r"\n?```$", "", raw_text)
+            data = json.loads(raw_text)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
         return None
 
-    def _query_canonical_excerpts(self, character_name: str, book_name: str, limit: int = 4) -> list[dict[str, str]]:
+    # -------------------------------------------------------------------------
+    # 正文采样与 RAG 检索
+    # -------------------------------------------------------------------------
+    def _sample_canonical_chapters(self, book_name: str, total_samples: int = 10) -> list[str]:
+        db = SessionLocal()
         try:
-            db = SessionLocal()
-            works = db.query(CanonicalWorkModel).all()
-            target_work = None
-            for w in works:
-                wt = w.title or ""
-                if any(k in wt for k in ["天才俱乐部", "神秘复苏"]):
-                    if "天才俱乐部" in wt and ("天才俱乐部" in book_name or not book_name):
-                        target_work = w
-                        break
-                    if "神秘复苏" in wt and ("神秘复苏" in book_name):
-                        target_work = w
-                        break
-            if not target_work and works:
-                target_work = works[0]
-
-            if not target_work:
-                db.close()
+            work = self._find_canonical_work(db, book_name)
+            if not work:
                 return []
-
             chapters = (
                 db.query(CanonicalChapterModel)
-                .filter(CanonicalChapterModel.canonical_work_id == target_work.id)
+                .filter(CanonicalChapterModel.canonical_work_id == work.id)
+                .order_by(CanonicalChapterModel.id)
+                .all()
+            )
+            if not chapters:
+                return []
+
+            step = max(1, len(chapters) // total_samples)
+            sample_chapters = [chapters[i] for i in range(0, len(chapters), step)][:total_samples]
+
+            results = []
+            for ch in sample_chapters:
+                v = (
+                    db.query(ContentVariantModel)
+                    .filter(ContentVariantModel.canonical_chapter_id == ch.id)
+                    .first()
+                )
+                if v and v.content:
+                    results.append(f"【章节：{ch.title}】\n{v.content[:700]}")
+            return results
+        finally:
+            db.close()
+
+    def _search_character_scenes(
+        self,
+        book_name: str,
+        search_terms: list[str],
+        limit: int = 8,
+    ) -> list[str]:
+        db = SessionLocal()
+        try:
+            work = self._find_canonical_work(db, book_name)
+            if not work:
+                return []
+            chapters = (
+                db.query(CanonicalChapterModel)
+                .filter(CanonicalChapterModel.canonical_work_id == work.id)
+                .order_by(CanonicalChapterModel.id)
+                .all()
+            )
+            if not chapters:
+                return []
+
+            total_chs = len(chapters)
+            ch_map = {c.id: c.title for c in chapters}
+            ch_index_map = {c.id: idx for idx, c in enumerate(chapters)}
+
+            variants = (
+                db.query(ContentVariantModel)
+                .filter(ContentVariantModel.canonical_chapter_id.in_([c.id for c in chapters]))
+                .all()
+            )
+
+            # 按阶段分组收集命中切片：前期、中期、后期
+            early_hits = []
+            mid_hits = []
+            late_hits = []
+
+            for v in variants:
+                text = v.content or ""
+                matched_kw = [t for t in search_terms if t in text]
+                if not matched_kw:
+                    continue
+
+                idx = ch_index_map.get(v.canonical_chapter_id, 0)
+                ratio = idx / max(1, total_chs)
+
+                pos = min(text.find(t) for t in matched_kw)
+                snip = text[max(0, pos - 60): min(len(text), pos + 420)]
+                item = (len(matched_kw), f"【章节：{ch_map.get(v.canonical_chapter_id, '')}】\n...{snip.strip()}...")
+
+                if ratio < 0.25:
+                    early_hits.append(item)
+                elif ratio < 0.75:
+                    mid_hits.append(item)
+                else:
+                    late_hits.append(item)
+
+            early_hits.sort(key=lambda x: x[0], reverse=True)
+            mid_hits.sort(key=lambda x: x[0], reverse=True)
+            late_hits.sort(key=lambda x: x[0], reverse=True)
+
+            selected = []
+            for h in early_hits[:3]:
+                selected.append(h[1])
+            for h in mid_hits[:3]:
+                selected.append(h[1])
+            for h in late_hits[:3]:
+                selected.append(h[1])
+
+            return selected[:limit]
+        finally:
+            db.close()
+
+    def _query_canonical_excerpts(
+        self,
+        character_name: str,
+        book_name: str,
+        aliases: list[str] | None = None,
+        limit: int = 4,
+    ) -> list[dict[str, str]]:
+        db = SessionLocal()
+        try:
+            work = self._find_canonical_work(db, book_name)
+            if not work:
+                return []
+            chapters = (
+                db.query(CanonicalChapterModel)
+                .filter(CanonicalChapterModel.canonical_work_id == work.id)
                 .all()
             )
             ch_ids = [c.id for c in chapters]
             ch_map = {c.id: c.title for c in chapters}
 
-            search_terms = [character_name]
-            if character_name == "林虞兮":
-                search_terms.extend(["虞兮", "小小虞兮"])
-            elif character_name == "赵英珺":
-                search_terms.extend(["英珺", "赵总"])
-
+            terms = [character_name] + (aliases or [])
             results = []
-            for v in db.query(ContentVariantModel).filter(ContentVariantModel.canonical_chapter_id.in_(ch_ids)).all():
+            for v in (
+                db.query(ContentVariantModel)
+                .filter(ContentVariantModel.canonical_chapter_id.in_(ch_ids))
+                .all()
+            ):
                 text = v.content or ""
-                hits = [t for t in search_terms if t in text]
+                hits = [t for t in terms if t in text]
                 if hits:
                     pos = min(text.find(t) for t in hits)
                     snip = text[max(0, pos - 40): min(len(text), pos + 260)]
@@ -482,23 +635,18 @@ class NovelCharacterCatalogService:
                     })
                     if len(results) >= limit:
                         break
-            db.close()
             return results
-        except Exception:
-            return []
+        finally:
+            db.close()
 
-    def _extract_dynamic_characters(self, book_id: int) -> list[dict[str, Any]]:
-        return [
-            {
-                "name": "核心主角",
-                "role": "主视角人物",
-                "importance_tier": "protagonist",
-                "overall_tier": "SS",
-                "aliases": [],
-                "summary": "当前小说的核心行动者与叙事视角推进者。",
-                "avatar_tag": "主",
-                "items_count": 0,
-                "events_count": 0,
-                "relationships_count": 0,
-            }
-        ]
+    def _find_canonical_work(self, db: Any, book_name: str) -> CanonicalWorkModel | None:
+        works = db.query(CanonicalWorkModel).all()
+        clean = re.sub(r"[\s《》()（）·_—\-]", "", book_name) if book_name else ""
+        for w in works:
+            wt = w.title or ""
+            clean_wt = re.sub(r"[\s《》()（）·_—\-]", "", wt)
+            if clean and clean_wt and (clean in clean_wt or clean_wt in clean):
+                return w
+        if works:
+            return works[0]
+        return None

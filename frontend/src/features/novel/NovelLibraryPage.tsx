@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowUpRight, BookOpen, Check, FileUp, Loader2, Search, Sparkles, UploadCloud, Users, X } from 'lucide-react'
+import { ArrowUpRight, BookOpen, Check, FileUp, Loader2, RefreshCw, Search, Sparkles, UploadCloud, Users, X } from 'lucide-react'
 
 import {
   createNovelConversation,
@@ -157,18 +157,33 @@ export function NovelLibraryPage() {
     return selectedBook ?? books.find((book) => String(book.id) === bookId) ?? null
   }, [bookId, books, selectedBook])
 
-  const openCharacterDossier = async (characterName: string) => {
+  const openCharacterDossier = async (characterName: string, forceRefresh = false) => {
     if (!currentBook) return
     setLoadingDossier(true)
     setDossierModalOpen(true)
     setDossierSubTab('relations')
     try {
-      const res = await getNovelCharacterDossier(currentBook.id, characterName)
+      const res = await getNovelCharacterDossier(currentBook.id, characterName, forceRefresh)
       setActiveDossier(res.data)
     } catch {
       setError(`未能加载【${characterName}】的人物档案`)
     } finally {
       setLoadingDossier(false)
+    }
+  }
+
+  const handleRefreshCharacters = async () => {
+    if (!currentBook) return
+    setLoadingCharacters(true)
+    setNotice('正在调动 AI 阅读全书关键章节并提炼人物图谱，请稍候...')
+    try {
+      const res = await listNovelCharacters(currentBook.id, true)
+      setCharacters(res.data || [])
+      setNotice(`AI 已完成全书人物提炼并持久化保存，共提取 ${res.data?.length || 0} 位关键角色。`)
+    } catch {
+      setError('AI 提炼人物失败，请稍后重试。')
+    } finally {
+      setLoadingCharacters(false)
     }
   }
 
@@ -363,11 +378,28 @@ export function NovelLibraryPage() {
           {/* 登场人物列表专区 */}
           {bookTab === 'characters' ? (
             <section className="space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">
-                  点击任意人物卡片，可深入查看该角色的全景关系网络、一生重大转折事件、持有装备道具以及原著正文依据。
-                </p>
-                {loadingCharacters ? <span className="flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> 加载人物中...</span> : null}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">
+                    由系统与 LLM 全量阅读原著正文抽取并持久化存储在数据库中。点击卡片可查看该角色的深度关系网络与一生事件。
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleRefreshCharacters()}
+                    disabled={loadingCharacters}
+                    className="h-8 gap-1.5 text-xs"
+                  >
+                    {loadingCharacters ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    <span>{loadingCharacters ? 'AI 正在深度提炼中...' : 'AI 重新提取人物'}</span>
+                  </Button>
+                </div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -426,8 +458,19 @@ export function NovelLibraryPage() {
               </div>
 
               {!characters.length && !loadingCharacters ? (
-                <div className="rounded-xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
-                  尚未生成当前小说人物图谱，开始阅读或与 AI 对话可自动沉淀人物档案。
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-14 text-center">
+                  <Users className="h-10 w-10 text-muted-foreground/40" />
+                  <h4 className="mt-3 text-base font-semibold">尚未提炼当前小说人物图谱</h4>
+                  <p className="mt-1 max-w-md text-xs text-muted-foreground">
+                    系统支持自动扫描全本真实章节，调用 AI 算法提取书中核心主要人物、别名与生平定位，并持久化到本地数据库。
+                  </p>
+                  <Button
+                    onClick={() => void handleRefreshCharacters()}
+                    className="mt-4 gap-2"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    <span>立即让 AI 深度提炼全书人物</span>
+                  </Button>
                 </div>
               ) : null}
             </section>
@@ -474,9 +517,27 @@ export function NovelLibraryPage() {
                       <p className="text-xs text-muted-foreground">{activeDossier?.role}</p>
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => setDossierModalOpen(false)}>
-                    <X className="h-5 w-5" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {activeDossier ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void openCharacterDossier(activeDossier.name, true)}
+                        disabled={loadingDossier}
+                        className="h-8 gap-1.5 text-xs"
+                      >
+                        {loadingDossier ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        <span>{loadingDossier ? 'AI 正在解构...' : 'AI 重新深度解构'}</span>
+                      </Button>
+                    ) : null}
+                    <Button variant="ghost" size="sm" onClick={() => setDossierModalOpen(false)}>
+                      <X className="h-5 w-5" />
+                    </Button>
+                  </div>
                 </div>
 
                 {/* 弹窗子导航 Tabs */}

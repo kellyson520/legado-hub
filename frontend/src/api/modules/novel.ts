@@ -337,12 +337,19 @@ export function listNovelChapters(bookId: number | string) {
   return apiClient.get<NovelChapter[]>(`/novel/books/${bookId}/chapters`)
 }
 
-export function listNovelCharacters(bookId: number | string) {
-  return apiClient.get<NovelCharacterListItem[]>(`/novel/books/${bookId}/characters`)
+export function listNovelCharacters(bookId: number | string, forceRefresh?: boolean) {
+  return apiClient.get<NovelCharacterListItem[]>(`/novel/books/${bookId}/characters`, {
+    params: forceRefresh ? { force_refresh: true } : undefined,
+  })
 }
 
-export function getNovelCharacterDossier(bookId: number | string, characterName: string) {
-  return apiClient.get<NovelCharacterDossier>(`/novel/books/${bookId}/characters/${encodeURIComponent(characterName)}/dossier`)
+export function getNovelCharacterDossier(bookId: number | string, characterName: string, forceRefresh?: boolean) {
+  return apiClient.get<NovelCharacterDossier>(
+    `/novel/books/${bookId}/characters/${encodeURIComponent(characterName)}/dossier`,
+    {
+      params: forceRefresh ? { force_refresh: true } : undefined,
+    },
+  )
 }
 
 export function getNovelChapter(bookId: number | string, chapterId: number | string) {
