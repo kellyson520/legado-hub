@@ -27,6 +27,10 @@ class NovelCodeAnalysisService:
         "站在", "走在", "坐在", "跑在", "来到了", "走入", "走出", "推门", "看着", "汇报", "倒了",
         "点头", "商讨", "碰面", "倒了", "笑着", "笑了", "说道", "问道", "看见", "抵达", "进入", "离开",
         "决定", "发现", "重逢", "战斗", "死亡", "在", "站", "走", "看", "说", "问",
+        # Classical Chinese Dialogue & Action Verbs
+        "笑曰", "叹曰", "言曰", "急曰", "厉声曰", "叱曰", "喝道", "大喝曰", "大喜曰", "抚掌曰", "高叫",
+        "按剑", "纵马", "拍马", "飞马", "跃马", "勒马", "回马", "引兵", "引军", "出阵", "急令", "杀入",
+        "掣", "挺枪", "舞刀", "提刀", "圆睁", "大喜", "大怒", "大惊", "大痛", "失色", "登坛",
     )
     _event_triggers: ClassVar[tuple[str, ...]] = (
         "发现", "进入", "离开", "决定", "战斗", "死亡", "重逢",
@@ -41,12 +45,22 @@ class NovelCodeAnalysisService:
     _character_patterns: ClassVar[tuple[re.Pattern[str], ...] | None] = None
     _time_pattern: ClassVar[re.Pattern[str] | None] = None
 
+    _COURTESY_MAP: ClassVar[dict[str, str]] = {
+        "云长": "关羽", "玄德": "刘备", "翼德": "张飞", "孟德": "曹操",
+        "孔明": "诸葛亮", "奉先": "吕布", "公瑾": "周瑜", "子龙": "赵云",
+        "仲达": "司马懿", "伯符": "孙策", "仲谋": "孙权", "汉升": "黄忠",
+        "文远": "张辽", "文若": "荀彧", "奉孝": "郭嘉", "子敬": "鲁肃",
+    }
+
     _blocked_tokens: ClassVar[set[str]] = {
         "他们", "我们", "你们", "自己", "长安", "城门", "翌日", "当晚", "三天后", "半刻后", "在城门",
         "不要", "可是", "虽然", "但是", "只是", "现在", "然而", "如果", "因此", "继续", "发现", "没有", "什么", "怎么",
         "这里", "那里", "这个", "那个", "随后", "接着", "突然", "此时", "当时", "旁边", "四周", "身后", "面前", "哪怕",
         "因为", "所以", "不过", "只见", "为了", "似乎", "好像", "仿佛", "一下", "已经", "正在", "开始", "最后", "同时",
         "决定", "进入", "离开", "战斗", "死亡", "重逢", "一位", "一个", "只见", "这时", "这时他", "可是现", "在他必须",
+        # Classical Chinese Noise Words
+        "忽探子", "探子", "左右", "诸侯", "众诸侯", "众将", "军士", "三姓家奴", "先锋", "小人", "夫人", "次日", "当夜",
+        "忽然", "原来", "不知", "如何", "安得", "何不", "且慢", "大将", "天下", "关前", "阵前", "鸣金", "下关",
     }
 
     def analyze(self, work_id: str, chapters: list[dict]) -> NovelCodeAnalysisReport:
@@ -123,11 +137,12 @@ class NovelCodeAnalysisService:
             verbs = "|".join(sorted((re.escape(v) for v in self._character_verbs), key=len, reverse=True))
             punct = r"[\s\n，。！？；：、“”‘’]"
             boundary = r"[\s\n，。！？；：、“”‘’向往从与和道说看走在笑]"
+            adv = r"(?:亦|复|又|遂|乃|便|即|自)?"
             self._character_patterns = (
-                re.compile(rf"(?:^|{punct})(?P<name>[\u4e00-\u9fff]{{2,3}}?)(?=(?:{verbs}))"),
+                re.compile(rf"(?:^|{punct})(?P<name>[\u4e00-\u9fff]{{2,3}}?){adv}(?=(?:{verbs}))"),
                 re.compile(rf"(?:^|{punct})(?P<name>[\u4e00-\u9fff]{{2,3}}?)(?=与|和)|(?:与|和)(?P<name2>[\u4e00-\u9fff]{{2,3}}?)(?=(?:{verbs}|{punct}|与|和|$))"),
                 re.compile(rf"(?:^|{punct})(?P<name>(?:老|小|阿)[\u4e00-\u9fff]{{1,2}}?)(?={boundary}|(?:{verbs})|$)"),
-                re.compile(rf"(?:^|{punct})(?P<name>[\u4e00-\u9fff]{{1,2}}?(?:哥|姐|总|叔|伯|老|师|队长|组长))(?={boundary}|(?:{verbs})|$)"),
+                re.compile(rf"(?:^|{punct})(?P<name>[\u4e00-\u9fff]{{1,2}}?(?:哥|姐|总|叔|伯|老|师|队长|组长|将军|丞相|都督|公|使君|主公|太守))(?={boundary}|(?:{verbs})|$)"),
             )
 
         for pattern in self._character_patterns:
@@ -164,7 +179,12 @@ class NovelCodeAnalysisService:
     ) -> tuple[list[CharacterCandidate], dict[str, Any], dict[str, list[EvidenceLocation]]]:
         """Performs alias clustering (e.g. 小林, 弦哥 -> 林弦) and degree centrality ranking."""
         formal_candidates = sorted(
-            [name for name in raw_hits.keys() if len(name) >= 2 and not any(name.startswith(p) for p in ("老", "小", "阿")) and not any(name.endswith(s) for s in ("哥", "姐", "总", "叔", "组长", "队长"))],
+            [
+                name for name in raw_hits.keys()
+                if len(name) >= 2
+                and not any(name.startswith(p) for p in ("老", "小", "阿"))
+                and not any(name.endswith(s) for s in ("哥", "姐", "总", "叔", "组长", "队长", "将军", "丞相", "都督", "公", "使君", "主公", "太守"))
+            ],
             key=lambda x: len(raw_hits[x]),
             reverse=True,
         )
@@ -172,8 +192,19 @@ class NovelCodeAnalysisService:
         alias_map: dict[str, str] = {}  # alias -> canonical
         aliases_of: dict[str, list[str]] = {name: [] for name in raw_hits.keys()}
 
+        # 1. Classical Courtesy name mapping (字 -> 名)
         for name in list(raw_hits.keys()):
-            if name in formal_candidates:
+            if name in self._COURTESY_MAP:
+                canonical = self._COURTESY_MAP[name]
+                alias_map[name] = canonical
+                aliases_of.setdefault(canonical, []).append(name)
+                if canonical not in formal_candidates:
+                    formal_candidates.append(canonical)
+
+        # 2. Modern and classical title / suffix / prefix stemming
+        title_suffixes = ("哥", "姐", "总", "叔", "伯", "老", "师", "队长", "组长", "将军", "丞相", "都督", "公", "使君", "主公", "太守")
+        for name in list(raw_hits.keys()):
+            if name in formal_candidates or name in alias_map:
                 continue
             # Extract stem
             stem = name
@@ -181,7 +212,7 @@ class NovelCodeAnalysisService:
                 if name.startswith(prefix) and len(name) > 1:
                     stem = name[len(prefix):]
                     break
-            for suffix in ("哥", "姐", "总", "叔", "伯", "老", "师", "队长", "组长"):
+            for suffix in title_suffixes:
                 if stem.endswith(suffix) and len(stem) > 1:
                     stem = stem[:-len(suffix)]
                     break
