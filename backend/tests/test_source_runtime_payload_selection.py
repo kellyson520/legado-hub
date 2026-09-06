@@ -22,3 +22,17 @@ def test_runtime_registration_prefers_richer_imported_rule_over_generic_source_r
     selected = SourceRuntimeService._legacy_book_source_payload({"source_rule": generic, **original})
     assert selected["bookSourceName"] == "久久小说网"
     assert selected["searchUrl"].endswith("show=title,writer")
+
+
+def test_top_level_imported_rules_win_over_automatic_source_rule():
+    original = {
+        "bookSourceName": "久久小说网",
+        "bookSourceUrl": "https://www.aijjxs.com",
+        "searchUrl": "https://www.aijjxs.com/e/search/index.php,{}",
+        "ruleSearch": {"bookList": "div.searchTopic", "name": "a.searchtitle@text", "bookUrl": "a@href"},
+        "ruleToc": {"chapterList": ".read li", "chapterName": "a@text", "chapterUrl": "a@href"},
+        "ruleContent": {"content": "#view_content@text"},
+    }
+    generic = {**original, "searchUrl": "https://www.aijjxs.com/search?keyword={key}"}
+    selected = SourceRuntimeService._legacy_book_source_payload({"source_rule": generic, **original})
+    assert selected["searchUrl"].endswith("index.php,{}")
