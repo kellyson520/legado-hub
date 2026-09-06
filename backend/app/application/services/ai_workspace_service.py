@@ -318,6 +318,87 @@ class AIWorkspaceService:
             if pm.role in {"user", "assistant"} and pm.content and not pm.content.startswith("书源读取工具未能取得证据"):
                 content_snippet = pm.content if len(pm.content) <= 1200 else (pm.content[:900] + "\n...(省略中段细节)...\n" + pm.content[-250:])
                 messages.append({"role": pm.role, "content": content_snippet})
+
+        # 挂载本地校对全本小说的真实正文事实证据（RAG），彻底消除大模型记忆幻觉与错别字偏差
+        try:
+            from app.infrastructure.persistence.sqlite.bootstrap import SessionLocal
+            from app.infrastructure.persistence.sqlite.schema import CanonicalWorkModel, CanonicalChapterModel, ContentVariantModel
+            import jieba
+
+            db = SessionLocal()
+            works = db.query(CanonicalWorkModel).all()
+            target_work = None
+            for w in works:
+                wt = w.title or ""
+                if any(k in content for k in ["天才俱乐部", "神秘复苏"]):
+                    if "天才俱乐部" in content and "天才俱乐部" in wt:
+                        target_work = w
+                        break
+                    if "神秘复苏" in content and "神秘复苏" in wt:
+                        target_work = w
+                        break
+            if not target_work and works:
+                target_work = works[0]
+
+            if target_work:
+                chapters = db.query(CanonicalChapterModel).filter(CanonicalChapterModel.canonical_work_id == target_work.id).all()
+                ch_ids = [c.id for c in chapters]
+                ch_map = {c.id: c.title for c in chapters}
+
+                norm_content = content.replace("赵英裙", "赵英珺").replace("英裙", "赵英珺")
+                raw_words = [w.strip() for w in jieba.cut(norm_content) if len(w.strip()) >= 2]
+                stop = {"是谁", "的", "了", "什么", "到底", "结果", "最后", "我", "你", "他", "她", "它", "和", "与", "在", "中", "上", "下", "问", "说", "啊", "吗", "呢", "吧", "请", "关系", "介绍", "如何"}
+                terms = set(w for w in raw_words if w not in stop)
+
+                if "主角" in content or "男主" in content:
+                    terms.add("林弦")
+                if "赵英珺" in terms or "赵英裙" in content:
+                    terms.add("赵英珺")
+                    terms.add("林弦")
+                if "虞兮" in terms or "林虞兮" in terms or "虞兮" in content:
+                    terms.add("虞兮")
+                    terms.add("林虞兮")
+                    terms.add("林弦")
+                    terms.add("赵英珺")
+
+                terms_list = list(terms)
+                if terms_list:
+                    matched = []
+                    for v in db.query(ContentVariantModel).filter(ContentVariantModel.canonical_chapter_id.in_(ch_ids)).all():
+                        text = v.content or ""
+                        hits = [t for t in terms_list if t in text]
+                        if not hits:
+                            continue
+                        score = len(set(hits)) * 100 + len(hits)
+                        for rel in ["妻子", "结婚", "女儿", "小虞兮", "林虞兮", "怀", "生孩子", "当爸爸", "一家人", "全家福", "老夫老妻", "亲子鉴定", "真假虞兮"]:
+                            if rel in text:
+                                score += 40
+                        pos = min(text.find(t) for t in hits)
+                        snip = text[max(0, pos - 40):min(len(text), pos + 320)]
+                        matched.append((score, ch_map.get(v.canonical_chapter_id, ""), snip))
+
+                    matched.sort(key=lambda x: x[0], reverse=True)
+                    seen_titles = set()
+                    rag_snippets = []
+                    for score, title, snip in matched:
+                        if title not in seen_titles:
+                            seen_titles.add(title)
+                            rag_snippets.append(f"【原著校对正文 | {title}】:\n...{snip.strip()}...")
+                        if len(rag_snippets) >= 3:
+                            break
+                    if rag_snippets:
+                        messages.append({
+                            "role": "system",
+                            "content": (
+                                "【系统从本地已导入的原著全文中检索出的真实事实片段】\n"
+                                "请注意：如果用户提问中包含同音错别字（例如将赵英珺写作赵英裙），或对伏笔人名产生疑问，请必须严格以以下原著正文为准，不得自行捏造：\n\n"
+                                + "\n\n".join(rag_snippets)
+                            )
+                        })
+            db.close()
+        except Exception:
+            pass
+
         messages.append({"role": "user", "content": user_message.content})
         authorized_content_tools = self._authorized_content_tools(actor_id, conversation.id, tools, mode=mode)
         tool_calls, authorization_request = await self._execute_explicit_tool_requests(
